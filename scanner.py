@@ -14,6 +14,22 @@ import pandas as pd
 warnings.filterwarnings("ignore")
 colorama.init(autoreset=True)
 
+# ─── yfinance 1.2+ uses curl_cffi for Chrome TLS impersonation internally.
+# Do NOT pass a custom session — let yfinance handle it.
+# curl_cffi must be installed (listed in requirements.txt).
+
+# ─── yfinance ticker normalization ───────────────────────────────────────────
+_YF_TICKER_MAP: Dict[str, str] = {
+    "SPX": "^SPX", "VIX": "^VIX", "RUT": "^RUT", "NDX": "^NDX",
+}
+
+def _yf_ticker(sym: str) -> str:
+    return _YF_TICKER_MAP.get(sym.upper(), sym)
+
+def _yf(sym: str) -> yf.Ticker:
+    """Create a Ticker — yfinance handles browser impersonation via curl_cffi."""
+    return yf.Ticker(_yf_ticker(sym))
+
 # ─── Sector ETFs & Ticker→Sector Map ─────────────────────────────────────────
 SECTOR_ETFS: Dict[str, str] = {
     "Tech":        "XLK",
@@ -101,24 +117,13 @@ UNIVERSE = [
 ]
 UNIVERSE = list(dict.fromkeys(UNIVERSE))  # dedupe
 
-# ─── yfinance ticker normalization ───────────────────────────────────────────
-# Some tickers need a different symbol for yfinance (cash-settled indices, etc.)
-_YF_TICKER_MAP: Dict[str, str] = {
-    "SPX":  "^SPX",   # Cash-settled index — yfinance uses ^SPX for SPXW chains
-    "VIX":  "^VIX",
-    "RUT":  "^RUT",
-    "NDX":  "^NDX",
-}
-
-def _yf_ticker(sym: str) -> str:
-    """Return the correct yfinance symbol for a given ticker."""
-    return _YF_TICKER_MAP.get(sym.upper(), sym)
+# _YF_TICKER_MAP and _yf_ticker defined above near _yf()
 
 # ─── Math helpers ─────────────────────────────────────────────────────────────
 def fetch_vix() -> float:
     """Return current VIX level, or -1.0 on failure."""
     try:
-        v = yf.Ticker("^VIX")
+        v = _yf("VIX")
         h = v.history(period="2d")
         if not h.empty:
             return round(float(h["Close"].iloc[-1]), 2)
@@ -484,7 +489,7 @@ def get_best_contract(ticker: str, direction: str, price: float,
     Returns the contract with the best composite score or None.
     """
     try:
-        t = yf.Ticker(_yf_ticker(ticker))
+        t = _yf(ticker)
 
         # Guard against stale/missing price — always fetch live.
         try:

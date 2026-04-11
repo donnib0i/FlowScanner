@@ -359,7 +359,12 @@ async def api_flow_stream(
             if item.get("__done__") or item.get("__error__"): break
 
     return StreamingResponse(generate(), media_type="text/event-stream",
-                             headers={"Cache-Control":"no-cache","X-Accel-Buffering":"no"})
+                             headers={
+                                 "Cache-Control":     "no-cache, no-transform",
+                                 "X-Accel-Buffering": "no",
+                                 "Connection":        "keep-alive",
+                                 "Content-Type":      "text/event-stream; charset=utf-8",
+                             })
 
 @app.get("/manifest.json")
 async def manifest():
