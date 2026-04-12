@@ -772,11 +772,13 @@ body::before{
 /* ── Sector tab ──────────────────────────────────────────────── */
 .sec-head{padding:16px 20px 8px;font-size:11px;font-weight:700;letter-spacing:1px;color:var(--sub);text-transform:uppercase}
 .sec-load-btn{
-  margin:16px;background:var(--card-bg);border:1px solid var(--border);
+  display:block;width:calc(100% - 32px);margin:16px;
+  background:var(--card-bg);border:1px solid var(--border);
   border-radius:16px;padding:14px;text-align:center;color:var(--blue);
-  font-weight:600;font-size:14px;cursor:pointer;
+  font-weight:600;font-size:14px;cursor:pointer;font-family:inherit;
   box-shadow:0 1px 6px rgba(0,0,0,.06);
   transition:all .15s cubic-bezier(.34,1.56,.64,1);
+  -webkit-appearance:none;
 }
 .sec-load-btn:active{transform:scale(.97)}
 .sec-card{
@@ -1020,7 +1022,7 @@ body::before{
   <div class="tab-pane" id="tab-scan">
     <div class="sec-head">Market Sectors</div>
     <div id="sec-feed">
-      <div class="sec-load-btn" onclick="loadSectors()">Load Sector Map</div>
+      <button class="sec-load-btn" onclick="loadSectors()">Load Sector Map</button>
     </div>
   </div>
 
@@ -1477,7 +1479,7 @@ async function loadSectors(){
     if(!r.ok){
       let msg='Data unavailable';
       try{const e=await r.json();msg=e.detail||msg;}catch{}
-      feed.innerHTML=`<div class="empty-st"><div class="icon">📡</div><h3>Couldn't load sectors</h3>${msg}<br><br><div class="sec-load-btn" onclick="loadSectors()" style="margin:16px auto;max-width:200px">Try Again</div></div>`;
+      feed.innerHTML=`<div class="empty-st"><div class="icon">📡</div><h3>Couldn't load sectors</h3>${msg}<br><br><button class="sec-load-btn" onclick="loadSectors()" style="margin:16px auto;max-width:200px">Try Again</button></div>`;
       return;
     }
     const d=await r.json();
@@ -1513,7 +1515,7 @@ async function loadSectors(){
       feed.appendChild(el);
     });
   }catch(e){
-    feed.innerHTML='<div class="empty-st"><div class="icon">⚠️</div><h3>Failed to load</h3><div class="sec-load-btn" onclick="loadSectors()" style="margin:16px auto;max-width:200px">Try Again</div></div>';
+    feed.innerHTML='<div class="empty-st"><div class="icon">⚠️</div><h3>Failed to load</h3><button class="sec-load-btn" onclick="loadSectors()" style="margin:16px auto;max-width:200px">Try Again</button></div>';
   }
 }
 
