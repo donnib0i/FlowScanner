@@ -400,7 +400,7 @@ async def apple_touch_icon():
                      headers={"Cache-Control": "public, max-age=86400"})
 
 @app.get("/", response_class=HTMLResponse)
-async def root(): return HTML
+async def root(): return HTML.replace("__SCANNER_PIN__", _PIN or "")
 
 # ── HTML ──────────────────────────────────────────────────────────────────────
 HTML = r"""<!DOCTYPE html>
@@ -1054,13 +1054,15 @@ body::before{
 <script>
 
 // ── State ──────────────────────────────────────────────────────────────────
+const PIN = '__SCANNER_PIN__';
+const _pa = p => PIN ? (p.includes('?')?p+'&pin='+PIN:p+'?pin='+PIN) : p;
 const S = {
   dte:'0dte', whale:false, full:false, dir:'up', dteType:'weekly',
   scanning:false, callFlow:0, putFlow:0, signals:[], hotContracts:[],
   view:'signals', qt:[], ft:[],
 };
-fetch('/api/universe').then(r=>r.json()).then(d=>{S.qt=d.quick;S.ft=d.full});
-fetch('/api/vix').then(r=>r.json()).then(renderVix);
+fetch(_pa('/api/universe')).then(r=>r.json()).then(d=>{S.qt=d.quick;S.ft=d.full});
+fetch(_pa('/api/vix')).then(r=>r.json()).then(renderVix);
 
 // ── Tab ────────────────────────────────────────────────────────────────────
 function showTab(n,btn){
@@ -1143,7 +1145,7 @@ function doScan(){
   document.getElementById('hot-feed').innerHTML='';
   document.getElementById('pw').style.display='block';
   document.getElementById('pl').style.display='block';
-  const url=`/api/flow/stream?tickers=${tickers}&dte_filter=${S.dte}&min_score=${S.whale?60:0}`;
+  const url=_pa(`/api/flow/stream?tickers=${tickers}&dte_filter=${S.dte}&min_score=${S.whale?60:0}`);
   const es=new EventSource(url);
   es.onmessage=e=>{
     const m=JSON.parse(e.data);
@@ -1306,7 +1308,7 @@ async function loadSectors(){
   const feed=document.getElementById('sec-feed');
   feed.innerHTML='<div style="margin:16px"><div class="shimmer" style="height:56px;margin-bottom:8px"></div><div class="shimmer" style="height:56px;margin-bottom:8px"></div><div class="shimmer" style="height:56px"></div></div>';
   try{
-    const r=await fetch('/api/sectors');
+    const r=await fetch(_pa('/api/sectors'));
     const d=await r.json();
     if(!d.length){feed.innerHTML='<div class="empty-st">No data.</div>';return}
     const max=Math.max(...d.map(s=>Math.abs(s.change)),.01);
@@ -1333,7 +1335,7 @@ async function doFind(){
   document.getElementById('find-result').innerHTML=
     '<div style="margin:4px 0"><div class="shimmer" style="height:140px;border-radius:20px;margin-bottom:8px"></div><div class="shimmer" style="height:120px;border-radius:20px;margin-bottom:8px"></div><div class="shimmer" style="height:120px;border-radius:20px"></div></div>';
   try{
-    const r=await fetch(`/api/contract?ticker=${ticker}&direction=${S.dir}&dte_type=${S.dteType}`);
+    const r=await fetch(_pa(`/api/contract?ticker=${ticker}&direction=${S.dir}&dte_type=${S.dteType}`));
     if(!r.ok){const e=await r.json();document.getElementById('find-result').innerHTML=`<div class="empty-st" style="padding:24px">${e.error||'Not found'}</div>`;return}
     const contracts=await r.json();
     renderContracts(ticker,contracts);
@@ -1382,10 +1384,6 @@ function renderContracts(ticker,cs){
     </div>`;
   }).join('');
   res.innerHTML=`<div class="cont-cards">${html}</div>`;
-    res.querySelectorAll('.cont-card').forEach((el,i)=>{
-      MA(el,{opacity:[0,1],y:[16,0],scale:[.97,1]},{duration:.3,delay:i*.07,easing:[.34,1.56,.64,1]});
-    });
-  }
 }
 
 // ── Toast ──────────────────────────────────────────────────────────────────
