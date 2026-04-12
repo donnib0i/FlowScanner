@@ -1019,7 +1019,7 @@ body::before{
   <!-- FLOW -->
   <div class="tab-pane active" id="tab-flow">
     <div class="filter-bar">
-      <button class="chip on" id="c-dte"   onclick="tDte()">0DTE</button>
+      <button class="chip" id="c-dte" onclick="tDte()">0DTE</button>
       <button class="chip"    id="c-whale" onclick="tWhale()">Whale+</button>
       <button class="chip"    id="c-scope" onclick="tScope()">QUICK</button>
       <button class="scan-btn" id="scan-btn" onclick="doScan()">SCAN ▶</button>
@@ -1247,22 +1247,45 @@ const SECTOR_TICKERS = {
 // ── State ──────────────────────────────────────────────────────────────────
 const PIN = '__SCANNER_PIN__';
 const _pa = p => PIN ? (p.includes('?')?p+'&pin='+PIN:p+'?pin='+PIN) : p;
+
+// ── Market hours detection (Eastern Time) ─────────────────────────────────
+function _isMarketOpen(){
+  try{
+    const now=new Date();
+    const et=new Date(now.toLocaleString('en-US',{timeZone:'America/New_York'}));
+    const day=et.getDay(); // 0=Sun,6=Sat
+    if(day===0||day===6) return false;
+    const mins=et.getHours()*60+et.getMinutes();
+    return mins>=570 && mins<=960; // 9:30–16:00
+  }catch(e){return true} // default open if detection fails
+}
+
 const S = {
-  dte:'0dte', whale:false, full:false, dir:'up', dteType:'weekly',
+  // Default DTE to 'all' when market is closed so scans return results
+  dte: _isMarketOpen() ? '0dte' : 'all',
+  whale:false, full:false, dir:'up', dteType:'weekly',
   scanning:false, callFlow:0, putFlow:0, signals:[], hotContracts:[],
   view:'signals', qt:[], ft:[],
 };
+
+// ── Sync DTE chip label to S.dte initial value ────────────────────────────────
+(function(){
+  const dteLabels={'0dte':'0DTE','7dte':'≤7 DTE','all':'ALL DTE'};
+  const el=document.getElementById('c-dte');
+  el.textContent=dteLabels[S.dte]||'0DTE';
+  el.className='chip'+(S.dte!=='all'?' on':'');
+})();
+
 // ── Server wake-up: retry VIX + universe until the server responds ────────────
-// Render free tier sleeps after inactivity. The first request wakes it up
-// (30-60s). We retry every 5s until we get a response, then stop.
 let _vixLoaded=false, _univLoaded=false;
 function _loadVix(attempt){
   attempt=attempt||0;
   fetch(_pa('/api/vix')).then(r=>r.ok?r.json():Promise.reject()).then(d=>{
     _vixLoaded=true;
     renderVix(d);
-    // Auto-refresh VIX every 90s
-    setTimeout(()=>_loadVix(0),90000);
+    // If VIX data unavailable (server returned -1), keep retrying — may be transient
+    if(d.vix<=0 && attempt<6) setTimeout(()=>_loadVix(attempt+1),15000);
+    else setTimeout(()=>_loadVix(0),90000); // normal refresh every 90s
   }).catch(()=>{
     if(attempt<8) setTimeout(()=>_loadVix(attempt+1), attempt<2?5000:10000);
   });
@@ -1272,7 +1295,6 @@ function _loadUniverse(attempt){
   fetch(_pa('/api/universe')).then(r=>r.ok?r.json():Promise.reject()).then(d=>{
     _univLoaded=true;
     S.qt=d.quick; S.ft=d.full;
-    // Update FULL chip label if it's already showing
     if(S.full) document.getElementById('c-scope').textContent=`FULL (${S.ft.length})`;
   }).catch(()=>{
     if(attempt<8) setTimeout(()=>_loadUniverse(attempt+1), attempt<2?5000:10000);
@@ -1342,8 +1364,15 @@ function setView(v){
 // ── VIX ────────────────────────────────────────────────────────────────────
 function renderVix(d){
   const el=document.getElementById('vix-chip');
-  if(d.vix<=0){el.textContent='VIX —';return}
-  el.textContent=`VIX ${d.vix.toFixed(1)} · ${d.regime}`;
+  const closed=!_isMarketOpen();
+  if(d.vix<=0){
+    el.textContent=closed?'Market Closed':'VIX —';
+    el.className=closed?'vix-chip elevated':'vix-chip';
+    return;
+  }
+  el.textContent=closed
+    ? `VIX ${d.vix.toFixed(1)} · Closed`
+    : `VIX ${d.vix.toFixed(1)} · ${d.regime}`;
   el.className='vix-chip '+(d.vix>=30?'fear':d.vix>=24?'elevated':d.vix<16?'calm':'');
 }
 
@@ -1406,8 +1435,11 @@ function endScan(err){
   document.getElementById('pb').style.width='0%';
   if(err){toast('Error: '+err);return}
   if(!S.signals.length){
+    const hint=(!_isMarketOpen()&&S.dte==='0dte')
+      ? 'Market is closed — 0DTE options have expired.<br>Switch to <b>ALL DTE</b> to see recent flow.'
+      : S.dte!=='all' ? 'Try switching to <b>ALL DTE</b> or running a <b>FULL</b> scan.' : 'No unusual flow detected.';
     document.getElementById('flow-feed').innerHTML=
-      '<div class="empty-st"><div class="icon">🔍</div><h3>No signals found</h3>Try removing filters or switching to FULL scan.</div>';
+      `<div class="empty-st"><div class="icon">🔍</div><h3>No signals found</h3><span style="line-height:1.7">${hint}</span></div>`;
   }else{
     toast(`${S.signals.length} signal${S.signals.length>1?'s':''} found`);
     if(S.hotContracts.length) document.getElementById('view-toggle').style.display='flex';

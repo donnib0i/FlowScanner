@@ -143,14 +143,17 @@ UNIVERSE = list(dict.fromkeys(UNIVERSE))  # dedupe
 
 # ─── Math helpers ─────────────────────────────────────────────────────────────
 def fetch_vix() -> float:
-    """Return current VIX level, or -1.0 on failure."""
-    try:
-        v = _yf("VIX")
-        h = v.history(period="2d")
-        if not h.empty:
-            return round(float(h["Close"].iloc[-1]), 2)
-    except Exception:
-        pass
+    """Return current VIX level, or -1.0 on failure. Retries 3× with backoff."""
+    for attempt in range(3):
+        try:
+            v = _yf("VIX")
+            h = v.history(period="5d")
+            if not h.empty:
+                return round(float(h["Close"].dropna().iloc[-1]), 2)
+        except Exception:
+            pass
+        if attempt < 2:
+            time.sleep(1.5)
     return -1.0
 
 
