@@ -125,10 +125,10 @@ async def _security_headers(request: Request, call_next):
     response.headers["X-XSS-Protection"]        = "1; mode=block"
     response.headers["Referrer-Policy"]         = "no-referrer"
     response.headers["Permissions-Policy"]      = "geolocation=(), camera=(), microphone=()"
-    # CSP: self + unpkg CDN for Motion One, no inline scripts (relaxed for our inline JS)
+    # CSP: allow inline scripts/styles for embedded HTML
     response.headers["Content-Security-Policy"] = (
         "default-src 'self'; "
-        "script-src 'self' 'unsafe-inline' https://unpkg.com; "
+        "script-src 'self' 'unsafe-inline'; "
         "style-src 'self' 'unsafe-inline'; "
         "connect-src 'self'; "
         "img-src 'self' data:; "
@@ -824,7 +824,6 @@ body::before{
   border-radius:10px;padding:2px 8px;font-size:10px;font-weight:700;margin-left:4px;
 }
 </style>
-<script src="https://unpkg.com/motion@latest/dist/motion.js"></script>
 </head>
 <body>
 <div id="app">
@@ -1053,9 +1052,6 @@ body::before{
 <div id="toast"></div>
 
 <script>
-// ── Motion One helper (falls back to CSS if CDN fails) ─────────────────────
-const MA = (typeof Motion !== 'undefined') ? Motion.animate : null;
-function mAnimate(el, kf, opts){ if(MA) MA(el,kf,opts); }
 
 // ── State ──────────────────────────────────────────────────────────────────
 const S = {
@@ -1073,7 +1069,6 @@ function showTab(n,btn){
   const pane = document.getElementById('tab-'+n);
   pane.classList.add('active');
   btn.classList.add('active');
-  if(MA) MA(pane, {opacity:[0,1], y:[8,0]}, {duration:.22, easing:[.34,1.56,.64,1]});
 }
 
 // ── Guide accordion ────────────────────────────────────────────────────────
@@ -1229,7 +1224,6 @@ function renderHot(){
         <div class="hot-flow">${c.flow||'—'} flow</div>
       </div>`;
     feed.appendChild(el);
-    if(MA) MA(el,{opacity:[0,1],x:[20,0]},{duration:.25,delay:i*.04,easing:[.34,1.56,.64,1]});
   });
 }
 
@@ -1299,7 +1293,6 @@ function renderCard(s){
     </div>
   `;
   feed.appendChild(card);
-  if(MA) MA(card,{opacity:[0,1],y:[12,0],scale:[.97,1]},{duration:.28,easing:[.34,1.56,.64,1]});
 }
 function toggleDetail(head){
   const det=head.closest('.flow-card').querySelector('.card-detail');
@@ -1327,7 +1320,6 @@ async function loadSectors(){
         <div class="sec-bar-wrap"><div class="sec-bar ${up?'up':'dn'}" style="width:${pct}%"></div></div>
         <div class="sec-chg ${up?'up':'dn'}">${up?'+':''}${s.change.toFixed(2)}%</div>`;
       feed.appendChild(el);
-      if(MA) MA(el,{opacity:[0,1],x:[-12,0]},{duration:.22,delay:i*.05,easing:[.34,1.56,.64,1]});
     });
   }catch(e){feed.innerHTML='<div class="empty-st">Failed to load.</div>'}
 }
@@ -1390,7 +1382,6 @@ function renderContracts(ticker,cs){
     </div>`;
   }).join('');
   res.innerHTML=`<div class="cont-cards">${html}</div>`;
-  if(MA){
     res.querySelectorAll('.cont-card').forEach((el,i)=>{
       MA(el,{opacity:[0,1],y:[16,0],scale:[.97,1]},{duration:.3,delay:i*.07,easing:[.34,1.56,.64,1]});
     });
@@ -1400,7 +1391,6 @@ function renderContracts(ticker,cs){
 // ── Toast ──────────────────────────────────────────────────────────────────
 function toast(msg){
   const el=document.getElementById('toast');el.textContent=msg;el.classList.add('show');
-  if(MA) MA(el,{opacity:[0,1],y:[-8,0],scale:[.95,1]},{duration:.2,easing:[.34,1.56,.64,1]});
   setTimeout(()=>el.classList.remove('show'),2500);
 }
 </script>

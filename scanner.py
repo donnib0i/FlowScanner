@@ -6,7 +6,7 @@ import yfinance as yf
 import colorama
 from colorama import Fore, Style
 from tabulate import tabulate
-import argparse, time, sys, csv, os, math, warnings
+import argparse, time, sys, csv, os, math, warnings, requests
 from datetime import datetime
 from typing import Optional, List, Dict, Tuple
 import pandas as pd
@@ -14,9 +14,28 @@ import pandas as pd
 warnings.filterwarnings("ignore")
 colorama.init(autoreset=True)
 
-# ─── yfinance 1.2+ uses curl_cffi for Chrome TLS impersonation internally.
-# Do NOT pass a custom session — let yfinance handle it.
-# curl_cffi must be installed (listed in requirements.txt).
+# ─── yfinance session setup ───────────────────────────────────────────────────
+# yfinance 1.2+ prefers curl_cffi for Chrome TLS impersonation.
+# On cloud servers where curl_cffi binaries aren't available, fall back to a
+# requests.Session with a browser User-Agent (works for most endpoints).
+_YF_SESSION = None
+try:
+    from curl_cffi.requests import Session as CurlSession
+    _YF_SESSION = CurlSession(impersonate="chrome")
+except Exception:
+    try:
+        _YF_SESSION = requests.Session()
+        _YF_SESSION.headers.update({
+            "User-Agent": (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/124.0.0.0 Safari/537.36"
+            ),
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+        })
+    except Exception:
+        pass
 
 # ─── yfinance ticker normalization ───────────────────────────────────────────
 _YF_TICKER_MAP: Dict[str, str] = {
@@ -27,8 +46,11 @@ def _yf_ticker(sym: str) -> str:
     return _YF_TICKER_MAP.get(sym.upper(), sym)
 
 def _yf(sym: str) -> yf.Ticker:
-    """Create a Ticker — yfinance handles browser impersonation via curl_cffi."""
-    return yf.Ticker(_yf_ticker(sym))
+    """Create a Ticker with the best available session."""
+    try:
+        return yf.Ticker(_yf_ticker(sym), session=_YF_SESSION)
+    except Exception:
+        return yf.Ticker(_yf_ticker(sym))
 
 # ─── Sector ETFs & Ticker→Sector Map ─────────────────────────────────────────
 SECTOR_ETFS: Dict[str, str] = {
@@ -1265,13 +1287,13 @@ def _fetch_batch_history(tickers: List[str], period: str = "1y") -> pd.DataFrame
     Returns a MultiIndex DataFrame (metric, ticker) or flat DataFrame for one ticker.
     """
     try:
-        data = yf.download(
-            tickers=tickers,
-            period=period,
-            auto_adjust=True,
-            progress=False,
-            threads=True,
-        )
+        _dl_kwargs = dict(tickers=tickers, period=period,
+                         auto_adjust=True, progress=False, threads=True)
+        if _YF_SESSION is not None:
+            try: data = yf.download(**_dl_kwargs, session=_YF_SESSION)
+            except TypeError: data = yf.download(**_dl_kwargs)
+        else:
+            data = yf.download(**_dl_kwargs)
         return data
     except Exception:
         return pd.DataFrame()
@@ -1285,14 +1307,13 @@ def _fetch_live_prices(tickers: List[str]) -> Dict[str, float]:
     if not tickers:
         return {}
     try:
-        data = yf.download(
-            tickers=tickers,
-            period="1d",
-            interval="1m",
-            auto_adjust=True,
-            progress=False,
-            threads=True,
-        )
+        _dl_kwargs = dict(tickers=tickers, period="1d", interval="1m",
+                         auto_adjust=True, progress=False, threads=True)
+        if _YF_SESSION is not None:
+            try: data = yf.download(**_dl_kwargs, session=_YF_SESSION)
+            except TypeError: data = yf.download(**_dl_kwargs)
+        else:
+            data = yf.download(**_dl_kwargs)
         if data.empty:
             return {}
         prices: Dict[str, float] = {}
