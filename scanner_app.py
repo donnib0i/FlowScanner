@@ -266,6 +266,45 @@ async def api_contract(req: Request, ticker: str = "SPY", direction: str = "up",
         contracts = [contracts]
     return contracts
 
+@app.get("/api/debug")
+async def api_debug(req: Request):
+    """Diagnostic endpoint — returns raw yfinance fetch results and errors."""
+    _check_pin(req)
+    import traceback
+    results = {}
+    # 1. Session type
+    try:
+        from scanner import _YF_SESSION
+        results["session_type"] = type(_YF_SESSION).__name__
+    except Exception as e:
+        results["session_type"] = f"ERROR: {e}"
+    # 2. VIX fetch
+    try:
+        from scanner import _yf
+        import yfinance as yf
+        t = _yf("VIX")
+        h = t.history(period="2d")
+        results["vix_rows"] = len(h)
+        results["vix_value"] = float(h["Close"].iloc[-1]) if not h.empty else None
+    except Exception as e:
+        results["vix_error"] = traceback.format_exc()[-500:]
+    # 3. SPY options list
+    try:
+        t2 = _yf("SPY")
+        exps = t2.options
+        results["spy_exps"] = list(exps[:5]) if exps else []
+    except Exception as e:
+        results["spy_exps_error"] = traceback.format_exc()[-500:]
+    # 4. SPY first chain
+    try:
+        if results.get("spy_exps"):
+            chain = t2.option_chain(results["spy_exps"][0])
+            results["spy_chain_calls"] = len(chain.calls)
+            results["spy_chain_puts"] = len(chain.puts)
+    except Exception as e:
+        results["spy_chain_error"] = traceback.format_exc()[-500:]
+    return results
+
 @app.get("/api/sectors")
 async def api_sectors(req: Request):
     _check_pin(req)
