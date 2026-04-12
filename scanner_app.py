@@ -258,7 +258,7 @@ async def api_universe(req: Request):
 @app.get("/api/vix")
 async def api_vix(req: Request):
     _check_pin(req)
-    _check_rate(req, "vix", limit=20, window=60)
+    _check_rate(req, "vix", limit=30, window=60)
     loop = asyncio.get_event_loop()
     vix = await loop.run_in_executor(None, fetch_vix)
     tgt = vix_delta_target(vix)
@@ -338,7 +338,7 @@ async def api_debug(req: Request):
 @app.get("/api/sectors")
 async def api_sectors(req: Request):
     _check_pin(req)
-    _check_rate(req, "sectors", limit=3, window=60)
+    _check_rate(req, "sectors", limit=5, window=60)
     loop = asyncio.get_event_loop()
     with contextlib.redirect_stdout(io.StringIO()):
         try:
@@ -363,7 +363,7 @@ async def api_flow_stream(
     dte_filter:  str = Query("all"),
 ):
     _check_pin(req)
-    _check_rate(req, "scan", limit=2, window=30)   # max 2 scans per 30s per IP
+    _check_rate(req, "scan", limit=3, window=60)   # max 3 scans per 60s per IP
     _validate_enum(bias_filter, _VALID_BIAS,       "bias_filter")
     _validate_enum(dte_filter,  _VALID_DTE_FILTER, "dte_filter")
     if not (0 <= min_score <= 100):
@@ -1246,8 +1246,8 @@ const S = {
   scanning:false, callFlow:0, putFlow:0, signals:[], hotContracts:[],
   view:'signals', qt:[], ft:[],
 };
-fetch(_pa('/api/universe')).then(r=>r.json()).then(d=>{S.qt=d.quick;S.ft=d.full});
-fetch(_pa('/api/vix')).then(r=>r.json()).then(renderVix);
+fetch(_pa('/api/universe')).then(r=>r.json()).then(d=>{S.qt=d.quick;S.ft=d.full}).catch(()=>{});
+fetch(_pa('/api/vix')).then(r=>r.ok?r.json():null).then(d=>{if(d)renderVix(d)}).catch(()=>{});
 
 // ── Tab ────────────────────────────────────────────────────────────────────
 function showTab(n,btn){
@@ -1316,23 +1316,28 @@ function renderVix(d){
 }
 
 // ── Scan ───────────────────────────────────────────────────────────────────
-function doScan(){
-  if(S.scanning)return;
-  S.scanning=true;S.callFlow=0;S.putFlow=0;S.signals=[];S.hotContracts=[];
-  setView('signals');
-  document.getElementById('view-toggle').style.display='none';
+function doScan(retryCount){
+  if(S.scanning&&!retryCount)return;
+  retryCount=retryCount||0;
+  if(!retryCount){
+    S.scanning=true;S.callFlow=0;S.putFlow=0;S.signals=[];S.hotContracts=[];
+    setView('signals');
+    document.getElementById('view-toggle').style.display='none';
+    document.getElementById('flow-feed').innerHTML='';
+    document.getElementById('hot-feed').innerHTML='';
+    document.getElementById('pw').style.display='block';
+    document.getElementById('pl').style.display='block';
+  }
   const tickers=(S.full?S.ft:S.qt).join(',')
     ||'SPX,SPY,QQQ,IWM,NVDA,AMD,AAPL,MSFT,META,AMZN,TSLA,COIN,PLTR';
   const n=tickers.split(',').length;
   const btn=document.getElementById('scan-btn');
   btn.textContent=`SCANNING ${n}…`;btn.className='scan-btn loading';
-  document.getElementById('flow-feed').innerHTML='';
-  document.getElementById('hot-feed').innerHTML='';
-  document.getElementById('pw').style.display='block';
-  document.getElementById('pl').style.display='block';
   const url=_pa(`/api/flow/stream?tickers=${tickers}&dte_filter=${S.dte}&min_score=${S.whale?60:0}`);
   const es=new EventSource(url);
+  let gotData=false;
   es.onmessage=e=>{
+    gotData=true;
     const m=JSON.parse(e.data);
     if(m.__ping__)return;
     if(m.__progress__){
@@ -1344,12 +1349,21 @@ function doScan(){
     if(m.__signal__){
       const s=m.data;S.signals.push(s);
       S.callFlow+=s.call_flow||0;S.putFlow+=s.put_flow||0;
-      // collect hot contracts from all signals
       (s.top3||[]).forEach(c=>{ S.hotContracts.push({...c, ticker:s.ticker, badge:s.badge, cls:s.cls}); });
       renderCard(s);updateBias();
     }
   };
-  es.onerror=()=>{es.close();endScan('Connection lost')};
+  es.onerror=()=>{
+    es.close();
+    // If no data came through yet and we haven't retried, server may be waking up (Render cold start)
+    if(!gotData&&retryCount<2){
+      const wait=retryCount===0?4:8;
+      document.getElementById('pl').textContent=`Waking up server… retry ${retryCount+1}/2`;
+      setTimeout(()=>doScan(retryCount+1),wait*1000);
+    }else{
+      endScan(gotData?null:'Server unavailable — try again in a moment');
+    }
+  };
 }
 function endScan(err){
   S.scanning=false;
@@ -1497,9 +1511,7 @@ function renderCard(s){
 }
 function toggleDetail(head){
   const det=head.closest('.flow-card').querySelector('.card-detail');
-  const isOpen=det.classList.contains('open');
   det.classList.toggle('open');
-  if(MA&&!isOpen) MA(det,{opacity:[0,1],y:[-4,0]},{duration:.18,easing:'ease-out'});
 }
 
 // ── Sectors ────────────────────────────────────────────────────────────────
