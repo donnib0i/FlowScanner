@@ -94,7 +94,6 @@ def _check_rate(req: Request, endpoint: str, limit: int, window: int):
                             headers={"Retry-After": str(window)})
 
 # ── Concurrent scan guard — only one active scan at a time ───────────────────
-_scan_lock = threading.Semaphore(1)
 _active_scan = threading.Event()   # set while a scan is running
 
 # ── PIN check — timing-safe + brute-force lockout ────────────────────────────
@@ -156,9 +155,10 @@ async def _security_headers(request: Request, call_next):
         "img-src 'self' data:; "
         "frame-ancestors 'none'"
     )
-    # API responses must not be cached — they contain live market data
-    if request.url.path.startswith("/api/"):
-        h["Cache-Control"] = "no-store, no-cache, must-revalidate"
+    # API responses must not be cached — live market data only
+    # Don't override if already set (SSE endpoints need no-transform for proxy buffering)
+    if request.url.path.startswith("/api/") and "cache-control" not in response.headers:
+        h["Cache-Control"] = "no-store, no-cache, must-revalidate, no-transform"
         h["Pragma"]        = "no-cache"
     return response
 
@@ -249,7 +249,7 @@ def _serialize(sig: Dict) -> Dict:
 @app.get("/api/universe")
 async def api_universe(req: Request):
     _check_pin(req)
-    _check_rate(req, "universe", limit=30, window=60)
+    _check_rate(req, "universe", limit=10, window=60)
     return {"quick": DEFAULT_FLOW_TICKERS, "full": UNIVERSE}
 
 @app.get("/api/vix")
@@ -272,8 +272,9 @@ async def api_contract(req: Request, ticker: str = "SPY", direction: str = "up",
     ticker    = _validate_ticker(ticker)
     direction = _validate_enum(direction, _VALID_DIRECTION, "direction")
     dte_type  = _validate_enum(dte_type,  _VALID_DTE_TYPE,  "dte_type")
-    # price sanity — must be non-negative and reasonable
-    if not (0 <= price < 1_000_000):
+    # Guard NaN/Inf (comparisons with NaN always return False, bypassing range check)
+    import math
+    if not math.isfinite(price) or not (0 <= price < 1_000_000):
         raise HTTPException(400, "Invalid price")
     loop = asyncio.get_event_loop()
     vix  = await loop.run_in_executor(None, fetch_vix)
@@ -363,6 +364,10 @@ async def api_flow_stream(
     if not (0 <= min_score <= 100):
         raise HTTPException(400, "min_score must be 0–100")
 
+    # Guard against oversized ticker string before any processing
+    if len(tickers) > 4096:
+        raise HTTPException(400, "Ticker list too long")
+
     # Validate and cap ticker list
     raw_tickers = [t.strip().upper() for t in tickers.split(",") if t.strip()]
     ticker_list: List[str] = []
@@ -378,7 +383,6 @@ async def api_flow_stream(
         raise HTTPException(503, detail="A scan is already running — wait for it to finish.",
                             headers={"Retry-After": "30"})
 
-    _active_scan.set()
     q: queue.Queue = queue.Queue()
 
     def on_progress(info): q.put({"__progress__": True, **info})
@@ -389,12 +393,17 @@ async def api_flow_stream(
             scan_options_flow(ticker_list, show_progress=False,
                               on_signal=on_signal, on_progress=on_progress)
         except Exception:
-            q.put({"__error__": "Scan failed — check server logs"})  # no raw exception to client
+            q.put({"__error__": "Scan failed — check server logs"})
         finally:
             _active_scan.clear()
             q.put({"__done__": True})
 
-    threading.Thread(target=run, daemon=True).start()
+    _active_scan.set()
+    try:
+        threading.Thread(target=run, daemon=True).start()
+    except Exception:
+        _active_scan.clear()
+        raise HTTPException(500, "Failed to start scan")
 
     # SSE max runtime: 10 min hard timeout
     _start = time.monotonic()
