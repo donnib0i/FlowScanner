@@ -158,9 +158,14 @@ async def _security_headers(request: Request, call_next):
         "img-src 'self' data:; "
         "frame-ancestors 'none'"
     )
+    # Never cache the HTML page — PIN is embedded, and mobile Safari aggressively
+    # caches pages. A stale cached page has the old PIN and all API calls return 401.
+    if request.url.path == "/":
+        h["Cache-Control"] = "no-store, no-cache, must-revalidate"
+        h["Pragma"]        = "no-cache"
     # API responses must not be cached — live market data only
     # Don't override if already set (SSE endpoints need no-transform for proxy buffering)
-    if request.url.path.startswith("/api/") and "cache-control" not in response.headers:
+    elif request.url.path.startswith("/api/") and "cache-control" not in response.headers:
         h["Cache-Control"] = "no-store, no-cache, must-revalidate, no-transform"
         h["Pragma"]        = "no-cache"
     return response
@@ -997,7 +1002,7 @@ body::before{
   <div class="tb-row1">
     <div class="app-name"><span>Scanner</span></div>
     <button class="theme-btn" id="theme-btn" onclick="toggleTheme()" aria-label="Toggle theme">☾</button>
-    <div class="vix-chip" id="vix-chip">VIX —</div>
+    <div class="vix-chip" id="vix-chip">VIX ···</div>
   </div>
   <div class="bias-row">
     <span class="bias-c" id="bc">CALLS —</span>
@@ -1247,8 +1252,34 @@ const S = {
   scanning:false, callFlow:0, putFlow:0, signals:[], hotContracts:[],
   view:'signals', qt:[], ft:[],
 };
-fetch(_pa('/api/universe')).then(r=>r.json()).then(d=>{S.qt=d.quick;S.ft=d.full}).catch(()=>{});
-fetch(_pa('/api/vix')).then(r=>r.ok?r.json():null).then(d=>{if(d)renderVix(d)}).catch(()=>{});
+// ── Server wake-up: retry VIX + universe until the server responds ────────────
+// Render free tier sleeps after inactivity. The first request wakes it up
+// (30-60s). We retry every 5s until we get a response, then stop.
+let _vixLoaded=false, _univLoaded=false;
+function _loadVix(attempt){
+  attempt=attempt||0;
+  fetch(_pa('/api/vix')).then(r=>r.ok?r.json():Promise.reject()).then(d=>{
+    _vixLoaded=true;
+    renderVix(d);
+    // Auto-refresh VIX every 90s
+    setTimeout(()=>_loadVix(0),90000);
+  }).catch(()=>{
+    if(attempt<8) setTimeout(()=>_loadVix(attempt+1), attempt<2?5000:10000);
+  });
+}
+function _loadUniverse(attempt){
+  attempt=attempt||0;
+  fetch(_pa('/api/universe')).then(r=>r.ok?r.json():Promise.reject()).then(d=>{
+    _univLoaded=true;
+    S.qt=d.quick; S.ft=d.full;
+    // Update FULL chip label if it's already showing
+    if(S.full) document.getElementById('c-scope').textContent=`FULL (${S.ft.length})`;
+  }).catch(()=>{
+    if(attempt<8) setTimeout(()=>_loadUniverse(attempt+1), attempt<2?5000:10000);
+  });
+}
+_loadVix(0);
+_loadUniverse(0);
 
 // ── Tab ────────────────────────────────────────────────────────────────────
 function showTab(n,btn){
@@ -1560,25 +1591,34 @@ async function loadSectors(){
       feed.appendChild(el);
     });
   }catch(e){
-    feed.innerHTML='<div class="empty-st"><div class="icon">⚠️</div><h3>Failed to load</h3><button class="sec-load-btn" onclick="loadSectors()" style="margin:16px auto;max-width:200px">Try Again</button></div>';
+    feed.innerHTML='<div class="empty-st"><div class="icon">⚠️</div><h3>Failed to load</h3><p style="font-size:12px;color:var(--sub);margin:8px 0">Server may be waking up</p><button class="sec-load-btn" onclick="loadSectors()" style="margin:16px auto;max-width:200px">Try Again</button></div>';
   }
 }
 
 // ── Contract finder ────────────────────────────────────────────────────────
-async function doFind(){
+async function doFind(retry){
   const btn=document.getElementById('find-btn');
-  if(btn.classList.contains('loading'))return;
+  if(!retry&&btn.classList.contains('loading'))return;
   const ticker=document.getElementById('ft').value.trim().toUpperCase()||'SPY';
-  btn.textContent='Finding…';btn.classList.add('loading');
-  document.getElementById('find-result').innerHTML=
+  btn.textContent=retry?`Retrying…`:'Finding…';btn.classList.add('loading');
+  if(!retry) document.getElementById('find-result').innerHTML=
     '<div style="margin:4px 0"><div class="shimmer" style="height:140px;border-radius:20px;margin-bottom:8px"></div><div class="shimmer" style="height:120px;border-radius:20px;margin-bottom:8px"></div><div class="shimmer" style="height:120px;border-radius:20px"></div></div>';
   try{
     const r=await fetch(_pa(`/api/contract?ticker=${ticker}&direction=${S.dir}&dte_type=${S.dteType}`));
-    if(!r.ok){const e=await r.json();document.getElementById('find-result').innerHTML=`<div class="empty-st" style="padding:24px">${e.error||'Not found'}</div>`;return}
+    if(!r.ok){const e=await r.json();document.getElementById('find-result').innerHTML=`<div class="empty-st" style="padding:24px">${e.detail||e.error||'No contracts found'}</div>`;btn.textContent='Find Top 3 Contracts';btn.classList.remove('loading');return}
     const contracts=await r.json();
     renderContracts(ticker,contracts);
-  }catch(e){document.getElementById('find-result').innerHTML='<div class="empty-st" style="padding:24px">Network error</div>'}
-  finally{btn.textContent='Find Top 3 Contracts';btn.classList.remove('loading')}
+    btn.textContent='Find Top 3 Contracts';btn.classList.remove('loading');
+  }catch(e){
+    if(!retry){
+      // Server may be waking up — retry once after 5s
+      document.getElementById('find-result').innerHTML='<div class="empty-st" style="padding:24px;font-size:13px">Waking up server…</div>';
+      setTimeout(()=>doFind(true),5000);
+    }else{
+      document.getElementById('find-result').innerHTML='<div class="empty-st" style="padding:24px">Server unavailable — try again in a moment</div>';
+      btn.textContent='Find Top 3 Contracts';btn.classList.remove('loading');
+    }
+  }
 }
 
 function renderContracts(ticker,cs){
