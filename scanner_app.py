@@ -519,35 +519,49 @@ HTML = r"""<!DOCTYPE html>
   --safe-b:    env(safe-area-inset-bottom,0px);
   --safe-t:    env(safe-area-inset-top,0px);
   /* themeable surfaces */
-  --card-bg:   rgba(255,255,255,0.85);
-  --chip-bg:   rgba(255,255,255,0.8);
-  --bar-track:  rgba(0,0,0,0.07);
-  --topbar-bg: rgba(255,255,255,0.85);
-  --tabbar-bg: rgba(255,255,255,0.88);
-  --input-bg:  #ffffff;
-  --detail-bg: rgba(242,242,247,0.5);
-  --grid-cell: #ffffff;
-  --toast-bg:  rgba(255,255,255,0.95);
+  --card-bg:     rgba(255,255,255,0.85);
+  --chip-bg:     rgba(255,255,255,0.8);
+  --bar-track:   rgba(0,0,0,0.07);
+  --topbar-bg:   rgba(255,255,255,0.85);
+  --tabbar-bg:   rgba(255,255,255,0.88);
+  --input-bg:    #ffffff;
+  --detail-bg:   rgba(242,242,247,0.5);
+  --grid-cell:   #ffffff;
+  --grid-div:    rgba(0,0,0,0.06);
+  --toast-bg:    rgba(255,255,255,0.95);
+  --vt-track:    rgba(0,0,0,0.06);
+  --vt-active:   #ffffff;
+  --golden-bg:   rgba(255,248,235,0.9);
+  --whale-bg:    rgba(252,245,255,0.9);
+  --sub-badge:   rgba(0,0,0,0.05);
+  --scroll-thumb:rgba(0,0,0,0.15);
 }
 html.dark{
-  --bg:        #000000;
-  --bg2:       #1c1c1e;
-  --bg3:       #2c2c2e;
-  --glass:     rgba(28,28,30,0.85);
-  --glass2:    rgba(44,44,46,0.95);
-  --border:    rgba(255,255,255,0.09);
-  --border2:   rgba(255,255,255,0.15);
-  --text:      #f5f5f7;
-  --sub:       #8e8e93;
-  --card-bg:   rgba(28,28,30,0.95);
-  --chip-bg:   rgba(44,44,46,0.9);
-  --bar-track:  rgba(255,255,255,0.09);
-  --topbar-bg: rgba(0,0,0,0.88);
-  --tabbar-bg: rgba(0,0,0,0.92);
-  --input-bg:  #1c1c1e;
-  --detail-bg: rgba(44,44,46,0.6);
-  --grid-cell: #1c1c1e;
-  --toast-bg:  rgba(44,44,46,0.97);
+  --bg:          #000000;
+  --bg2:         #1c1c1e;
+  --bg3:         #2c2c2e;
+  --glass:       rgba(28,28,30,0.85);
+  --glass2:      rgba(44,44,46,0.95);
+  --border:      rgba(255,255,255,0.09);
+  --border2:     rgba(255,255,255,0.15);
+  --text:        #f5f5f7;
+  --sub:         #8e8e93;
+  --card-bg:     rgba(28,28,30,0.95);
+  --chip-bg:     rgba(44,44,46,0.9);
+  --bar-track:   rgba(255,255,255,0.09);
+  --topbar-bg:   rgba(0,0,0,0.88);
+  --tabbar-bg:   rgba(0,0,0,0.92);
+  --input-bg:    #1c1c1e;
+  --detail-bg:   rgba(44,44,46,0.6);
+  --grid-cell:   #1c1c1e;
+  --grid-div:    rgba(255,255,255,0.07);
+  --toast-bg:    rgba(44,44,46,0.97);
+  --vt-track:    rgba(255,255,255,0.08);
+  --vt-active:   #3a3a3c;
+  --golden-bg:   rgba(60,40,0,0.6);
+  --whale-bg:    rgba(50,20,60,0.6);
+  --sub-badge:   rgba(255,255,255,0.07);
+  --scroll-thumb:rgba(255,255,255,0.2);
 }
 html.dark body::before{
   background:
@@ -690,14 +704,14 @@ body::before{
 .flow-card:active{transform:scale(.985);box-shadow:0 1px 8px rgba(0,0,0,.06)}
 .flow-card.golden{
   border-color:rgba(255,159,10,.2);
-  background:rgba(255,248,235,0.9);
+  background:var(--golden-bg);
   box-shadow:0 2px 24px rgba(255,159,10,.12),0 0 0 1px rgba(255,159,10,.1);
   animation:cardIn .3s cubic-bezier(.34,1.56,.64,1) both,
             goldPulse 3s ease-in-out infinite .4s;
 }
 .flow-card.whale{
   border-color:rgba(175,82,222,.15);
-  background:rgba(252,245,255,0.9);
+  background:var(--whale-bg);
   box-shadow:0 2px 20px rgba(175,82,222,.1),0 0 0 1px rgba(175,82,222,.08);
 }
 .flow-card.inst{border-color:rgba(0,122,255,.12);box-shadow:0 2px 16px rgba(0,122,255,.07)}
@@ -745,7 +759,7 @@ body::before{
 .contracts-row{display:flex;gap:8px;padding:10px 12px;overflow-x:auto;scrollbar-width:none}
 .contracts-row::-webkit-scrollbar{display:none}
 .contract-chip{
-  flex-shrink:0;background:rgba(242,242,247,0.8);border:1px solid var(--border);
+  flex-shrink:0;background:var(--chip-bg);border:1px solid var(--border);
   border-radius:14px;padding:10px 13px;min-width:110px;
   transition:border-color .15s;
 }
@@ -786,11 +800,12 @@ body::before{
 .sec-load-btn:active{transform:scale(.97)}
 .sec-card{
   margin:6px 12px;background:var(--card-bg);border:1px solid var(--border);
-  border-radius:16px;padding:14px 16px;
-  display:flex;align-items:center;gap:12px;
+  border-radius:16px;padding:0;
+  display:flex;flex-direction:column;
   box-shadow:0 1px 8px rgba(0,0,0,.06);
-  animation:cardIn .25s ease both;
+  animation:cardIn .25s ease both;overflow:hidden;
 }
+.sec-card>div:first-child{padding:14px 16px}
 .sec-name{font-size:14px;font-weight:700;width:90px;flex-shrink:0;color:var(--text)}
 .sec-bar-wrap{flex:1;height:5px;background:var(--bar-track);border-radius:3px;overflow:hidden}
 .sec-bar{height:100%;border-radius:3px;transition:width .6s cubic-bezier(.34,1.56,.64,1)}
@@ -813,7 +828,7 @@ body::before{
 .dir-row{display:flex;gap:10px;margin-top:12px}
 .dir-btn{
   flex:1;padding:13px;border:1.5px solid var(--border);border-radius:14px;
-  background:rgba(255,255,255,.8);color:var(--sub);font-size:14px;font-weight:700;
+  background:var(--chip-bg);color:var(--sub);font-size:14px;font-weight:700;
   cursor:pointer;transition:all .18s cubic-bezier(.34,1.56,.64,1);
   box-shadow:0 1px 4px rgba(0,0,0,.05);min-height:44px;
 }
@@ -844,8 +859,8 @@ body::before{
 .cont-sym .strike{color:var(--sub);font-size:18px;font-weight:500}
 .cont-badge{font-size:10px;font-weight:700;padding:4px 10px;border-radius:20px;margin-top:4px}
 .cont-badge.best{background:rgba(0,122,255,.1);color:#0055cc;border:1px solid rgba(0,122,255,.2)}
-.cont-badge.alt{background:rgba(0,0,0,.04);color:var(--sub);border:1px solid var(--border)}
-.cont-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:rgba(0,0,0,.06)}
+.cont-badge.alt{background:var(--sub-badge);color:var(--sub);border:1px solid var(--border)}
+.cont-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--grid-div)}
 .cg{background:var(--grid-cell);padding:12px 14px}
 .cg label{font-size:10px;color:var(--sub);display:block;letter-spacing:.4px;margin-bottom:3px;text-transform:uppercase}
 .cg span{font-size:16px;font-weight:700;color:var(--text)}
@@ -873,18 +888,18 @@ body::before{
 
 /* ── Scrollbar ───────────────────────────────────────────────── */
 ::-webkit-scrollbar{width:3px;height:3px}
-::-webkit-scrollbar-thumb{background:rgba(0,0,0,.15);border-radius:2px}
+::-webkit-scrollbar-thumb{background:var(--scroll-thumb);border-radius:2px}
 
 /* ── View toggle ─────────────────────────────────────────────── */
-.view-toggle{display:flex;gap:0;margin:0 16px 2px;background:rgba(0,0,0,.06);border-radius:12px;padding:3px}
+.view-toggle{display:flex;gap:0;margin:0 16px 2px;background:var(--vt-track);border-radius:12px;padding:3px}
 .vt-btn{flex:1;padding:7px;border:none;border-radius:9px;background:none;
-  color:var(--sub);font-size:12px;font-weight:600;cursor:pointer;transition:all .15s}
-.vt-btn.on{background:#ffffff;color:var(--text);box-shadow:0 1px 4px rgba(0,0,0,.1)}
+  color:var(--sub);font-size:12px;font-weight:600;cursor:pointer;transition:all .15s;font-family:inherit}
+.vt-btn.on{background:var(--vt-active);color:var(--text);box-shadow:0 1px 4px rgba(0,0,0,.1)}
 
 /* ── HOT contracts list ──────────────────────────────────────── */
 #hot-feed{padding:4px 0 8px}
 .hot-card{
-  margin:6px 12px;background:rgba(255,255,255,.85);border:1px solid rgba(0,0,0,.06);
+  margin:6px 12px;background:var(--card-bg);border:1px solid var(--border);
   border-radius:16px;padding:13px 16px;
   display:flex;align-items:center;gap:12px;
   box-shadow:0 1px 8px rgba(0,0,0,.06);
@@ -917,7 +932,7 @@ body::before{
 /* ── GUIDE tab ───────────────────────────────────────────────── */
 .guide{padding:16px 12px 32px}
 .guide-section{margin-bottom:8px;border-radius:16px;overflow:hidden;
-  background:rgba(255,255,255,.85);border:1px solid rgba(0,0,0,.06);
+  background:var(--card-bg);border:1px solid var(--border);
   box-shadow:0 1px 8px rgba(0,0,0,.06)}
 .guide-hdr{padding:14px 16px;display:flex;justify-content:space-between;align-items:center;
   cursor:pointer;user-select:none}
@@ -935,7 +950,7 @@ body::before{
 .gb-purple{background:rgba(175,82,222,.1);color:#7b2da0;border:1px solid rgba(175,82,222,.2)}
 .gb-blue{background:rgba(0,122,255,.1);color:#0055cc;border:1px solid rgba(0,122,255,.2)}
 .gb-amber{background:rgba(255,159,10,.1);color:#c93400;border:1px solid rgba(255,159,10,.2)}
-.gb-sub{background:rgba(0,0,0,.05);color:var(--sub);border:1px solid var(--border)}
+.gb-sub{background:var(--sub-badge);color:var(--sub);border:1px solid var(--border)}
 .score-pill{display:inline-block;padding:2px 8px;border-radius:8px;font-size:11px;font-weight:700;margin-right:4px}
 .sp-hi{background:rgba(255,59,48,.1);color:var(--red)}.sp-md{background:rgba(255,159,10,.1);color:#c93400}
 .sp-lo{background:rgba(0,0,0,.05);color:var(--sub)}
@@ -1369,34 +1384,48 @@ function renderHot(){
     feed.innerHTML='<div class="empty-st"><div class="icon">🔥</div><h3>No hot contracts yet</h3>Run a scan first.</div>';
     return;
   }
-  // Sort by vol÷OI descending, dedupe by ticker+strike+type+exp
+  // Dedupe by ticker+strike+type+exp
   const seen=new Set();
   const deduped=S.hotContracts.filter(c=>{
     const k=`${c.ticker}-${c.strike}-${c.type}-${c.exp}`;
     if(seen.has(k))return false;seen.add(k);return true;
   });
-  const sorted=deduped.sort((a,b)=>(b.vol_oi||0)-(a.vol_oi||0)).slice(0,25);
-  feed.innerHTML='<div style="padding:6px 12px 4px;font-size:11px;font-weight:700;letter-spacing:1px;color:var(--sub);text-transform:uppercase">Hot by Vol÷OI conviction</div>';
-  sorted.forEach((c,i)=>{
-    const rankCls=i===0?'t1':i===1?'t2':i===2?'t3':'';
-    const voiN=c.vol_oi||0;
-    const voiCls=voiN>=10?'fire':voiN>=5?'hot':'warm';
-    const dLabel=c.dte===0?'0DTE':c.dte>=0?`${c.dte}DTE`:'—';
-    const priceStr=c.mid>0?`$${c.mid.toFixed(2)}`:'—';
-    const el=document.createElement('div');
-    el.className='hot-card';
-    el.innerHTML=`
-      <div class="hot-rank ${rankCls}">${i+1}</div>
-      <div class="hot-info">
-        <div class="hot-sym"><span class="${c.type}">${c.ticker}</span> <span style="color:var(--sub);font-size:14px;font-weight:500">$${c.strike.toFixed(0)} ${c.type==='call'?'C':'P'}</span></div>
-        <div class="hot-meta">${dLabel} · ${c.exp} · ${priceStr}</div>
-      </div>
-      <div class="hot-right">
-        <div class="hot-voi ${voiCls}">x${voiN.toFixed(1)}</div>
-        <div class="hot-flow">${c.flow||'—'} flow</div>
-      </div>`;
-    feed.appendChild(el);
-  });
+  // Split into calls and puts, each sorted by vol÷OI desc
+  const calls=deduped.filter(c=>c.type==='call').sort((a,b)=>(b.vol_oi||0)-(a.vol_oi||0)).slice(0,12);
+  const puts=deduped.filter(c=>c.type==='put').sort((a,b)=>(b.vol_oi||0)-(a.vol_oi||0)).slice(0,12);
+
+  feed.innerHTML='';
+
+  function buildSection(label,color,list){
+    if(!list.length)return;
+    const hdr=document.createElement('div');
+    hdr.style.cssText=`padding:6px 12px 4px;font-size:11px;font-weight:700;letter-spacing:1px;color:${color};text-transform:uppercase`;
+    hdr.textContent=label;
+    feed.appendChild(hdr);
+    list.forEach((c,i)=>{
+      const rankCls=i===0?'t1':i===1?'t2':i===2?'t3':'';
+      const voiN=c.vol_oi||0;
+      const voiCls=voiN>=10?'fire':voiN>=5?'hot':'warm';
+      const dLabel=c.dte===0?'0DTE':c.dte>=0?`${c.dte}DTE`:'—';
+      const priceStr=c.mid>0?`$${c.mid.toFixed(2)}`:'—';
+      const el=document.createElement('div');
+      el.className='hot-card';
+      el.innerHTML=`
+        <div class="hot-rank ${rankCls}">${i+1}</div>
+        <div class="hot-info">
+          <div class="hot-sym"><span class="${c.type}">${c.ticker}</span> <span style="color:var(--sub);font-size:14px;font-weight:500">$${c.strike.toFixed(0)} ${c.type==='call'?'C':'P'}</span></div>
+          <div class="hot-meta">${dLabel} · ${c.exp} · ${priceStr}</div>
+        </div>
+        <div class="hot-right">
+          <div class="hot-voi ${voiCls}">x${voiN.toFixed(1)}</div>
+          <div class="hot-flow">${c.flow||'—'} flow</div>
+        </div>`;
+      feed.appendChild(el);
+    });
+  }
+
+  buildSection('▲ Hot Calls','var(--green)',calls);
+  buildSection('▼ Hot Puts','var(--red)',puts);
 }
 
 // ── Render signal card ─────────────────────────────────────────────────────
