@@ -821,7 +821,7 @@ def scan_options_flow(tickers: List[str], show_progress: bool = True,
         if on_progress:
             on_progress({"ticker": ticker, "i": i, "n": len(tickers)})
         try:
-            t    = yf.Ticker(_yf_ticker(ticker))
+            t    = _yf(ticker)
             exps = t.options
             if not exps:
                 continue
