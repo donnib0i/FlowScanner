@@ -6,7 +6,7 @@ Open:  http://localhost:8765  (or LAN IP on phone)
 """
 
 from __future__ import annotations
-import asyncio, collections, contextlib, io, json, os, queue, re, sys, threading, time
+import asyncio, collections, contextlib, hmac, io, json, os, queue, re, sys, threading, time
 from datetime import datetime
 from typing import Dict, List, Optional
 
@@ -51,7 +51,9 @@ def _validate_enum(val: str, allowed: set, name: str) -> str:
         raise HTTPException(400, f"Invalid {name}: {val!r}. Must be one of {sorted(allowed)}")
     return val
 
-# ── Rate limiter — sliding window per IP ─────────────────────────────────────
+# ── Rate limiter — sliding window per IP, with memory cap ────────────────────
+_MAX_RL_KEYS = 10_000   # cap tracked IPs to prevent unbounded memory growth
+
 class _RateLimiter:
     def __init__(self):
         self._windows: Dict[str, collections.deque] = {}
@@ -60,6 +62,12 @@ class _RateLimiter:
     def allow(self, key: str, limit: int, window_secs: int) -> bool:
         now = time.monotonic()
         with self._lock:
+            # Evict oldest key if over cap (simple FIFO eviction)
+            if len(self._windows) >= _MAX_RL_KEYS and key not in self._windows:
+                try:
+                    self._windows.pop(next(iter(self._windows)))
+                except StopIteration:
+                    pass
             dq = self._windows.setdefault(key, collections.deque())
             cutoff = now - window_secs
             while dq and dq[0] < cutoff:
@@ -72,27 +80,36 @@ class _RateLimiter:
 _rl = _RateLimiter()
 
 def _client_ip(req: Request) -> str:
-    # Respect X-Forwarded-For only from loopback (reverse proxy on same host)
+    # On cloud (Render/Railway), the real client IP is in X-Forwarded-For.
+    # Always use leftmost IP (added by outermost public proxy, not spoofable past Render's edge).
     xff = req.headers.get("x-forwarded-for", "")
-    if xff and req.client and req.client.host in ("127.0.0.1", "::1"):
+    if xff:
         return xff.split(",")[0].strip()
     return req.client.host if req.client else "unknown"
 
 def _check_rate(req: Request, endpoint: str, limit: int, window: int):
     key = f"{_client_ip(req)}:{endpoint}"
     if not _rl.allow(key, limit, window):
-        raise HTTPException(429, "Too many requests — slow down")
+        raise HTTPException(429, detail="Too many requests — slow down",
+                            headers={"Retry-After": str(window)})
 
 # ── Concurrent scan guard — only one active scan at a time ───────────────────
 _scan_lock = threading.Semaphore(1)
 _active_scan = threading.Event()   # set while a scan is running
 
-# ── PIN check helper ──────────────────────────────────────────────────────────
+# ── PIN check — timing-safe + brute-force lockout ────────────────────────────
 def _check_pin(req: Request):
     if not _PIN:
         return
-    supplied = req.headers.get("x-pin", "") or req.query_params.get("pin", "")
-    if supplied != _PIN:
+    ip = _client_ip(req)
+    # Hard cap: 10 PIN attempts per IP per 5 min; blocks brute force
+    if not _rl.allow(f"{ip}:auth", limit=10, window=300):
+        raise HTTPException(429, detail="Too many attempts — try later",
+                            headers={"Retry-After": "300"})
+    supplied = (req.headers.get("x-pin", "") or req.query_params.get("pin", "")).strip()
+    # hmac.compare_digest prevents timing oracle (constant-time comparison)
+    if not hmac.compare_digest(supplied.encode("utf-8", errors="replace"),
+                               _PIN.encode("utf-8")):
         raise HTTPException(401, "Unauthorized")
 
 DEFAULT_FLOW_TICKERS = [
@@ -120,13 +137,18 @@ app.add_middleware(
 @app.middleware("http")
 async def _security_headers(request: Request, call_next):
     response = await call_next(request)
-    response.headers["X-Content-Type-Options"]  = "nosniff"
-    response.headers["X-Frame-Options"]         = "DENY"
-    response.headers["X-XSS-Protection"]        = "1; mode=block"
-    response.headers["Referrer-Policy"]         = "no-referrer"
-    response.headers["Permissions-Policy"]      = "geolocation=(), camera=(), microphone=()"
-    # CSP: allow inline scripts/styles for embedded HTML
-    response.headers["Content-Security-Policy"] = (
+    h = response.headers
+    h["X-Content-Type-Options"]  = "nosniff"
+    h["X-Frame-Options"]         = "DENY"
+    h["X-XSS-Protection"]        = "1; mode=block"
+    h["Referrer-Policy"]         = "no-referrer"
+    h["Permissions-Policy"]      = "geolocation=(), camera=(), microphone=()"
+    # HSTS — tell browsers to always use HTTPS for this domain (1 year)
+    h["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    # Hide server fingerprint
+    h["Server"] = "scanner"
+    # CSP: allow inline scripts/styles for the embedded single-page HTML
+    h["Content-Security-Policy"] = (
         "default-src 'self'; "
         "script-src 'self' 'unsafe-inline'; "
         "style-src 'self' 'unsafe-inline'; "
@@ -134,6 +156,10 @@ async def _security_headers(request: Request, call_next):
         "img-src 'self' data:; "
         "frame-ancestors 'none'"
     )
+    # API responses must not be cached — they contain live market data
+    if request.url.path.startswith("/api/"):
+        h["Cache-Control"] = "no-store, no-cache, must-revalidate"
+        h["Pragma"]        = "no-cache"
     return response
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -268,41 +294,41 @@ async def api_contract(req: Request, ticker: str = "SPY", direction: str = "up",
 
 @app.get("/api/debug")
 async def api_debug(req: Request):
-    """Diagnostic endpoint — returns raw yfinance fetch results and errors."""
+    """Diagnostic endpoint — PIN required, rate-limited to 3/min."""
     _check_pin(req)
-    import traceback
-    results = {}
-    # 1. Session type
+    _check_rate(req, "debug", limit=3, window=60)
+    from scanner import _YF_SESSION, _yf
+    results: Dict = {}
+    results["session_type"] = type(_YF_SESSION).__name__
+    # VIX
     try:
-        from scanner import _YF_SESSION
-        results["session_type"] = type(_YF_SESSION).__name__
-    except Exception as e:
-        results["session_type"] = f"ERROR: {e}"
-    # 2. VIX fetch
-    try:
-        from scanner import _yf
-        import yfinance as yf
         t = _yf("VIX")
         h = t.history(period="2d")
-        results["vix_rows"] = len(h)
-        results["vix_value"] = float(h["Close"].iloc[-1]) if not h.empty else None
+        results["vix_ok"]    = not h.empty
+        results["vix_rows"]  = len(h)
+        results["vix_value"] = round(float(h["Close"].iloc[-1]), 2) if not h.empty else None
     except Exception as e:
-        results["vix_error"] = traceback.format_exc()[-500:]
-    # 3. SPY options list
+        results["vix_ok"] = False
+        results["vix_error"] = type(e).__name__ + ": " + str(e)[:200]
+    # SPY options list
     try:
-        t2 = _yf("SPY")
+        t2   = _yf("SPY")
         exps = t2.options
         results["spy_exps"] = list(exps[:5]) if exps else []
+        results["spy_ok"]   = bool(exps)
     except Exception as e:
-        results["spy_exps_error"] = traceback.format_exc()[-500:]
-    # 4. SPY first chain
+        results["spy_ok"]    = False
+        results["spy_error"] = type(e).__name__ + ": " + str(e)[:200]
+    # SPY first chain
     try:
         if results.get("spy_exps"):
             chain = t2.option_chain(results["spy_exps"][0])
             results["spy_chain_calls"] = len(chain.calls)
-            results["spy_chain_puts"] = len(chain.puts)
+            results["spy_chain_puts"]  = len(chain.puts)
+            results["chain_ok"]        = True
     except Exception as e:
-        results["spy_chain_error"] = traceback.format_exc()[-500:]
+        results["chain_ok"]    = False
+        results["chain_error"] = type(e).__name__ + ": " + str(e)[:200]
     return results
 
 @app.get("/api/sectors")
@@ -349,7 +375,8 @@ async def api_flow_stream(
 
     # Only one scan at a time — reject if busy
     if _active_scan.is_set():
-        raise HTTPException(503, "A scan is already running. Wait for it to finish.")
+        raise HTTPException(503, detail="A scan is already running — wait for it to finish.",
+                            headers={"Retry-After": "30"})
 
     _active_scan.set()
     q: queue.Queue = queue.Queue()
