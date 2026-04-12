@@ -1222,6 +1222,7 @@ body::before{
 (function(){
   if(localStorage.getItem('theme')==='dark'){
     document.documentElement.classList.add('dark');
+    document.querySelector('meta[name="theme-color"]').content='#000000';
   }
 })();
 
