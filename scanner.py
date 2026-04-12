@@ -689,9 +689,19 @@ def scan_sectors() -> Dict[str, Dict]:
     sys.stdout.write("\r" + " " * 50 + "\r")
     sys.stdout.flush()
 
+    # If batch download failed (cloud IP block, timeout, etc.), fall back to
+    # individual _yf() calls which use the curl_cffi session and work on Render.
+    use_batch = not batch.empty
+    if not use_batch:
+        print(f"  {Fore.YELLOW}Batch failed — falling back to individual fetches{Style.RESET_ALL}", end="", flush=True)
+
     for name, etf in SECTOR_ETFS.items():
         try:
-            hist = _extract_ticker_hist(batch, etf)
+            if use_batch:
+                hist = _extract_ticker_hist(batch, etf)
+            else:
+                t = _yf(etf)
+                hist = t.history(period="5d")
             if hist.empty or len(hist) < 3:
                 continue
 
