@@ -101,14 +101,17 @@ def _check_pin(req: Request):
     if not _PIN:
         return
     ip = _client_ip(req)
-    # Hard cap: 10 PIN attempts per IP per 5 min; blocks brute force
-    if not _rl.allow(f"{ip}:auth", limit=10, window=300):
-        raise HTTPException(429, detail="Too many attempts — try later",
-                            headers={"Retry-After": "300"})
     supplied = (req.headers.get("x-pin", "") or req.query_params.get("pin", "")).strip()
     # hmac.compare_digest prevents timing oracle (constant-time comparison)
     if not hmac.compare_digest(supplied.encode("utf-8", errors="replace"),
                                _PIN.encode("utf-8")):
+        # Only count FAILED attempts toward brute-force lockout.
+        # Successful requests must never consume auth slots — otherwise
+        # normal usage (load page → VIX → universe → scan = 4 calls) exhausts
+        # the limit and locks the user out with 429 → "Connection lost".
+        if not _rl.allow(f"{ip}:auth_fail", limit=10, window=300):
+            raise HTTPException(429, detail="Too many failed attempts — try later",
+                                headers={"Retry-After": "300"})
         raise HTTPException(401, "Unauthorized")
 
 DEFAULT_FLOW_TICKERS = [
