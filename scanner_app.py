@@ -347,6 +347,8 @@ async def api_sectors(req: Request):
     clean = [{"name": k, "etf": v.get("etf",""), "change": round(v.get("change_pct",0),2),
               "strength": round(v.get("strength",0),2), "price": round(v.get("price",0),2)}
              for k, v in data.items()]
+    if not clean:
+        raise HTTPException(503, "No sector data — market may be closed or data source unavailable")
     return sorted(clean, key=lambda x: x["change"], reverse=True)
 
 @app.get("/api/flow/stream")
@@ -494,25 +496,66 @@ HTML = r"""<!DOCTYPE html>
 /* ── Reset & tokens ──────────────────────────────────────────── */
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
 :root{
-  --bg:      #f5f5f7;
-  --bg2:     #ffffff;
-  --bg3:     #f2f2f7;
-  --glass:   rgba(255,255,255,0.75);
-  --glass2:  rgba(255,255,255,0.9);
-  --border:  rgba(0,0,0,0.08);
-  --border2: rgba(0,0,0,0.12);
-  --text:    #1d1d1f;
-  --sub:     #6e6e73;
-  --green:   #34c759;
-  --red:     #ff3b30;
-  --gold:    #ff9f0a;
-  --amber:   #ff9f0a;
-  --purple:  #af52de;
-  --blue:    #007aff;
-  --teal:    #32ade6;
-  --cyan:    #5ac8fa;
-  --safe-b:  env(safe-area-inset-bottom,0px);
-  --safe-t:  env(safe-area-inset-top,0px);
+  --bg:        #f5f5f7;
+  --bg2:       #ffffff;
+  --bg3:       #f2f2f7;
+  --glass:     rgba(255,255,255,0.75);
+  --glass2:    rgba(255,255,255,0.9);
+  --border:    rgba(0,0,0,0.08);
+  --border2:   rgba(0,0,0,0.12);
+  --text:      #1d1d1f;
+  --sub:       #6e6e73;
+  --green:     #34c759;
+  --red:       #ff3b30;
+  --gold:      #ff9f0a;
+  --amber:     #ff9f0a;
+  --purple:    #af52de;
+  --blue:      #007aff;
+  --teal:      #32ade6;
+  --cyan:      #5ac8fa;
+  --safe-b:    env(safe-area-inset-bottom,0px);
+  --safe-t:    env(safe-area-inset-top,0px);
+  /* themeable surfaces */
+  --card-bg:   rgba(255,255,255,0.85);
+  --chip-bg:   rgba(255,255,255,0.8);
+  --bar-track:  rgba(0,0,0,0.07);
+  --topbar-bg: rgba(255,255,255,0.85);
+  --tabbar-bg: rgba(255,255,255,0.88);
+  --input-bg:  #ffffff;
+  --detail-bg: rgba(242,242,247,0.5);
+  --grid-cell: #ffffff;
+  --toast-bg:  rgba(255,255,255,0.95);
+}
+html.dark{
+  --bg:        #000000;
+  --bg2:       #1c1c1e;
+  --bg3:       #2c2c2e;
+  --glass:     rgba(28,28,30,0.85);
+  --glass2:    rgba(44,44,46,0.95);
+  --border:    rgba(255,255,255,0.09);
+  --border2:   rgba(255,255,255,0.15);
+  --text:      #f5f5f7;
+  --sub:       #8e8e93;
+  --card-bg:   rgba(28,28,30,0.95);
+  --chip-bg:   rgba(44,44,46,0.9);
+  --bar-track:  rgba(255,255,255,0.09);
+  --topbar-bg: rgba(0,0,0,0.88);
+  --tabbar-bg: rgba(0,0,0,0.92);
+  --input-bg:  #1c1c1e;
+  --detail-bg: rgba(44,44,46,0.6);
+  --grid-cell: #1c1c1e;
+  --toast-bg:  rgba(44,44,46,0.97);
+}
+html.dark body::before{
+  background:
+    radial-gradient(ellipse 80% 60% at 15% 40%,rgba(0,50,150,.2) 0%,transparent 60%),
+    radial-gradient(ellipse 60% 50% at 85% 15%,rgba(80,0,150,.15) 0%,transparent 55%),
+    radial-gradient(ellipse 70% 50% at 50% 90%,rgba(0,80,120,.15) 0%,transparent 55%);
+  opacity:.5;
+}
+html.dark .shimmer{
+  background:linear-gradient(90deg,#2c2c2e 25%,#3a3a3c 50%,#2c2c2e 75%);
+  background-size:200% 100%;
 }
 /* colour aliases */
 .green{color:var(--green)!important}.red{color:var(--red)!important}
@@ -538,20 +581,20 @@ body::before{
 #topbar{
   flex-shrink:0;
   padding:calc(12px + var(--safe-t)) 20px 14px;
-  background:rgba(255,255,255,0.85);
+  background:var(--topbar-bg);
   backdrop-filter:blur(30px) saturate(180%);
   -webkit-backdrop-filter:blur(30px) saturate(180%);
-  border-bottom:1px solid rgba(0,0,0,0.1);
+  border-bottom:1px solid var(--border2);
 }
 #content{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;
   padding-bottom:calc(68px + var(--safe-b))}
 #tabbar{
   position:fixed;bottom:0;left:0;right:0;
   display:flex;
-  background:rgba(255,255,255,0.88);
+  background:var(--tabbar-bg);
   backdrop-filter:blur(30px) saturate(180%);
   -webkit-backdrop-filter:blur(30px) saturate(180%);
-  border-top:1px solid rgba(0,0,0,0.1);
+  border-top:1px solid var(--border2);
   padding-bottom:var(--safe-b);
   z-index:50;
 }
@@ -596,7 +639,7 @@ body::before{
 }
 .filter-bar::-webkit-scrollbar{display:none}
 .chip{
-  background:rgba(255,255,255,0.8);border:1px solid var(--border);border-radius:20px;
+  background:var(--chip-bg);border:1px solid var(--border);border-radius:20px;
   padding:11px 15px;font-size:12px;font-weight:600;color:var(--sub);
   cursor:pointer;white-space:nowrap;transition:all .18s cubic-bezier(.34,1.56,.64,1);
   flex-shrink:0;box-shadow:0 1px 3px rgba(0,0,0,.05);min-height:44px;
@@ -632,9 +675,9 @@ body::before{
 /* ── Flow card ───────────────────────────────────────────────── */
 .flow-card{
   margin:8px 12px;
-  background:rgba(255,255,255,0.85);
+  background:var(--card-bg);
   backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
-  border:1px solid rgba(0,0,0,0.06);
+  border:1px solid var(--border);
   border-radius:20px;overflow:hidden;
   cursor:pointer;
   box-shadow:0 2px 20px rgba(0,0,0,0.08);
@@ -715,21 +758,21 @@ body::before{
 .dte-dot.zero{background:var(--blue)}.dte-dot.near{background:var(--amber)}.dte-dot.far{background:var(--sub)}
 
 /* expanded detail */
-.card-detail{padding:12px 16px 14px;border-top:1px solid var(--border);display:none;background:rgba(242,242,247,.5)}
+.card-detail{padding:12px 16px 14px;border-top:1px solid var(--border);display:none;background:var(--detail-bg)}
 .card-detail.open{display:block;animation:fadeIn .2s ease}
 @keyframes fadeIn{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
 .detail-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:12px}
 .dg-item label{font-size:10px;color:var(--sub);letter-spacing:.4px;text-transform:uppercase;display:block;margin-bottom:3px}
 .dg-item span{font-size:14px;font-weight:700;color:var(--text)}
 .dte-seg-row{display:flex;gap:8px}
-.dte-seg{flex:1;background:rgba(255,255,255,.7);border:1px solid var(--border);border-radius:12px;padding:10px;text-align:center}
+.dte-seg{flex:1;background:var(--card-bg);border:1px solid var(--border);border-radius:12px;padding:10px;text-align:center}
 .dte-seg label{font-size:9px;color:var(--sub);display:block;margin-bottom:4px;letter-spacing:.5px;text-transform:uppercase}
 .dte-seg span{font-size:13px;font-weight:700}
 
 /* ── Sector tab ──────────────────────────────────────────────── */
 .sec-head{padding:16px 20px 8px;font-size:11px;font-weight:700;letter-spacing:1px;color:var(--sub);text-transform:uppercase}
 .sec-load-btn{
-  margin:16px;background:rgba(255,255,255,.8);border:1px solid var(--border);
+  margin:16px;background:var(--card-bg);border:1px solid var(--border);
   border-radius:16px;padding:14px;text-align:center;color:var(--blue);
   font-weight:600;font-size:14px;cursor:pointer;
   box-shadow:0 1px 6px rgba(0,0,0,.06);
@@ -737,14 +780,14 @@ body::before{
 }
 .sec-load-btn:active{transform:scale(.97)}
 .sec-card{
-  margin:6px 12px;background:rgba(255,255,255,.85);border:1px solid rgba(0,0,0,.06);
+  margin:6px 12px;background:var(--card-bg);border:1px solid var(--border);
   border-radius:16px;padding:14px 16px;
   display:flex;align-items:center;gap:12px;
   box-shadow:0 1px 8px rgba(0,0,0,.06);
   animation:cardIn .25s ease both;
 }
 .sec-name{font-size:14px;font-weight:700;width:90px;flex-shrink:0;color:var(--text)}
-.sec-bar-wrap{flex:1;height:5px;background:rgba(0,0,0,.07);border-radius:3px;overflow:hidden}
+.sec-bar-wrap{flex:1;height:5px;background:var(--bar-track);border-radius:3px;overflow:hidden}
 .sec-bar{height:100%;border-radius:3px;transition:width .6s cubic-bezier(.34,1.56,.64,1)}
 .sec-bar.up{background:linear-gradient(90deg,#248a3d,rgba(52,199,89,.5))}
 .sec-bar.dn{background:linear-gradient(90deg,var(--red),rgba(255,59,48,.5))}
@@ -754,7 +797,7 @@ body::before{
 /* ── Contract finder ─────────────────────────────────────────── */
 .finder{padding:20px 16px}
 .find-input{
-  width:100%;background:#ffffff;border:1.5px solid var(--border);
+  width:100%;background:var(--input-bg);border:1.5px solid var(--border);
   border-radius:16px;color:var(--text);font-size:24px;font-weight:800;
   letter-spacing:1px;padding:16px 18px;text-transform:uppercase;outline:none;
   transition:border-color .2s,box-shadow .2s;
@@ -784,7 +827,7 @@ body::before{
 #find-result{margin-top:16px}
 .cont-cards{display:flex;flex-direction:column;gap:10px}
 .cont-card{
-  background:rgba(255,255,255,.9);border:1px solid rgba(0,0,0,.06);border-radius:20px;
+  background:var(--card-bg);border:1px solid var(--border);border-radius:20px;
   overflow:hidden;box-shadow:0 2px 16px rgba(0,0,0,.08);
   animation:cardIn .3s cubic-bezier(.34,1.56,.64,1) both;
 }
@@ -798,7 +841,7 @@ body::before{
 .cont-badge.best{background:rgba(0,122,255,.1);color:#0055cc;border:1px solid rgba(0,122,255,.2)}
 .cont-badge.alt{background:rgba(0,0,0,.04);color:var(--sub);border:1px solid var(--border)}
 .cont-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:rgba(0,0,0,.06)}
-.cg{background:#ffffff;padding:12px 14px}
+.cg{background:var(--grid-cell);padding:12px 14px}
 .cg label{font-size:10px;color:var(--sub);display:block;letter-spacing:.4px;margin-bottom:3px;text-transform:uppercase}
 .cg span{font-size:16px;font-weight:700;color:var(--text)}
 .cg span.green{color:#248a3d}.cg span.red{color:var(--red)}
@@ -816,7 +859,7 @@ body::before{
 /* ── Toast ───────────────────────────────────────────────────── */
 #toast{
   position:fixed;top:calc(80px + var(--safe-t));left:50%;transform:translateX(-50%);
-  background:rgba(255,255,255,.95);border:1px solid var(--border2);border-radius:20px;
+  background:var(--toast-bg);border:1px solid var(--border2);border-radius:20px;
   padding:10px 20px;font-size:13px;font-weight:500;color:var(--text);
   box-shadow:0 8px 32px rgba(0,0,0,.15);
   z-index:200;opacity:0;transition:opacity .2s;pointer-events:none;white-space:nowrap;
@@ -857,7 +900,7 @@ body::before{
 .dte-type-row{display:flex;gap:8px;margin-top:12px}
 .dte-type-btn{
   flex:1;padding:10px 6px;border:1.5px solid var(--border);border-radius:12px;
-  background:rgba(255,255,255,.8);color:var(--sub);font-size:12px;font-weight:700;
+  background:var(--chip-bg);color:var(--sub);font-size:12px;font-weight:700;
   cursor:pointer;transition:all .18s cubic-bezier(.34,1.56,.64,1);text-align:center;
   box-shadow:0 1px 4px rgba(0,0,0,.05);
 }
@@ -898,6 +941,32 @@ body::before{
   background:rgba(175,82,222,.1);color:#7b2da0;border:1px solid rgba(175,82,222,.2);
   border-radius:10px;padding:2px 8px;font-size:10px;font-weight:700;margin-left:4px;
 }
+
+/* ── Theme toggle ─────────────────────────────────────────────── */
+.theme-btn{
+  background:none;border:none;cursor:pointer;font-size:17px;
+  color:var(--sub);padding:0;width:36px;height:36px;border-radius:10px;
+  display:flex;align-items:center;justify-content:center;
+  transition:background .15s;flex-shrink:0;
+}
+.theme-btn:active{background:var(--border)}
+
+/* ── Sector stocks ────────────────────────────────────────────── */
+.sec-card{cursor:pointer}
+.sec-tickers{
+  display:none;flex-wrap:wrap;gap:6px;padding:10px 16px 14px;
+  border-top:1px solid var(--border);
+}
+.sec-card.open .sec-tickers{display:flex}
+.sec-tick{
+  font-size:11px;font-weight:700;padding:4px 9px;border-radius:8px;
+  background:var(--bg3);color:var(--sub);border:1px solid var(--border);
+  letter-spacing:.3px;
+}
+.sec-tick.call{background:rgba(52,199,89,.08);color:#248a3d;border-color:rgba(52,199,89,.2)}
+.sec-tick.put{background:rgba(255,59,48,.08);color:var(--red);border-color:rgba(255,59,48,.2)}
+.sec-expand{font-size:11px;color:var(--sub);margin-left:auto;flex-shrink:0;transition:transform .2s}
+.sec-card.open .sec-expand{transform:rotate(90deg)}
 </style>
 </head>
 <body>
@@ -907,6 +976,7 @@ body::before{
 <div id="topbar">
   <div class="tb-row1">
     <div class="app-name"><span>Scanner</span></div>
+    <button class="theme-btn" id="theme-btn" onclick="toggleTheme()" aria-label="Toggle theme">☾</button>
     <div class="vix-chip" id="vix-chip">VIX —</div>
   </div>
   <div class="bias-row">
@@ -1127,6 +1197,26 @@ body::before{
 <div id="toast"></div>
 
 <script>
+
+// ── Theme init (before first paint) ───────────────────────────────────────
+(function(){
+  if(localStorage.getItem('theme')==='dark'){
+    document.documentElement.classList.add('dark');
+  }
+})();
+
+// ── Sector → tickers mapping ───────────────────────────────────────────────
+const SECTOR_TICKERS = {
+  'Tech':       ['NVDA','AMD','AAPL','MSFT','AMZN','TSLA','QQQ','PLTR','COIN','MSTR','TQQQ','SOXL'],
+  'Financials': ['GS','JPM','BAC','V','MA','SOFI','HOOD','COIN','AFRM'],
+  'CommSvcs':   ['META','GOOGL','SNAP','GME','UBER','LYFT','NFLX','PINS'],
+  'Energy':     ['XOM','CVX','USO'],
+  'Health':     ['HIMS','MRNA','PFE','ONDS'],
+  'Materials':  ['GLD','SLV','CPER'],
+  'Industrials':['F','GM'],
+  'Index':      ['SPX','SPY','IWM','DIA','TQQQ','SQQQ','UPRO'],
+  'Vol':        ['VXX','UVXY','SVXY'],
+};
 
 // ── State ──────────────────────────────────────────────────────────────────
 const PIN = '__SCANNER_PIN__';
@@ -1381,24 +1471,50 @@ function toggleDetail(head){
 // ── Sectors ────────────────────────────────────────────────────────────────
 async function loadSectors(){
   const feed=document.getElementById('sec-feed');
-  feed.innerHTML='<div style="margin:16px"><div class="shimmer" style="height:56px;margin-bottom:8px"></div><div class="shimmer" style="height:56px;margin-bottom:8px"></div><div class="shimmer" style="height:56px"></div></div>';
+  feed.innerHTML='<div style="margin:16px"><div class="shimmer" style="height:64px;margin-bottom:8px"></div><div class="shimmer" style="height:64px;margin-bottom:8px"></div><div class="shimmer" style="height:64px"></div></div>';
   try{
     const r=await fetch(_pa('/api/sectors'));
+    if(!r.ok){
+      let msg='Data unavailable';
+      try{const e=await r.json();msg=e.detail||msg;}catch{}
+      feed.innerHTML=`<div class="empty-st"><div class="icon">📡</div><h3>Couldn't load sectors</h3>${msg}<br><br><div class="sec-load-btn" onclick="loadSectors()" style="margin:16px auto;max-width:200px">Try Again</div></div>`;
+      return;
+    }
     const d=await r.json();
-    if(!d.length){feed.innerHTML='<div class="empty-st">No data.</div>';return}
+    if(!d.length){
+      feed.innerHTML='<div class="empty-st"><div class="icon">📡</div><h3>No sector data</h3>Market may be closed.</div>';
+      return;
+    }
     const max=Math.max(...d.map(s=>Math.abs(s.change)),.01);
+    // build a signal index from last scan (ticker → bias) for color-coding
+    const sigMap={};
+    S.signals.forEach(sig=>{ sigMap[sig.ticker]=sig.bias; });
     feed.innerHTML='';
     const hdr=document.createElement('div');hdr.className='sec-head';
     hdr.textContent=`Sectors · ${new Date().toLocaleTimeString()}`;feed.appendChild(hdr);
-    d.forEach((s,i)=>{
-      const up=s.change>=0;const pct=Math.abs(s.change/max*100).toFixed(0);
-      const el=document.createElement('div');el.className='sec-card';
-      el.innerHTML=`<div class="sec-name">${s.name}<div style="font-size:10px;color:var(--sub);font-weight:400">${s.etf}</div></div>
-        <div class="sec-bar-wrap"><div class="sec-bar ${up?'up':'dn'}" style="width:${pct}%"></div></div>
-        <div class="sec-chg ${up?'up':'dn'}">${up?'+':''}${s.change.toFixed(2)}%</div>`;
+    d.forEach(s=>{
+      const up=s.change>=0;
+      const pct=Math.abs(s.change/max*100).toFixed(0);
+      const tickers=(SECTOR_TICKERS[s.name]||[]);
+      const tickHtml=tickers.map(t=>{
+        const cls=sigMap[t]||'';
+        return `<span class="sec-tick ${cls}">${t}</span>`;
+      }).join('');
+      const el=document.createElement('div');
+      el.className='sec-card';
+      el.innerHTML=`
+        <div style="display:flex;align-items:center;gap:12px;width:100%" onclick="this.closest('.sec-card').classList.toggle('open')">
+          <div class="sec-name">${s.name}<div style="font-size:10px;color:var(--sub);font-weight:400">${s.etf}</div></div>
+          <div class="sec-bar-wrap"><div class="sec-bar ${up?'up':'dn'}" style="width:${pct}%"></div></div>
+          <div class="sec-chg ${up?'up':'dn'}">${up?'+':''}${s.change.toFixed(2)}%</div>
+          <span class="sec-expand">›</span>
+        </div>
+        ${tickHtml?`<div class="sec-tickers">${tickHtml}</div>`:''}`;
       feed.appendChild(el);
     });
-  }catch(e){feed.innerHTML='<div class="empty-st">Failed to load.</div>'}
+  }catch(e){
+    feed.innerHTML='<div class="empty-st"><div class="icon">⚠️</div><h3>Failed to load</h3><div class="sec-load-btn" onclick="loadSectors()" style="margin:16px auto;max-width:200px">Try Again</div></div>';
+  }
 }
 
 // ── Contract finder ────────────────────────────────────────────────────────
@@ -1460,6 +1576,20 @@ function renderContracts(ticker,cs){
   }).join('');
   res.innerHTML=`<div class="cont-cards">${html}</div>`;
 }
+
+// ── Theme toggle ───────────────────────────────────────────────────────────
+function toggleTheme(){
+  const dark=document.documentElement.classList.toggle('dark');
+  document.getElementById('theme-btn').textContent=dark?'☀':'☾';
+  localStorage.setItem('theme',dark?'dark':'light');
+  // update PWA theme-color meta
+  document.querySelector('meta[name="theme-color"]').content=dark?'#000000':'#f5f5f7';
+}
+// Set correct icon on load
+(function(){
+  if(document.documentElement.classList.contains('dark'))
+    document.getElementById('theme-btn').textContent='☀';
+})();
 
 // ── Toast ──────────────────────────────────────────────────────────────────
 function toast(msg){
