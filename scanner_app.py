@@ -306,9 +306,10 @@ async def api_debug(req: Request):
     """Diagnostic endpoint — PIN required, rate-limited to 3/min."""
     _check_pin(req)
     _check_rate(req, "debug", limit=3, window=60)
-    from scanner import _YF_SESSION, _yf
+    from scanner import _yf
+    import yfinance as yf
     results: Dict = {}
-    results["session_type"] = type(_YF_SESSION).__name__
+    results["session_type"] = "yfinance-managed"
     # VIX
     try:
         t = _yf("VIX")

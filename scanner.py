@@ -6,36 +6,13 @@ import yfinance as yf
 import colorama
 from colorama import Fore, Style
 from tabulate import tabulate
-import argparse, time, sys, csv, os, math, warnings, requests
+import argparse, time, sys, csv, os, math, warnings
 from datetime import datetime
 from typing import Optional, List, Dict, Tuple
 import pandas as pd
 
 warnings.filterwarnings("ignore")
 colorama.init(autoreset=True)
-
-# ─── yfinance session setup ───────────────────────────────────────────────────
-# yfinance 1.2+ prefers curl_cffi for Chrome TLS impersonation.
-# On cloud servers where curl_cffi binaries aren't available, fall back to a
-# requests.Session with a browser User-Agent (works for most endpoints).
-_YF_SESSION = None
-try:
-    from curl_cffi.requests import Session as CurlSession
-    _YF_SESSION = CurlSession(impersonate="chrome")
-except Exception:
-    try:
-        _YF_SESSION = requests.Session()
-        _YF_SESSION.headers.update({
-            "User-Agent": (
-                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/124.0.0.0 Safari/537.36"
-            ),
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.9",
-        })
-    except Exception:
-        pass
 
 # ─── yfinance ticker normalization ───────────────────────────────────────────
 _YF_TICKER_MAP: Dict[str, str] = {
@@ -46,11 +23,8 @@ def _yf_ticker(sym: str) -> str:
     return _YF_TICKER_MAP.get(sym.upper(), sym)
 
 def _yf(sym: str) -> yf.Ticker:
-    """Create a Ticker with the best available session."""
-    try:
-        return yf.Ticker(_yf_ticker(sym), session=_YF_SESSION)
-    except Exception:
-        return yf.Ticker(_yf_ticker(sym))
+    """Let yfinance 1.2+ manage its own curl_cffi session internally."""
+    return yf.Ticker(_yf_ticker(sym))
 
 # ─── Sector ETFs & Ticker→Sector Map ─────────────────────────────────────────
 SECTOR_ETFS: Dict[str, str] = {
