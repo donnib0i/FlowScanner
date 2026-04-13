@@ -1248,15 +1248,16 @@ body::before{
 
 // ── Sector → tickers mapping ───────────────────────────────────────────────
 const SECTOR_TICKERS = {
-  'Tech':       ['NVDA','AMD','AAPL','MSFT','AMZN','TSLA','QQQ','PLTR','MSTR','TQQQ','SOXL','ONDS'],
-  'Financials': ['GS','JPM','BAC','V','MA','SOFI','HOOD','COIN','AFRM'],
-  'CommSvcs':   ['META','GOOGL','SNAP','NFLX','GME','UBER','LYFT','PINS'],
-  'Energy':     ['XOM','CVX','USO'],
-  'Health':     ['HIMS','MRNA','PFE','BNTX','LABU'],
-  'Materials':  ['GLD','SLV','CPER'],
-  'Industrials':['F','GM'],
-  'Index':      ['SPX','SPY','IWM','DIA','TQQQ','SQQQ','UPRO'],
-  'Vol':        ['VXX','UVXY','SVXY'],
+  'Tech':        ['NVDA','AMD','AAPL','MSFT','AMZN','TSLA','QQQ','PLTR','MSTR','TQQQ','SOXL','ONDS'],
+  'Financials':  ['GS','JPM','BAC','V','MA','SOFI','HOOD','COIN','AFRM'],
+  'CommSvcs':    ['META','GOOGL','SNAP','NFLX','GME','UBER','LYFT','PINS'],
+  'Energy':      ['XOM','CVX','USO'],
+  'Health':      ['HIMS','MRNA','PFE','BNTX','LABU'],
+  'Materials':   ['GLD','SLV','CPER'],
+  'Industrials': ['F','GM'],
+  'Staples':     ['WMT','COST','PG','KO','PEP','MCD','NKE'],
+  'Utilities':   ['NEE','DUK','SO','D','AEP'],
+  'RealEstate':  ['AMT','PLD','SPG','EQIX','O'],
 };
 
 // ── State ──────────────────────────────────────────────────────────────────
