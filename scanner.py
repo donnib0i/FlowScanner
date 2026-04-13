@@ -85,9 +85,11 @@ TICKER_SECTOR: Dict[str, str] = {
     "SOFI":"Financials",
     # Energy
     "XOM":"Energy","CVX":"Energy","USO":"Energy","CPER":"Materials",
-    # Health
-    "HIMS":"Health","MRNA":"Health","PFE":"Health","BNTX":"Health","ONDS":"Health",
+    # Health / Biotech
+    "HIMS":"Health","MRNA":"Health","PFE":"Health","BNTX":"Health",
     "LABU":"Health","LABD":"Health",
+    # Drones / Defense Tech
+    "ONDS":"Tech",
     # CommSvcs / consumer
     "META":"CommSvcs","GOOGL":"CommSvcs","GOOG":"CommSvcs","SNAP":"CommSvcs",
     "PINS":"CommSvcs","RBLX":"CommSvcs","ABNB":"CommSvcs","BKNG":"CommSvcs",

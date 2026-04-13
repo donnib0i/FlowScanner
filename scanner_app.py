@@ -1198,6 +1198,20 @@ body::before{
         </div>
       </div>
 
+      <!-- Connection Test -->
+      <div class="guide-section">
+        <div class="guide-hdr" onclick="toggleGuide(this)">
+          <span class="guide-hdr-title">Connection Test</span>
+          <span class="guide-hdr-icon">›</span>
+        </div>
+        <div class="guide-body">
+          <div style="padding:8px 0 12px">
+            <button onclick="runDebug()" style="width:100%;padding:12px;background:var(--blue);color:#fff;border:none;border-radius:12px;font-size:14px;font-weight:700;cursor:pointer">Test Data Connection</button>
+            <div id="debug-out" style="margin-top:12px;font-size:12px;font-family:monospace;color:var(--sub);line-height:1.7;white-space:pre-wrap"></div>
+          </div>
+        </div>
+      </div>
+
     </div>
   </div>
 
@@ -1233,11 +1247,11 @@ body::before{
 
 // ── Sector → tickers mapping ───────────────────────────────────────────────
 const SECTOR_TICKERS = {
-  'Tech':       ['NVDA','AMD','AAPL','MSFT','AMZN','TSLA','QQQ','PLTR','COIN','MSTR','TQQQ','SOXL'],
+  'Tech':       ['NVDA','AMD','AAPL','MSFT','AMZN','TSLA','QQQ','PLTR','MSTR','TQQQ','SOXL','ONDS'],
   'Financials': ['GS','JPM','BAC','V','MA','SOFI','HOOD','COIN','AFRM'],
-  'CommSvcs':   ['META','GOOGL','SNAP','GME','UBER','LYFT','NFLX','PINS'],
+  'CommSvcs':   ['META','GOOGL','SNAP','NFLX','GME','UBER','LYFT','PINS'],
   'Energy':     ['XOM','CVX','USO'],
-  'Health':     ['HIMS','MRNA','PFE','ONDS'],
+  'Health':     ['HIMS','MRNA','PFE','BNTX','LABU'],
   'Materials':  ['GLD','SLV','CPER'],
   'Industrials':['F','GM'],
   'Index':      ['SPX','SPY','IWM','DIA','TQQQ','SQQQ','UPRO'],
@@ -1709,6 +1723,23 @@ function toggleTheme(){
   if(document.documentElement.classList.contains('dark'))
     document.getElementById('theme-btn').textContent='☀';
 })();
+
+// ── Connection test ────────────────────────────────────────────────────────
+async function runDebug(){
+  const out=document.getElementById('debug-out');
+  out.textContent='Running…';
+  try{
+    const r=await fetch(_pa('/api/debug'));
+    if(!r.ok){out.textContent='HTTP '+r.status+' — check PIN';return}
+    const d=await r.json();
+    const lines=[];
+    lines.push('Session: '+( d.session_type||'?'));
+    lines.push('VIX: '+(d.vix_ok?'✓ '+d.vix_value:'✗ '+(d.vix_error||'failed')));
+    lines.push('SPY options: '+(d.spy_ok?'✓ exps: '+d.spy_exps?.join(', '):'✗ '+(d.spy_error||'failed')));
+    lines.push('SPY chain: '+(d.chain_ok?`✓ ${d.spy_chain_calls}C / ${d.spy_chain_puts}P`:'✗ '+(d.chain_error||'failed')));
+    out.textContent=lines.join('\n');
+  }catch(e){out.textContent='Network error — server may be sleeping'}
+}
 
 // ── Toast ──────────────────────────────────────────────────────────────────
 function toast(msg){
