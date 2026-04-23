@@ -94,26 +94,98 @@ UNIVERSE = [
     "AAPL","MSFT","NVDA","META","AMZN","GOOGL","TSLA",
     # Semis
     "AMD","AVGO","MU","ARM","SMCI","INTC","QCOM","TXN","AMAT","LRCX",
+    "KLAC","MRVL","ON","SWKS","MPWR","WOLF","NXPI","ADI",
     # High retail options vol
     "COIN","PLTR","MSTR","HOOD","SOFI","MARA","RIOT","CLSK","BITF","HUT",
     "RBLX","SNAP","UBER","LYFT","DASH","AFRM","UPST","GME","AMC",
-    # Growth tech
+    "BULL","CORZ","IREN","CIFR",
+    # Growth tech / software
     "NFLX","CRWD","PANW","DDOG","NET","ZS","SNOW","TWLO",
     "SHOP","SQ","PYPL","ABNB","BKNG","EBAY","ETSY",
-    # EV
-    "RIVN","LCID","NIO","LI","XPEV","F","GM",
-    # Financials
+    "APP","RDDT","GTLB","MDB","TTD","HUBS","BILL","DOCN","U",
+    "SMAR","BOX","ESTC","CFLT","IOT","GTLB","PATH","DT","AI","BBAI",
+    # AI / cloud
+    "ORCL","CRM","NOW","WDAY","INTU","ADBE","IBM",
+    # EV / transport
+    "RIVN","LCID","NIO","LI","XPEV","F","GM","BLNK","CHPT","LEV",
+    # Financials / fintech
     "GS","MS","JPM","BAC","C","WFC","V","MA","SCHW","IBKR",
+    "NU","AFRM","OPEN","LMND","ROOT","INSU",
     # Energy / commodities
-    "XOM","CVX","GLD","SLV","CPER","USO",
-    # Healthcare / speculative
-    "HIMS","MRNA","PFE","BNTX","ONDS",
+    "XOM","CVX","GLD","SLV","CPER","USO","OXY","SLB","HAL","DVN",
+    "FCX","CLF","MP","VALE","AA","X",
+    # Healthcare / biotech / GLP-1
+    "HIMS","MRNA","PFE","BNTX","ONDS","NVO","LLY","RXRX","APLS",
+    "NVAX","SAVA","ACMR","RARE","FOLD","TGTX","KROS","RCUS",
+    # Defense / aerospace
+    "RTX","LMT","NOC","BA","GD","HII","LDOS","CACI","KTOS","AVAV",
+    # Consumer / retail
+    "AMZN","WMT","TGT","COST","HD","LOW","NKE","LULU","PTON","BYND",
+    # Media / streaming
+    "DIS","PARA","WBD","SPOT","TTWO","EA","ATVI",
     # China
-    "BABA","JD","PDD","KWEB","FXI",
-    # Other
-    "PINS","OKTA","GOOG","AVGO",
+    "BABA","JD","PDD","KWEB","FXI","BIDU","TME",
+    # Small/mid cap sleepers (high vol, unusual flow candidates)
+    "PINS","OKTA","GOOG","IONQ","QUBT","RGTI","QBTS","ARQQ",
+    "SOUN","BBAI","GFAI","AITX","AGEN","IOVA","FATE","EDIT","BEAM",
+    "ACHR","JOBY","LILM","WKHS","NKLA","ZEV",
+    "ASTS","LUNR","RDW","RKLB","ASTR","MNTS",
 ]
 UNIVERSE = list(dict.fromkeys(UNIVERSE))  # dedupe
+
+
+def fetch_dynamic_universe(top_n: int = 50) -> List[str]:
+    """
+    Pull today's top movers from a broad watchlist to surface sleepers.
+    Returns tickers with high relative volume or big % moves not in core UNIVERSE.
+    Combines with UNIVERSE for full coverage.
+    """
+    # Extended watchlist beyond core — scanned for movers only
+    extended = [
+        "CELH","MNST","KO","PEP","MCD","SBUX","CMG","YUM",
+        "TSCO","DKS","FIVE","OLLI","BOOT","CAVA","BROS",
+        "AXON","TDY","PODD","ISRG","SYK","BSX","EW",
+        "CLX","PG","JNJ","ABT","MDT","TMO","DHR","A",
+        "ALLY","SFM","CTAS","PAYX","ADP","VRSK","MSCI",
+        "ENPH","FSLR","RUN","SPWR","ARRY","NEE","CEG",
+        "DUOL","COUR","UDMY","CHGG","LRN",
+        "CELH","SFIX","W","ETSY","WISH","OZON",
+        "SMTC","ACLS","ONTO","MKSI","UCTT","FORM","ICHR",
+        "GENI","DKNG","PENN","MGM","CZR","LVS","WYNN",
+        "CCL","RCL","NCLH","DAL","UAL","AAL","LUV","JBLU",
+    ]
+    try:
+        all_tickers = list(dict.fromkeys(extended))
+        batch = yf.download(
+            all_tickers, period="2d", interval="1d",
+            group_by="ticker", progress=False, threads=True, timeout=15,
+        )
+        movers = []
+        for t in all_tickers:
+            try:
+                if isinstance(batch.columns, pd.MultiIndex):
+                    hist = batch[t].dropna(how="all") if t in batch.columns.get_level_values(0) else pd.DataFrame()
+                else:
+                    hist = batch.dropna(how="all")
+                if len(hist) < 2:
+                    continue
+                prev_close = float(hist["Close"].iloc[-2])
+                today_close = float(hist["Close"].iloc[-1])
+                prev_vol = float(hist["Volume"].iloc[-2])
+                today_vol = float(hist["Volume"].iloc[-1])
+                if prev_close <= 0:
+                    continue
+                chg = abs((today_close - prev_close) / prev_close)
+                relvol = today_vol / max(prev_vol, 1)
+                # Surface if >3% move OR >2x relative volume
+                if chg > 0.03 or relvol > 2.0:
+                    movers.append((t, chg + relvol * 0.1))
+            except Exception:
+                continue
+        movers.sort(key=lambda x: x[1], reverse=True)
+        return [t for t, _ in movers[:top_n]]
+    except Exception:
+        return []
 
 # _YF_TICKER_MAP and _yf_ticker defined above near _yf()
 
@@ -453,6 +525,11 @@ def _score_contract(row: pd.Series, S: float, T: float, direction: str,
 
         otype = "call" if direction == "up" else "put"
         delta = abs(bs_delta(S, K, T, iv, otype))
+
+        # Hard reject deep ITM contracts — delta > 0.65 means the contract moves
+        # like the stock. You're paying for intrinsic value, not leverage.
+        if delta > 0.65:
+            return -1.0
 
         # Expected 1-sigma move (annualised IV → daily move for this DTE window)
         sigma_move  = S * max(iv, 0.05) * math.sqrt(max(T, 1.0 / 365))
@@ -2066,6 +2143,8 @@ def main() -> None:
                         help="Initial filter (default: all)")
     parser.add_argument("--sort",       choices=list(SORT_LABELS.keys()),   default="setup",
                         help="Initial sort (default: setup)")
+    parser.add_argument("--dynamic",    action="store_true",
+                        help="Add today's movers from extended watchlist to find sleepers")
     args = parser.parse_args()
 
     if args.tickers:
@@ -2078,7 +2157,14 @@ def main() -> None:
             print(Fore.RED + f"  File not found: {args.watchlist}" + Style.RESET_ALL)
             sys.exit(1)
     else:
-        tickers = UNIVERSE
+        tickers = list(UNIVERSE)
+        if args.dynamic:
+            print(f"  {Fore.CYAN}Dynamic mode: scanning for today's movers...{Style.RESET_ALL}", end="", flush=True)
+            dynamic_tickers = fetch_dynamic_universe(top_n=50)
+            added = [t for t in dynamic_tickers if t not in tickers]
+            tickers = list(dict.fromkeys(tickers + added))
+            sys.stdout.write(f"\r  Dynamic mode: +{len(added)} movers added → {len(tickers)} total tickers\n")
+            sys.stdout.flush()
 
     # Step 0: fetch VIX — sets IV regime for contract selection
     print(f"  {Fore.CYAN}Fetching VIX...{Style.RESET_ALL}", end="", flush=True)
