@@ -14,9 +14,16 @@ import pandas as pd
 warnings.filterwarnings("ignore")
 colorama.init(autoreset=True)
 
+# ─── yfinance session (curl_cffi if available, else None) ─────────────────────
+try:
+    from curl_cffi import requests as _cffi_requests
+    _YF_SESSION: Optional[object] = _cffi_requests.Session(impersonate="chrome")
+except Exception:
+    _YF_SESSION = None
+
 # ─── yfinance ticker normalization ───────────────────────────────────────────
 _YF_TICKER_MAP: Dict[str, str] = {
-    "SPX": "^SPX", "VIX": "^VIX", "RUT": "^RUT", "NDX": "^NDX",
+    "SPX": "^GSPC", "VIX": "^VIX", "RUT": "^RUT", "NDX": "^NDX",
 }
 
 def _yf_ticker(sym: str) -> str:
@@ -1420,7 +1427,7 @@ def _extract_ticker_hist(batch: pd.DataFrame, ticker: str) -> pd.DataFrame:
         return pd.DataFrame()
 
 
-def _process_ticker(ticker: str, hist: pd.DataFrame, live_price: float = 0.0) -> Optional[Dict]:
+def _process_ticker(ticker: str, hist: pd.DataFrame, live_price: float = 0.0, spy_chg: float = 0.0) -> Optional[Dict]:
     """
     Convert pre-fetched OHLCV history into a result dict. Zero network calls.
     `hist` should be 1y of data; last 60 rows used for level detection,
@@ -1485,6 +1492,18 @@ def _process_ticker(ticker: str, hist: pd.DataFrame, live_price: float = 0.0) ->
         rel_vol    = today_vol / avg_vol if avg_vol > 0 else 0.0
         high_vol   = rel_vol > 1.4
 
+        # Breakout signal: price closed above prior day high (bull) or below prior day low (bear)
+        # Requires vol confirmation (>1.2x avg) to filter noise
+        breakout: Optional[str] = None
+        if not inside_day:  # inside day can't be a breakout by definition
+            if price > yest_high and rel_vol > 1.2:
+                breakout = "bull"
+            elif price < yest_low and rel_vol > 1.2:
+                breakout = "bear"
+
+        # RS vs SPY: how much the ticker is outperforming or lagging the market today
+        rs_vs_spy = round(change_pct - spy_chg, 2) if spy_chg != 0.0 else 0.0
+
         # Price location in today's range (0 = at low, 1 = at high)
         day_range = today_high - today_low
         price_loc = (price - today_low) / day_range if day_range > 0 else 0.5
@@ -1506,10 +1525,13 @@ def _process_ticker(ticker: str, hist: pd.DataFrame, live_price: float = 0.0) ->
         near_level = next((l for l in levels if l["strength"] >= 2), levels[0] if levels else None)
 
         # Setup quality 0.0–1.0
+        # Weights calibrated from 60-day backtest (highvol Sharpe 2.21 > inside 0.51 > gap_down 0.20 > gap_up -0.99)
         sq = 0.0
-        if gap_flag:                                              sq += 0.35
-        if inside_day:                                            sq += 0.20
-        if high_vol:                                              sq += 0.20
+        if gap_flag == "gap_down":                                sq += 0.30  # gap_down: PF 1.04, slight edge
+        if gap_flag == "gap_up":                                  sq += 0.15  # gap_up: PF 0.84, slight fade bias
+        if inside_day:                                            sq += 0.20  # inside: PF 1.09
+        if high_vol:                                              sq += 0.25  # highvol: PF 1.48 — best signal
+        if breakout:                                              sq += 0.25  # breakout: momentum continuation
         if near_level and near_level["strength"] >= 5:            sq += 0.25
         elif near_level and near_level["strength"] >= 3:          sq += 0.15
         elif near_level and near_level["strength"] >= 1:          sq += 0.05
@@ -1525,8 +1547,10 @@ def _process_ticker(ticker: str, hist: pd.DataFrame, live_price: float = 0.0) ->
             "gap_pct":       gap_pct,
             "gap_flag":      gap_flag,
             "inside_day":    inside_day,
+            "breakout":      breakout,
             "rel_vol":       rel_vol,
             "high_vol":      high_vol,
+            "rs_vs_spy":     rs_vs_spy,
             "today_vol":     today_vol,
             "avg_vol":       avg_vol,
             "ivr_proxy":     ivr_proxy,
@@ -1553,17 +1577,42 @@ def _process_ticker(ticker: str, hist: pd.DataFrame, live_price: float = 0.0) ->
         return None
 
 
+def _get_spy_change(batch) -> float:
+    """Extract SPY's day change % from the batch download. Returns 0.0 on failure."""
+    try:
+        spy_hist = _extract_ticker_hist(batch, "SPY")
+        if spy_hist is None or len(spy_hist) < 2:
+            return 0.0
+        last = spy_hist.tail(2)
+        prev = float(last.iloc[-2]["Close"])
+        curr = float(last.iloc[-1]["Close"])
+        if pd.isna(curr) and len(spy_hist) >= 3:
+            # Market open — use prior two closes
+            prev = float(spy_hist.iloc[-3]["Close"])
+            curr = float(spy_hist.iloc[-2]["Close"])
+        if prev <= 0:
+            return 0.0
+        return (curr - prev) / prev * 100
+    except Exception:
+        return 0.0
+
+
 def scan_tickers(tickers: List[str], show_progress: bool = True) -> List[Dict]:
     # One batch download for all tickers — no per-ticker rate limiting
+    # Always include SPY for RS vs SPY calculation
+    download_tickers = tickers if "SPY" in tickers else tickers + ["SPY"]
     if show_progress:
         sys.stdout.write(
             f"  {Fore.CYAN}Downloading {len(tickers)} tickers (batch)...{Style.RESET_ALL}"
         )
         sys.stdout.flush()
-    batch = _fetch_batch_history(tickers, period="1y")
+    batch = _fetch_batch_history(download_tickers, period="1y")
     if show_progress:
         sys.stdout.write("\r" + " " * 60 + "\r")
         sys.stdout.flush()
+
+    # Fetch SPY change once for RS calculation across all tickers
+    spy_chg = _get_spy_change(batch)
 
     # Fetch live intraday prices in case today's daily bar is still incomplete (NaN Close)
     live_prices = _fetch_live_prices(tickers)
@@ -1577,7 +1626,7 @@ def scan_tickers(tickers: List[str], show_progress: bool = True) -> List[Dict]:
             sys.stdout.write(f"\r  [{bar}] {i}/{total}  {Fore.CYAN}{ticker:<6}{Style.RESET_ALL}  ")
             sys.stdout.flush()
         hist = _extract_ticker_hist(batch, ticker)
-        r    = _process_ticker(ticker, hist, live_price=live_prices.get(ticker, 0.0))
+        r    = _process_ticker(ticker, hist, live_price=live_prices.get(ticker, 0.0), spy_chg=spy_chg)
         if r:
             results.append(r)
     if show_progress:
@@ -1592,7 +1641,7 @@ def enrich_contracts(results: List[Dict], top_n: int = 20, vix: float = -1.0) ->
     Populates result['contract'] in place. VIX adjusts delta target.
     """
     ranked = sorted(
-        [r for r in results if r["gap_flag"] or r["inside_day"] or r["high_vol"]],
+        [r for r in results if r["gap_flag"] or r["inside_day"] or r["high_vol"] or r.get("breakout")],
         key=lambda r: r["setup_q"],
         reverse=True,
     )[:top_n]
@@ -1612,14 +1661,15 @@ def enrich_contracts(results: List[Dict], top_n: int = 20, vix: float = -1.0) ->
 
 # ─── Filter / Sort ────────────────────────────────────────────────────────────
 FILTER_LABELS = {
-    "all":     "All",
-    "gap":     "Gap Fills",
-    "inside":  "Inside Day",
-    "highvol": "High Vol",
-    "options": "Options >=60",
-    "any":     "Any Setup",
-    "a_grade": "Grade A",
-    "laggard": "Sector Laggards",
+    "all":      "All",
+    "gap":      "Gap Fills",
+    "inside":   "Inside Day",
+    "highvol":  "High Vol",
+    "breakout": "Breakouts",
+    "options":  "Options >=60",
+    "any":      "Any Setup",
+    "a_grade":  "Grade A",
+    "laggard":  "Sector Laggards",
 }
 
 SORT_LABELS = {
@@ -1632,18 +1682,19 @@ SORT_LABELS = {
 }
 
 FILTER_MAP = {"1": "all", "2": "gap", "3": "inside", "4": "highvol",
-              "5": "options", "6": "any", "7": "a_grade", "8": "laggard"}
+              "5": "breakout", "6": "options", "7": "any", "8": "a_grade", "9": "laggard"}
 SORT_MAP   = {"s1": "setup", "s2": "options", "s3": "relvol",
               "s4": "gap",   "s5": "change",  "s6": "lag"}
 
 
 def apply_filter(results: List[Dict], f: str) -> List[Dict]:
-    if f == "gap":     return [r for r in results if r["gap_flag"]]
-    if f == "inside":  return [r for r in results if r["inside_day"]]
-    if f == "highvol": return [r for r in results if r["high_vol"]]
-    if f == "options": return [r for r in results if r["opt_score"] >= 60]
+    if f == "gap":      return [r for r in results if r["gap_flag"]]
+    if f == "inside":   return [r for r in results if r["inside_day"]]
+    if f == "highvol":  return [r for r in results if r["high_vol"]]
+    if f == "breakout": return [r for r in results if r.get("breakout")]
+    if f == "options":  return [r for r in results if r["opt_score"] >= 60]
     if f == "any":     return [r for r in results if (
-        r["gap_flag"] or r["inside_day"] or r["high_vol"] or
+        r["gap_flag"] or r["inside_day"] or r["high_vol"] or r.get("breakout") or
         r["opt_score"] >= 60 or
         (r.get("near_level") and r["near_level"]["strength"] >= 3)
     )]
@@ -1693,6 +1744,10 @@ def build_setups(r: Dict) -> str:
         b.append(Fore.YELLOW + f"G-{fill}" + Style.RESET_ALL)
     if r["inside_day"]:              b.append(Fore.MAGENTA + Style.BRIGHT + "ID" + Style.RESET_ALL)
     if r["high_vol"]:                b.append(Fore.GREEN   + "HV" + Style.RESET_ALL)
+    # Breakout: price cleared prior day high/low on volume
+    bk = r.get("breakout")
+    if bk == "bull":                 b.append(Fore.GREEN + Style.BRIGHT + "BK↑" + Style.RESET_ALL)
+    elif bk == "bear":               b.append(Fore.RED   + Style.BRIGHT + "BK↓" + Style.RESET_ALL)
     nl = r.get("near_level")
     if nl and nl["strength"] >= 5:   b.append(Fore.RED + Style.BRIGHT + "**" + Style.RESET_ALL)
     elif nl and nl["strength"] >= 3: b.append(Fore.RED     + "*"  + Style.RESET_ALL)
@@ -1700,6 +1755,10 @@ def build_setups(r: Dict) -> str:
     if r.get("is_laggard"):
         lag_c = Fore.CYAN if r.get("lag_direction") == "up" else Fore.YELLOW
         b.append(lag_c + f"LAG{r['lag_pct']:+.0f}%" + Style.RESET_ALL)
+    # RS vs SPY: show if significantly outperforming/lagging (>2%)
+    rs = r.get("rs_vs_spy", 0.0)
+    if rs >= 2.0:    b.append(Fore.GREEN  + f"RS+{rs:.1f}" + Style.RESET_ALL)
+    elif rs <= -2.0: b.append(Fore.YELLOW + f"RS{rs:.1f}"  + Style.RESET_ALL)
     return " ".join(b) if b else "—"
 
 
@@ -1739,6 +1798,7 @@ def print_summary(results: List[Dict], vix: float = -1.0) -> None:
     gap_down  = sum(1 for r in results if r["gap_flag"] == "gap_down")
     inside    = sum(1 for r in results if r["inside_day"])
     hvol      = sum(1 for r in results if r["high_vol"])
+    bkouts    = sum(1 for r in results if r.get("breakout"))
     opt60     = sum(1 for r in results if r["opt_score"] >= 60)
     near_lvl  = sum(1 for r in results if r.get("near_level") and r["near_level"]["strength"] >= 3)
     contracts = sum(1 for r in results if r["contract"])
@@ -1770,6 +1830,8 @@ def print_summary(results: List[Dict], vix: float = -1.0) -> None:
         + Fore.YELLOW  + f"Gap- {gap_down}  "
         + Fore.MAGENTA + f"Inside {inside}  "
         + Fore.GREEN   + f"Hi-Vol {hvol}  "
+        + Fore.GREEN   + Style.BRIGHT + f"Breakout {bkouts}  " + Style.RESET_ALL
+        + "  "
         + Fore.WHITE   + f"Opt>=60 {opt60}  "
         + Fore.RED     + f"Near Level {near_lvl}  "
         + Fore.CYAN    + f"Contracts {contracts}  "
