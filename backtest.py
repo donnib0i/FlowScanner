@@ -969,6 +969,14 @@ def main():
                         help="Load and print the last saved backtest result")
     parser.add_argument("--compare",  action="store_true",
                         help="Run all signal types and compare side by side")
+    parser.add_argument("--combos",   action="store_true",
+                        help="Compare signal combo performance (hv_only, hv+bk, etc.)")
+    parser.add_argument("--ticker-rank", action="store_true",
+                        help="Rank tickers by signal performance")
+    parser.add_argument("--regime",   action="store_true",
+                        help="Break down signal performance by HV20 regime (calm/normal/volatile)")
+    parser.add_argument("--multi-hold", action="store_true",
+                        help="Test multiple hold periods (1D, 2D, 3D) side by side")
     parser.add_argument("--laggard",  action="store_true",
                         help="Run sector laggard backtest only")
     parser.add_argument("--no-save",  action="store_true",
@@ -1015,6 +1023,166 @@ def main():
             if not args.no_save:
                 path = save_results(records, config)
                 print(f"  Saved: {path}")
+        return
+
+    # ── COMBO mode ────────────────────────────────────────────────────────────
+    if args.combos:
+        print(f"\n{Fore.CYAN + Style.BRIGHT}  D — SIGNAL COMBO ANALYSIS{Style.RESET_ALL}\n")
+        all_records = run_backtest(config)
+        combos = [
+            ("HV_ONLY (volatile)",  lambda r: "highvol" in r["signal_types"] and "breakout" not in r["signal_types"] and "inside" not in r["signal_types"] and "gap_up" not in r["signal_types"] and "gap_down" not in r["signal_types"] and r.get("hv20", 0) >= 0.35),
+            ("HV_ONLY (calm/norm)", lambda r: "highvol" in r["signal_types"] and "breakout" not in r["signal_types"] and "inside" not in r["signal_types"] and r.get("hv20", 0) < 0.35),
+            ("HV + INSIDE",         lambda r: "highvol" in r["signal_types"] and "inside" in r["signal_types"]),
+            ("HV + GAP_DOWN",       lambda r: "highvol" in r["signal_types"] and "gap_down" in r["signal_types"]),
+            ("HV + GAP_UP (fade)",  lambda r: "highvol" in r["signal_types"] and "gap_up" in r["signal_types"]),
+            ("HV + BREAKOUT",       lambda r: "highvol" in r["signal_types"] and "breakout" in r["signal_types"]),
+            ("BREAKOUT only",       lambda r: "breakout" in r["signal_types"] and "highvol" not in r["signal_types"]),
+            ("GAP_DOWN only",       lambda r: "gap_down" in r["signal_types"] and "highvol" not in r["signal_types"]),
+            ("GAP_UP only (fade)",  lambda r: "gap_up" in r["signal_types"] and "highvol" not in r["signal_types"]),
+            ("INSIDE only",         lambda r: "inside" in r["signal_types"] and "highvol" not in r["signal_types"]),
+        ]
+        rows = []
+        for label, fn in combos:
+            subset = [r for r in all_records if fn(r)]
+            if len(subset) < 5:
+                continue
+            m = calc_metrics(subset, label)
+            wr_c = Fore.GREEN if m["win_rate"] > 0.55 else (Fore.YELLOW if m["win_rate"] > 0.50 else Fore.RED)
+            pf_c = Fore.GREEN if m["profit_factor"] > 1.5 else (Fore.YELLOW if m["profit_factor"] > 1.0 else Fore.RED)
+            sh_c = Fore.GREEN if m["sharpe"] > 2.0 else (Fore.YELLOW if m["sharpe"] > 0.5 else Fore.RED)
+            rows.append([
+                Fore.CYAN + label + Style.RESET_ALL,
+                m["count"],
+                f"{wr_c}{m['win_rate']*100:.1f}%{Style.RESET_ALL}",
+                f"{pf_c}{m['profit_factor']:.2f}{Style.RESET_ALL}",
+                f"{sh_c}{m['sharpe']:.2f}{Style.RESET_ALL}",
+                f"{m['expected_value']:+.3f}%",
+            ])
+        headers = ["Combo", "N", "Win%", "PF", "Sharpe", "EV%"]
+        print("  " + tabulate(rows, headers=headers, tablefmt="simple").replace("\n", "\n  "))
+        if not args.no_save:
+            save_results(all_records, config)
+        return
+
+    # ── REGIME mode ───────────────────────────────────────────────────────────
+    if args.regime:
+        print(f"\n{Fore.CYAN + Style.BRIGHT}  D — HV20 REGIME ANALYSIS{Style.RESET_ALL}\n")
+        all_records = run_backtest(config)
+        signals_of_interest = ["highvol", "breakout", "inside", "gap_down"]
+        for sig in signals_of_interest:
+            base = [r for r in all_records if sig in r["signal_types"]]
+            if not base:
+                continue
+            print(f"  {Fore.WHITE + Style.BRIGHT}{sig.upper()}{Style.RESET_ALL}  (N={len(base)} total)")
+            rows = []
+            for label, lo, hi in [("calm     HV20<0.20", 0.0, 0.20), ("normal   0.20-0.35", 0.20, 0.35), ("volatile HV20>0.35", 0.35, 9.99)]:
+                subset = [r for r in base if lo <= r.get("hv20", 0) < hi]
+                if len(subset) < 3:
+                    continue
+                m = calc_metrics(subset, label)
+                wr_c = Fore.GREEN if m["win_rate"] > 0.54 else (Fore.YELLOW if m["win_rate"] > 0.50 else Fore.RED)
+                pf_c = Fore.GREEN if m["profit_factor"] > 1.3 else (Fore.YELLOW if m["profit_factor"] > 1.0 else Fore.RED)
+                rows.append([
+                    label, m["count"],
+                    f"{wr_c}{m['win_rate']*100:.1f}%{Style.RESET_ALL}",
+                    f"{pf_c}{m['profit_factor']:.2f}{Style.RESET_ALL}",
+                    f"{m['sharpe']:.2f}",
+                    f"{m['expected_value']:+.3f}%",
+                ])
+            if rows:
+                print("  " + tabulate(rows, headers=["Regime", "N", "Win%", "PF", "Sharpe", "EV%"], tablefmt="simple").replace("\n", "\n  "))
+            print()
+        return
+
+    # ── TICKER RANK mode ──────────────────────────────────────────────────────
+    if args.ticker_rank:
+        print(f"\n{Fore.CYAN + Style.BRIGHT}  D — TICKER RANKING (highvol + breakout signals){Style.RESET_ALL}\n")
+        all_records = run_backtest(config)
+        by_ticker = defaultdict(list)
+        for r in all_records:
+            if "highvol" in r["signal_types"] or "breakout" in r["signal_types"]:
+                by_ticker[r["ticker"]].append(r)
+        ranked = []
+        for t, recs in by_ticker.items():
+            m = calc_metrics(recs, t)
+            if m["count"] >= 3:
+                ranked.append((t, m))
+        ranked.sort(key=lambda x: x[1]["sharpe"], reverse=True)
+        rows = []
+        for t, m in ranked[:25]:
+            wr_c = Fore.GREEN if m["win_rate"] > 0.60 else (Fore.YELLOW if m["win_rate"] > 0.50 else Fore.RED)
+            pf_c = Fore.GREEN if m["profit_factor"] > 2.0 else (Fore.YELLOW if m["profit_factor"] > 1.0 else Fore.RED)
+            rows.append([
+                Fore.WHITE + Style.BRIGHT + t + Style.RESET_ALL,
+                m["count"],
+                f"{wr_c}{m['win_rate']*100:.0f}%{Style.RESET_ALL}",
+                f"{pf_c}{m['profit_factor']:.2f}{Style.RESET_ALL}",
+                f"{m['sharpe']:.2f}",
+                f"{m['expected_value']:+.3f}%",
+                f"{m.get('opt_win_rate',0)*100:.0f}%" if m.get("opt_count") else "—",
+            ])
+        print("  " + tabulate(rows, headers=["Ticker", "N", "Win%", "PF", "Sharpe", "EV%", "Opt Win%"], tablefmt="simple").replace("\n", "\n  "))
+        print()
+        if not args.no_save:
+            save_results(all_records, config)
+        return
+
+    # ── MULTI-HOLD mode ───────────────────────────────────────────────────────
+    if args.multi_hold:
+        print(f"\n{Fore.CYAN + Style.BRIGHT}  D — MULTI-HOLD PERIOD ANALYSIS{Style.RESET_ALL}\n")
+        base_recs = run_backtest(config)
+        # For multi-hold, re-run with different hold_candles if records have fwd data
+        # We'll use the entry_return_pct (open-to-close) vs fwd_return_pct (close-to-next-close)
+        # as our 0.5D vs 1D proxies; for 2D+ we need a re-run
+        signals_to_test = ["highvol", "breakout"]
+        rows = []
+        for sig in signals_to_test:
+            base = [r for r in base_recs if sig in r["signal_types"] and r.get("hv20", 0) >= 0.35]
+            if len(base) < 5:
+                continue
+            # Intraday (open→close)
+            intra = [r.get("entry_return_pct", 0) * (1 if r["direction"] == "up" else -1) for r in base]
+            # Overnight (close→next close = signed_return_pct for 1D hold)
+            overn = [r.get("signed_return_pct", 0) for r in base]
+            def row_stats(rets, label):
+                wins = sum(1 for x in rets if x > 0)
+                avg  = sum(rets) / len(rets) if rets else 0
+                std  = (sum((x-avg)**2 for x in rets)/len(rets))**0.5 if len(rets) > 1 else 1
+                sharpe = (avg/std)*math.sqrt(252) if std > 0 else 0
+                pf_g = sum(x for x in rets if x > 0)
+                pf_l = abs(sum(x for x in rets if x < 0))
+                pf   = pf_g/pf_l if pf_l > 0 else 999
+                wr_c = Fore.GREEN if wins/len(rets) > 0.54 else (Fore.YELLOW if wins/len(rets) > 0.50 else Fore.RED)
+                return [f"{sig}  {label}", len(rets),
+                        f"{wr_c}{wins/len(rets)*100:.1f}%{Style.RESET_ALL}",
+                        f"{pf:.2f}", f"{sharpe:.2f}", f"{avg:+.3f}%"]
+            rows.append(row_stats(intra, "intraday (open→close)"))
+            rows.append(row_stats(overn, "overnight (close→next)"))
+        # Re-run with 2D and 3D hold
+        for hold in [2, 3]:
+            cfg2 = BacktestConfig(tickers=config.tickers, lookback_days=config.lookback_days,
+                                  hold_candles=hold, delta_target=config.delta_target,
+                                  stop_pct=config.stop_pct, target_pct=config.target_pct)
+            recs2 = run_backtest(cfg2)
+            for sig in signals_to_test:
+                subset = [r for r in recs2 if sig in r["signal_types"] and r.get("hv20", 0) >= 0.35]
+                if len(subset) < 5:
+                    continue
+                rets = [r.get("signed_return_pct", 0) for r in subset]
+                wins = sum(1 for x in rets if x > 0)
+                avg  = sum(rets) / len(rets) if rets else 0
+                std  = (sum((x-avg)**2 for x in rets)/len(rets))**0.5 if len(rets) > 1 else 1
+                sharpe = (avg/std)*math.sqrt(252) if std > 0 else 0
+                pf_g = sum(x for x in rets if x > 0)
+                pf_l = abs(sum(x for x in rets if x < 0))
+                pf   = pf_g/pf_l if pf_l > 0 else 999
+                wr_c = Fore.GREEN if wins/len(rets) > 0.54 else (Fore.YELLOW if wins/len(rets) > 0.50 else Fore.RED)
+                rows.append([f"{sig}  {hold}D hold", len(rets),
+                              f"{wr_c}{wins/len(rets)*100:.1f}%{Style.RESET_ALL}",
+                              f"{pf:.2f}", f"{sharpe:.2f}", f"{avg:+.3f}%"])
+        print("  (volatile regime only: HV20 >= 0.35)\n")
+        print("  " + tabulate(rows, headers=["Signal / Hold", "N", "Win%", "PF", "Sharpe", "Avg Ret"], tablefmt="simple").replace("\n", "\n  "))
+        print()
         return
 
     # Compare mode: run all signal types
