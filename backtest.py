@@ -825,7 +825,7 @@ def _print_vix_breakdown(records: List[Dict]) -> None:
 
 
 # ── Main Runner ────────────────────────────────────────────────────────────────
-def run_backtest(config: BacktestConfig) -> List[Dict]:
+def run_backtest_cli(config: BacktestConfig) -> List[Dict]:
     """
     Main backtest loop.
     Downloads historical data for all tickers, detects signals, evaluates forward returns.
@@ -1028,7 +1028,7 @@ def main():
     # ── COMBO mode ────────────────────────────────────────────────────────────
     if args.combos:
         print(f"\n{Fore.CYAN + Style.BRIGHT}  D — SIGNAL COMBO ANALYSIS{Style.RESET_ALL}\n")
-        all_records = run_backtest(config)
+        all_records = run_backtest_cli(config)
         combos = [
             ("HV_ONLY (volatile)",  lambda r: "highvol" in r["signal_types"] and "breakout" not in r["signal_types"] and "inside" not in r["signal_types"] and "gap_up" not in r["signal_types"] and "gap_down" not in r["signal_types"] and r.get("hv20", 0) >= 0.35),
             ("HV_ONLY (calm/norm)", lambda r: "highvol" in r["signal_types"] and "breakout" not in r["signal_types"] and "inside" not in r["signal_types"] and r.get("hv20", 0) < 0.35),
@@ -1067,7 +1067,7 @@ def main():
     # ── REGIME mode ───────────────────────────────────────────────────────────
     if args.regime:
         print(f"\n{Fore.CYAN + Style.BRIGHT}  D — HV20 REGIME ANALYSIS{Style.RESET_ALL}\n")
-        all_records = run_backtest(config)
+        all_records = run_backtest_cli(config)
         signals_of_interest = ["highvol", "breakout", "inside", "gap_down"]
         for sig in signals_of_interest:
             base = [r for r in all_records if sig in r["signal_types"]]
@@ -1097,7 +1097,7 @@ def main():
     # ── TICKER RANK mode ──────────────────────────────────────────────────────
     if args.ticker_rank:
         print(f"\n{Fore.CYAN + Style.BRIGHT}  D — TICKER RANKING (highvol + breakout signals){Style.RESET_ALL}\n")
-        all_records = run_backtest(config)
+        all_records = run_backtest_cli(config)
         by_ticker = defaultdict(list)
         for r in all_records:
             if "highvol" in r["signal_types"] or "breakout" in r["signal_types"]:
@@ -1130,7 +1130,7 @@ def main():
     # ── MULTI-HOLD mode ───────────────────────────────────────────────────────
     if args.multi_hold:
         print(f"\n{Fore.CYAN + Style.BRIGHT}  D — MULTI-HOLD PERIOD ANALYSIS{Style.RESET_ALL}\n")
-        base_recs = run_backtest(config)
+        base_recs = run_backtest_cli(config)
         # For multi-hold, re-run with different hold_candles if records have fwd data
         # We'll use the entry_return_pct (open-to-close) vs fwd_return_pct (close-to-next-close)
         # as our 0.5D vs 1D proxies; for 2D+ we need a re-run
