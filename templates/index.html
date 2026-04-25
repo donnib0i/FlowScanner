@@ -1787,6 +1787,28 @@ function buildExpandContent(r) {
 
   return `<div class="expand-content">
     <div class="expand-card"><div class="ec-label">Contract</div>${contractHtml}</div>
+  // Unfilled gaps card
+  let gapsHtml = '<div class="ec-val dim-val">No unfilled gaps nearby</div>';
+  if (r.unfilled_gaps && r.unfilled_gaps.length) {
+    gapsHtml = r.unfilled_gaps.map(g => {
+      const dirCls  = g.direction_to_fill === 'up' ? 'pos-val' : 'neg-val';
+      const dirArrow = g.direction_to_fill === 'up' ? '↑' : '↓';
+      const sign    = g.dist_pct >= 0 ? '+' : '';
+      const typeTag = g.type === 'gap_up'
+        ? '<span style="font-size:9px;color:var(--pos);font-weight:700;font-family:var(--mono)">GU</span>'
+        : '<span style="font-size:9px;color:var(--neg);font-weight:700;font-family:var(--mono)">GD</span>';
+      return `<div class="cline" style="gap:6px;align-items:baseline">
+        ${typeTag}
+        <span class="ckey" style="min-width:0">$${g.bottom}–$${g.top}</span>
+        <span class="${dirCls}" style="font-weight:700">${dirArrow} $${g.mid}</span>
+        <span class="dim-val">${sign}${g.dist_pct}% · ${g.bars_ago}d ago</span>
+      </div>`;
+    }).join('');
+  }
+
+  return `<div class="expand-content">
+    <div class="expand-card"><div class="ec-label">Contract</div>${contractHtml}</div>
+    <div class="expand-card"><div class="ec-label">Open Gap Targets</div>${gapsHtml}</div>
     <div class="expand-card"><div class="ec-label">Position Size</div>${posHtml}</div>
     <div class="expand-card"><div class="ec-label">Nearest Level</div>${levelHtml}</div>
     <div class="expand-card"><div class="ec-label">Day Range</div>${rangeHtml}</div>

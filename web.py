@@ -180,6 +180,20 @@ def build_signal_badges(r: Dict) -> List[Dict]:
     elif rs <= -2.0:
         badges.append({"text": f"RS{rs:.1f}", "cls": "badge-yellow", "tooltip": "Weak RS vs SPY"})
 
+    # Unfilled gap badge — shows nearest open gap as a target
+    ng = r.get("nearest_gap")
+    if ng:
+        adist = abs(ng["dist_pct"])
+        dtf   = ng["direction_to_fill"]
+        arrow = "↑" if dtf == "up" else "↓"
+        if adist <= 2.0:
+            cls  = "badge-green" if dtf == "up" else "badge-red"
+            tip  = f"Unfilled gap target {arrow} ${ng['mid']} ({ng['dist_pct']:+.1f}%) — {ng['bars_ago']}d old"
+            badges.append({"text": f"GAP{arrow}{adist:.1f}%", "cls": cls, "tooltip": tip})
+        elif adist <= 5.0:
+            tip  = f"Unfilled gap target {arrow} ${ng['mid']} ({ng['dist_pct']:+.1f}%) — {ng['bars_ago']}d old"
+            badges.append({"text": f"GAP{arrow}", "cls": "badge-dim", "tooltip": tip})
+
     return badges
 
 
@@ -228,9 +242,11 @@ def serialize_result(r: Dict, market_open: bool) -> Dict:
         "yest_low":     round(r.get("yest_low", 0), 2),
         "today_high":   round(r.get("today_high", 0), 2),
         "today_low":    round(r.get("today_low", 0), 2),
-        "earnings_days": r.get("earnings_days"),
-        "earnings_warn": r.get("earnings_days") is not None and r.get("earnings_days", 999) <= 7,
-        "sparkline":    r.get("sparkline", []),
+        "earnings_days":  r.get("earnings_days"),
+        "earnings_warn":  r.get("earnings_days") is not None and r.get("earnings_days", 999) <= 7,
+        "sparkline":      r.get("sparkline", []),
+        "unfilled_gaps":  r.get("unfilled_gaps", []),
+        "nearest_gap":    r.get("nearest_gap"),
     }
 
 
@@ -716,7 +732,7 @@ async def run_backtest_api(request: Request):
     Body params (all optional):
       tickers: list[str] | null   — default = FAST_UNIVERSE
       days:    int                — lookback days (default 60, max 180)
-      signal:  str                — all | gap | inside | highvol | laggard
+      signal:  str                — all | unfilled_gap | gap | inside | highvol | laggard | breakout | trend
       hold:    int                — hold bars (default 1)
       stop_pct: float             — stop loss % on option (default 0.50)
       target_pct: float           — profit target % on option (default 1.00)

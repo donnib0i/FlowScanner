@@ -607,6 +607,115 @@ def level_str(level: Optional[Dict]) -> str:
     c     = Fore.GREEN if ltype == "S" else Fore.RED
     return f"{c}{ltype}${level['price']:.1f}{Style.RESET_ALL} {Fore.YELLOW}{stars}{Style.RESET_ALL}"
 
+# ─── Unfilled Gap Detection ───────────────────────────────────────────────────
+
+def find_unfilled_gaps(
+    hist: pd.DataFrame,
+    current_price: float,
+    lookback: int = 60,
+    min_gap_pct: float = 0.20,
+    max_gap_pct: float = 8.0,
+) -> List[Dict]:
+    """
+    Scans historical OHLCV for gaps that have NOT been filled yet.
+
+    Gap definition (Dante's model):
+      - Gap UP:   today's open > prior close → leaves a void zone = [prior_close, open]
+                  Unfilled if price has NEVER traded back down to prior_close since then.
+      - Gap DOWN: today's open < prior close → leaves a void zone = [open, prior_close]
+                  Unfilled if price has NEVER traded back up to prior_close since then.
+
+    These open gap zones are price magnets / trade targets, not signals themselves.
+
+    Returns list of unfilled gaps sorted by distance from current price (closest first),
+    capped at 5. Each dict includes zone bounds, midpoint, distance, and direction
+    relative to current price (above or below) — which tells you the trade direction.
+    """
+    if hist is None or len(hist) < 10:
+        return []
+
+    df = hist.tail(lookback + 5).copy().reset_index(drop=True)
+    if len(df) < 5:
+        return []
+
+    opens  = df["Open"].values.astype(float)
+    highs  = df["High"].values.astype(float)
+    lows   = df["Low"].values.astype(float)
+    closes = df["Close"].values.astype(float)
+    n      = len(df)
+
+    unfilled: List[Dict] = []
+
+    for i in range(1, n - 1):  # leave at least 1 bar after to test fill
+        prior_close = closes[i - 1]
+        this_open   = opens[i]
+
+        if prior_close <= 0:
+            continue
+
+        gap_pct = (this_open - prior_close) / prior_close * 100
+
+        if abs(gap_pct) < min_gap_pct or abs(gap_pct) > max_gap_pct:
+            continue
+
+        if gap_pct > 0:
+            # Gap UP: void zone is [prior_close, this_open] — BELOW this_open
+            # Filled if any subsequent LOW came back down to prior_close
+            gap_top    = round(float(this_open),   2)
+            gap_bottom = round(float(prior_close), 2)
+            gap_type   = "gap_up"
+            filled = any(float(lows[j]) <= prior_close for j in range(i + 1, n))
+        else:
+            # Gap DOWN: void zone is [this_open, prior_close] — ABOVE this_open
+            # Filled if any subsequent HIGH came back up to prior_close
+            gap_top    = round(float(prior_close), 2)
+            gap_bottom = round(float(this_open),   2)
+            gap_type   = "gap_down"
+            filled = any(float(highs[j]) >= prior_close for j in range(i + 1, n))
+
+        if filled:
+            continue  # gap was filled at some point — not a target
+
+        # Still open — record it
+        gap_mid  = round((gap_top + gap_bottom) / 2, 2)
+        dist_pct = round((gap_mid - current_price) / current_price * 100, 2)
+
+        # Direction to trade: gap above = go UP to fill it (calls), gap below = go DOWN (puts)
+        direction_to_fill = "up" if gap_mid > current_price else "down"
+
+        bars_ago = n - 1 - i
+
+        unfilled.append({
+            "type":              gap_type,           # "gap_up" or "gap_down"
+            "top":               gap_top,
+            "bottom":            gap_bottom,
+            "mid":               gap_mid,
+            "gap_pct":           round(abs(gap_pct), 2),
+            "dist_pct":          dist_pct,           # + = gap is above price, - = below
+            "direction_to_fill": direction_to_fill,  # which way price needs to move
+            "bars_ago":          bars_ago,
+        })
+
+    if not unfilled:
+        return []
+
+    # Deduplicate nearby gaps (within 0.5% of each other — cluster them)
+    unfilled.sort(key=lambda g: g["mid"])
+    deduped: List[Dict] = [unfilled[0]]
+    for g in unfilled[1:]:
+        prev = deduped[-1]
+        if abs(g["mid"] - prev["mid"]) / prev["mid"] < 0.005:
+            # Keep the closer one
+            if abs(g["dist_pct"]) < abs(prev["dist_pct"]):
+                deduped[-1] = g
+        else:
+            deduped.append(g)
+
+    # Sort by distance, return up to 5 nearest
+    deduped.sort(key=lambda g: abs(g["dist_pct"]))
+    return deduped[:5]
+
+
 # ─── Options Contract Finder ──────────────────────────────────────────────────
 def _nan0(v):
     """Convert a value to float, treating None/NaN as 0."""
@@ -1695,6 +1804,11 @@ def _process_ticker(ticker: str, hist: pd.DataFrame, live_price: float = 0.0, sp
         levels     = find_key_levels(hist60, price)
         near_level = next((l for l in levels if l["strength"] >= 2), levels[0] if levels else None)
 
+        # Unfilled historical gaps — price targets/magnets (Dante's gap play model)
+        # These are prior session gaps that have never been filled — use as trade targets
+        unfilled_gaps   = find_unfilled_gaps(hist60, price)
+        nearest_gap     = unfilled_gaps[0] if unfilled_gaps else None
+
         # ── Signal combo classification (backtest-derived) ──────────────────────
         # Key combos from 60-day backtest on 80 tickers, 2800+ signals:
         #   hv_only (no gap/bk/inside) + volatile:  Sharpe 4.94, PF 2.38  ← BEST
@@ -1776,6 +1890,14 @@ def _process_ticker(ticker: str, hist: pd.DataFrame, live_price: float = 0.0, sp
         elif near_level and near_level["strength"] >= 1:         sq = min(1.0, sq + 0.05)
         if gap_flag and near_level and near_level["strength"] >= 4: sq = min(1.0, sq + 0.20)
 
+        # Unfilled gap bonus: nearby open gap gives a clear target → better edge
+        # Bonus scales by proximity: within 2% is strong edge, within 5% is moderate
+        if nearest_gap:
+            adist = abs(nearest_gap["dist_pct"])
+            if adist <= 1.0:   sq = min(1.0, sq + 0.20)   # gap very close — high-conviction target
+            elif adist <= 2.5: sq = min(1.0, sq + 0.14)
+            elif adist <= 5.0: sq = min(1.0, sq + 0.07)
+
         # Provisional direction — overwritten by apply_forward_directions()
         direction = "up" if change_pct >= 0 else "down"
 
@@ -1800,6 +1922,8 @@ def _process_ticker(ticker: str, hist: pd.DataFrame, live_price: float = 0.0, sp
             "opt_score":     opt_score,
             "levels":        levels,
             "near_level":    near_level,
+            "unfilled_gaps": unfilled_gaps,
+            "nearest_gap":   nearest_gap,
             "setup_q":       sq,
             "price_loc":     price_loc,
             "direction":     direction,

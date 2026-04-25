@@ -240,12 +240,53 @@ def detect_signals(hist: pd.DataFrame, config: BacktestConfig) -> List[Dict]:
             directions.append(direction)
             setup_q = max(setup_q, min(1.0, body_pct / 0.04))
 
+        # ── Unfilled gap approach (Dante's gap play model) ──────────────────
+        # Scan all prior gaps that have NOT been filled as of bar i.
+        # Signal fires when price is within 3% of an open gap zone — trade TOWARD it.
+        # This tests the "open gap as magnet/target" thesis directly.
+        gap_targets = []
+        for j in range(1, i):
+            pc  = closes[j - 1]
+            op  = opens[j]
+            if pc <= 0:
+                continue
+            gpct = (op - pc) / pc * 100
+            if abs(gpct) < 0.25 or abs(gpct) > 8.0:
+                continue
+            if gpct > 0:   # gap up zone: [pc, op]
+                gap_top, gap_bot = float(op), float(pc)
+                filled = any(float(lows[k]) <= pc for k in range(j + 1, i + 1))
+            else:           # gap down zone: [op, pc]
+                gap_top, gap_bot = float(pc), float(op)
+                filled = any(float(highs[k]) >= pc for k in range(j + 1, i + 1))
+            if not filled:
+                gap_mid  = (gap_top + gap_bot) / 2
+                dist_pct = (gap_mid - price) / price * 100 if price > 0 else 999
+                if abs(dist_pct) <= 3.0:   # within 3% — active approach
+                    dtf = "up" if gap_mid > price else "down"
+                    gap_targets.append({"mid": gap_mid, "dist_pct": dist_pct, "dtf": dtf, "bars_ago": i - j})
+
+        if gap_targets:
+            # Use nearest gap as the target
+            nearest = min(gap_targets, key=lambda g: abs(g["dist_pct"]))
+            signal_types.append("unfilled_gap")
+            directions.append(nearest["dtf"])
+            # Setup quality: closer gap = stronger pull
+            adist = abs(nearest["dist_pct"])
+            sq_gap = 0.80 if adist <= 0.5 else 0.70 if adist <= 1.5 else 0.60
+            setup_q = max(setup_q, sq_gap)
+
         if not signal_types:
             continue
 
         # Filter by signal type if requested
         if config.signal_filter != "all":
-            if config.signal_filter not in signal_types:
+            mapped = config.signal_filter
+            # allow "gap" to match both today's gap AND unfilled gap approach
+            if mapped == "gap":
+                if not any(s in ("gap_up", "gap_down", "unfilled_gap") for s in signal_types):
+                    continue
+            elif mapped not in signal_types:
                 continue
 
         # Use consensus direction (majority vote)
@@ -256,8 +297,14 @@ def detect_signals(hist: pd.DataFrame, config: BacktestConfig) -> List[Dict]:
         # Historical vol for IV proxy
         hv = calc_hv(hist["Close"].iloc[:i+1])
 
+        # Primary signal label for reporting
+        primary_signal = signal_types[0]
+        if "unfilled_gap" in signal_types:
+            primary_signal = "unfilled_gap"  # prioritize Dante's gap model in output
+
         signals.append({
             "date":         dates[i].strftime("%Y-%m-%d"),
+            "signal":       primary_signal,   # alias used by API
             "signal_types": signal_types,
             "direction":    direction,
             "price":        round(price, 4),
@@ -507,7 +554,9 @@ def backtest_laggards(
                         "stock_return_pct":  round(m_return * 100, 3),
                         "lag_pct":      round(lag * 100, 3),
                         "fwd_return_pct": round(fwd_return * 100, 3),
+                        "signed_return_pct": round(abs(fwd_return) * 100 * (1 if correct else -1), 3),
                         "direction_correct": int(correct),
+                        "signal":       "laggard",
                         "signal_types": ["laggard"],
                     })
                 except Exception:
