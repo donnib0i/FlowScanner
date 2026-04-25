@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-# scanner_web.py — Elite Scanner Web UI + LiteLLM AI Brief
+# scanner_web.py — Elite Scanner Web UI + LiteLLM AI Brief (DEPRECATED)
+# DEPRECATED: Replaced by web.py (FastAPI + premium HTML dashboard).
+# To run the new UI: uvicorn web:app --host 0.0.0.0 --port 7860
+# This file is kept for backward compatibility only.
 # Run: python3 scanner_web.py  → prints a shareable link
 
 import os

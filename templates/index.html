@@ -1,0 +1,1377 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FlowScanner — 0DTE Options Terminal</title>
+<style>
+/* ── Reset & Base ─────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:         #0a0a0f;
+  --bg2:        #0d0d14;
+  --card:       rgba(255,255,255,0.03);
+  --border:     rgba(255,255,255,0.08);
+  --accent:     #00d4ff;
+  --accent2:    #0099cc;
+  --pos:        #00ff88;
+  --neg:        #ff4466;
+  --warn:       #ffaa00;
+  --text:       #e8e8f0;
+  --muted:      #444466;
+  --dim:        #888899;
+  --purple:     #aa66ff;
+  --cyan:       #00d4ff;
+  --font:       system-ui, -apple-system, "SF Pro Display", "Segoe UI", sans-serif;
+  --mono:       "SF Mono", "Fira Code", "Cascadia Code", monospace;
+  --radius:     6px;
+  --transition: 0.15s ease;
+}
+
+html, body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 13px;
+  line-height: 1.5;
+  min-height: 100vh;
+}
+
+/* ── Layout ───────────────────────────────────────────────────────────────── */
+.header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg2);
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  flex-wrap: wrap;
+}
+
+.logo {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 3px;
+  color: var(--accent);
+  text-transform: uppercase;
+  font-family: var(--mono);
+}
+
+.logo span { color: var(--text); opacity: 0.5; }
+
+.header-badges {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.vix-badge {
+  padding: 3px 10px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 600;
+  font-family: var(--mono);
+  border: 1px solid rgba(0,212,255,0.3);
+  background: rgba(0,212,255,0.08);
+  color: var(--accent);
+}
+
+.market-badge {
+  padding: 3px 10px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 1px;
+}
+.market-badge.open   { background: rgba(0,255,136,0.12); color: var(--pos); border: 1px solid rgba(0,255,136,0.3); }
+.market-badge.closed { background: rgba(255,68,102,0.10); color: var(--neg); border: 1px solid rgba(255,68,102,0.25); }
+.market-badge.pre    { background: rgba(255,170,0,0.10); color: var(--warn); border: 1px solid rgba(255,170,0,0.25); }
+
+.scan-time {
+  font-size: 11px;
+  color: var(--dim);
+  font-family: var(--mono);
+  margin-left: auto;
+}
+
+/* ── Market Context Bar ───────────────────────────────────────────────────── */
+.market-bar {
+  display: flex;
+  gap: 20px;
+  padding: 8px 20px;
+  background: var(--bg2);
+  border-bottom: 1px solid var(--border);
+  font-family: var(--mono);
+  font-size: 12px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.market-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.market-item .label { color: var(--dim); }
+.market-item .val.pos { color: var(--pos); }
+.market-item .val.neg { color: var(--neg); }
+.market-item .val.neutral { color: var(--text); }
+
+/* ── Sector Heat Map ──────────────────────────────────────────────────────── */
+.sector-heatmap {
+  padding: 8px 20px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg2);
+}
+
+.shm-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 7px;
+}
+
+.shm-label {
+  font-size: 9px;
+  letter-spacing: 1.8px;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-family: var(--mono);
+}
+
+.shm-legend {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 9px;
+  color: var(--muted);
+  font-family: var(--mono);
+}
+
+.shm-legend-bar {
+  display: flex;
+  gap: 2px;
+  align-items: center;
+}
+
+.shm-legend-swatch {
+  width: 14px;
+  height: 7px;
+  border-radius: 2px;
+}
+
+.shm-grid {
+  display: grid;
+  grid-template-columns: repeat(10, 1fr);
+  gap: 5px;
+}
+
+.shm-tile {
+  border-radius: 5px;
+  padding: 8px 5px 7px;
+  text-align: center;
+  cursor: default;
+  border: 1px solid transparent;
+  transition: transform 0.12s, border-color 0.12s, box-shadow 0.12s;
+  position: relative;
+  overflow: hidden;
+}
+
+.shm-tile::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  transition: opacity 0.12s;
+  background: rgba(255,255,255,0.05);
+}
+
+.shm-tile:hover::before { opacity: 1; }
+.shm-tile:hover {
+  border-color: rgba(255,255,255,0.12);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+  z-index: 1;
+}
+
+.shm-tile .st-name {
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  opacity: 0.65;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.shm-tile .st-etf {
+  font-size: 8px;
+  font-family: var(--mono);
+  opacity: 0.42;
+  margin-top: 1px;
+}
+
+.shm-tile .st-chg {
+  font-size: 12px;
+  font-weight: 700;
+  font-family: var(--mono);
+  margin-top: 5px;
+  line-height: 1;
+}
+
+.shm-tile .st-bar {
+  height: 2px;
+  border-radius: 1px;
+  margin: 5px auto 0;
+  width: 70%;
+  opacity: 0.4;
+  background: currentColor;
+}
+
+@media (max-width: 900px) {
+  .shm-grid { grid-template-columns: repeat(5, 1fr); }
+}
+@media (max-width: 500px) {
+  .shm-grid { grid-template-columns: repeat(5, 1fr); gap: 3px; }
+  .shm-tile { padding: 5px 3px; }
+  .shm-tile .st-etf { display: none; }
+}
+
+/* ── Controls ─────────────────────────────────────────────────────────────── */
+.controls {
+  padding: 12px 20px;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.controls input[type="text"] {
+  flex: 1;
+  min-width: 200px;
+  max-width: 420px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  padding: 7px 12px;
+  font-family: var(--mono);
+  font-size: 12px;
+  outline: none;
+  transition: border-color var(--transition);
+}
+
+.controls input[type="text"]:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(0,212,255,0.12);
+}
+
+.controls select {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  padding: 7px 10px;
+  font-size: 12px;
+  outline: none;
+  cursor: pointer;
+}
+
+.controls select:focus { border-color: var(--accent); }
+
+.toggle-group {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.toggle-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--dim);
+  user-select: none;
+}
+
+.toggle-label input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.btn-scan {
+  background: var(--accent);
+  color: #000;
+  border: none;
+  border-radius: var(--radius);
+  padding: 8px 22px;
+  font-weight: 700;
+  font-size: 13px;
+  cursor: pointer;
+  letter-spacing: 1px;
+  transition: background var(--transition), transform 0.1s;
+  white-space: nowrap;
+}
+
+.btn-scan:hover { background: var(--accent2); }
+.btn-scan:active { transform: scale(0.97); }
+.btn-scan:disabled { background: var(--muted); cursor: not-allowed; color: var(--dim); }
+
+/* ── Stats Strip ──────────────────────────────────────────────────────────── */
+.stats-strip {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1px;
+  background: var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+.stat-card {
+  background: var(--bg2);
+  padding: 10px 16px;
+  text-align: center;
+}
+
+.stat-card .s-label {
+  font-size: 10px;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: var(--dim);
+  margin-bottom: 3px;
+}
+
+.stat-card .s-val {
+  font-size: 22px;
+  font-weight: 700;
+  font-family: var(--mono);
+  color: var(--text);
+}
+
+.stat-card .s-val.accent { color: var(--accent); }
+.stat-card .s-val.pos    { color: var(--pos); }
+
+/* ── Progress Bar ─────────────────────────────────────────────────────────── */
+.progress-wrap {
+  padding: 8px 20px;
+  display: none;
+}
+
+.progress-wrap.visible { display: block; }
+
+.progress-bar-outer {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  height: 4px;
+  overflow: hidden;
+}
+
+.progress-bar-inner {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent), var(--pos));
+  border-radius: 20px;
+  width: 0%;
+  transition: width 0.3s ease;
+}
+
+.progress-msg {
+  font-size: 11px;
+  color: var(--dim);
+  margin-top: 4px;
+  font-family: var(--mono);
+}
+
+/* ── Table Container ──────────────────────────────────────────────────────── */
+.table-wrap {
+  padding: 0 20px 20px;
+  overflow-x: auto;
+}
+
+table.results-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  margin-top: 12px;
+}
+
+table.results-table th {
+  padding: 8px 10px;
+  text-align: left;
+  font-size: 10px;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: var(--dim);
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+}
+
+table.results-table th:hover { color: var(--accent); }
+table.results-table th .sort-arrow { margin-left: 4px; opacity: 0.4; }
+table.results-table th.active .sort-arrow { opacity: 1; color: var(--accent); }
+
+table.results-table td {
+  padding: 9px 10px;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+table.results-table tbody tr {
+  cursor: pointer;
+  transition: background var(--transition);
+}
+
+table.results-table tbody tr:hover {
+  background: rgba(255,255,255,0.04) !important;
+}
+
+/* Grade row tints */
+tr.grade-A { background: rgba(0,255,136,0.03); }
+tr.grade-B { background: rgba(255,170,0,0.02); }
+tr.grade-C { background: transparent; }
+tr.grade-D { background: rgba(255,68,102,0.02); }
+
+/* ── Ticker Cell ──────────────────────────────────────────────────────────── */
+.ticker-cell { display: flex; flex-direction: column; gap: 2px; }
+.ticker-sym {
+  font-weight: 700;
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--text);
+}
+.sector-tag {
+  font-size: 10px;
+  color: var(--muted);
+  font-family: var(--mono);
+}
+
+/* ── Grade Badge ──────────────────────────────────────────────────────────── */
+.grade {
+  display: inline-block;
+  width: 26px;
+  height: 26px;
+  line-height: 26px;
+  text-align: center;
+  border-radius: 50%;
+  font-weight: 700;
+  font-size: 13px;
+  font-family: var(--mono);
+}
+.grade-A-badge { background: rgba(0,255,136,0.15); color: var(--pos); border: 1px solid rgba(0,255,136,0.3); }
+.grade-B-badge { background: rgba(255,170,0,0.12); color: var(--warn); border: 1px solid rgba(255,170,0,0.25); }
+.grade-C-badge { background: rgba(255,255,255,0.06); color: var(--dim); border: 1px solid var(--border); }
+.grade-D-badge { background: rgba(255,68,102,0.10); color: var(--neg); border: 1px solid rgba(255,68,102,0.2); }
+
+/* ── Signal Badges ────────────────────────────────────────────────────────── */
+.badges { display: flex; gap: 4px; flex-wrap: wrap; }
+
+.badge {
+  display: inline-block;
+  padding: 2px 7px;
+  border-radius: 12px;
+  font-size: 10px;
+  font-weight: 600;
+  font-family: var(--mono);
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+  cursor: help;
+}
+
+.badge-green-bright { background: rgba(0,255,136,0.18); color: var(--pos); border: 1px solid rgba(0,255,136,0.4); }
+.badge-green        { background: rgba(0,255,136,0.10); color: var(--pos); border: 1px solid rgba(0,255,136,0.25); }
+.badge-red-bright   { background: rgba(255,68,102,0.18); color: var(--neg); border: 1px solid rgba(255,68,102,0.4); }
+.badge-red          { background: rgba(255,68,102,0.10); color: var(--neg); border: 1px solid rgba(255,68,102,0.25); }
+.badge-cyan         { background: rgba(0,212,255,0.10); color: var(--cyan); border: 1px solid rgba(0,212,255,0.3); }
+.badge-yellow       { background: rgba(255,204,0,0.10); color: #ffcc00; border: 1px solid rgba(255,204,0,0.25); }
+.badge-purple       { background: rgba(170,102,255,0.12); color: var(--purple); border: 1px solid rgba(170,102,255,0.3); }
+.badge-dim          { background: rgba(255,255,255,0.05); color: var(--dim); border: 1px solid var(--border); }
+
+/* ── Direction Cell ───────────────────────────────────────────────────────── */
+.dir-calls { color: var(--pos); font-weight: 600; font-family: var(--mono); font-size: 11px; }
+.dir-puts  { color: var(--neg); font-weight: 600; font-family: var(--mono); font-size: 11px; }
+
+/* ── Numeric Cells ────────────────────────────────────────────────────────── */
+.pos-val  { color: var(--pos); font-family: var(--mono); }
+.neg-val  { color: var(--neg); font-family: var(--mono); }
+.mono-val { font-family: var(--mono); color: var(--text); }
+.dim-val  { font-family: var(--mono); color: var(--dim); }
+
+/* ── HV20 Cell ────────────────────────────────────────────────────────────── */
+.hv-cell { display: flex; flex-direction: column; gap: 2px; }
+.hv-val  { font-family: var(--mono); font-size: 12px; }
+.hv-regime {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  padding: 1px 5px;
+  border-radius: 8px;
+  display: inline-block;
+}
+.hv-volatile { background: rgba(255,68,102,0.15); color: var(--neg); }
+.hv-normal   { background: rgba(255,170,0,0.12); color: var(--warn); }
+.hv-calm     { background: rgba(255,255,255,0.07); color: var(--dim); }
+
+/* ── Contract Cell ────────────────────────────────────────────────────────── */
+.contract-cell { display: flex; flex-direction: column; gap: 2px; }
+.contract-main {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text);
+}
+.contract-stale {
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--warn);
+  letter-spacing: 1px;
+}
+.contract-ah {
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--neg);
+  letter-spacing: 1px;
+}
+.contract-empty { color: var(--muted); font-family: var(--mono); }
+
+/* ── OScore Cell ──────────────────────────────────────────────────────────── */
+.oscore {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--mono);
+}
+.oscore-bar {
+  width: 40px;
+  height: 4px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  overflow: hidden;
+  display: inline-block;
+  vertical-align: middle;
+}
+.oscore-fill {
+  height: 100%;
+  border-radius: 2px;
+  background: linear-gradient(90deg, var(--accent), var(--pos));
+}
+
+/* ── Expanded Row ─────────────────────────────────────────────────────────── */
+.expand-row td {
+  background: rgba(0,212,255,0.03);
+  border-bottom: 2px solid rgba(0,212,255,0.1);
+  padding: 0;
+}
+
+.expand-content {
+  padding: 14px 20px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 10px;
+}
+
+.expand-card {
+  background: rgba(255,255,255,0.03);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+}
+
+.expand-card .ec-label {
+  font-size: 10px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--dim);
+  margin-bottom: 6px;
+}
+
+.expand-card .ec-val {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text);
+}
+
+.expand-card .ec-val.accent { color: var(--accent); }
+.expand-card .ec-val.pos    { color: var(--pos); }
+.expand-card .ec-val.neg    { color: var(--neg); }
+.expand-card .ec-val.warn   { color: var(--warn); }
+
+/* Contract detail in expanded row */
+.contract-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.contract-detail .cline {
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.contract-detail .ckey { color: var(--dim); margin-right: 6px; }
+
+/* ── Empty State ──────────────────────────────────────────────────────────── */
+.empty-state {
+  padding: 60px 20px;
+  text-align: center;
+  color: var(--muted);
+}
+.empty-state .big { font-size: 36px; margin-bottom: 12px; opacity: 0.3; }
+.empty-state .msg { font-size: 14px; }
+
+/* ── Tooltip ──────────────────────────────────────────────────────────────── */
+[data-tip] { position: relative; }
+[data-tip]:hover::after {
+  content: attr(data-tip);
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: #1a1a2e;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 5px 9px;
+  font-size: 11px;
+  white-space: nowrap;
+  color: var(--text);
+  z-index: 999;
+  pointer-events: none;
+  font-family: var(--font);
+  font-weight: 400;
+}
+
+/* ── Error Toast ──────────────────────────────────────────────────────────── */
+.toast {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  background: rgba(255,68,102,0.15);
+  border: 1px solid rgba(255,68,102,0.4);
+  color: var(--neg);
+  padding: 12px 16px;
+  border-radius: var(--radius);
+  font-size: 12px;
+  max-width: 360px;
+  z-index: 999;
+  display: none;
+}
+.toast.visible { display: block; animation: fadeIn 0.2s ease; }
+
+/* ── Auto-refresh indicator ───────────────────────────────────────────────── */
+.auto-refresh {
+  font-size: 10px;
+  font-family: var(--mono);
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.auto-refresh .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--pos);
+  animation: pulse 2s ease-in-out infinite;
+}
+
+/* ── Scrollbar styling ────────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: var(--muted); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--dim); }
+
+/* ── Animations ───────────────────────────────────────────────────────────── */
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.3; }
+}
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes shimmer {
+  0%   { opacity: 0.4; }
+  50%  { opacity: 0.8; }
+  100% { opacity: 0.4; }
+}
+.loading { animation: shimmer 1.4s ease-in-out infinite; }
+
+/* ── Responsive ───────────────────────────────────────────────────────────── */
+@media (max-width: 900px) {
+  .stats-strip { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 600px) {
+  .header { padding: 10px 12px; }
+  .controls { padding: 10px 12px; }
+  .table-wrap { padding: 0 8px 20px; }
+  .stats-strip { grid-template-columns: 1fr 1fr; }
+}
+</style>
+</head>
+<body>
+
+<!-- ── Header ──────────────────────────────────────────────────────────────── -->
+<div class="header">
+  <div class="logo">Flow<span>.</span>Scanner</div>
+  <div class="header-badges">
+    <div class="vix-badge" id="vixBadge">VIX —</div>
+    <div class="market-badge closed" id="marketBadge">LOADING</div>
+  </div>
+  <div class="scan-time" id="scanTime">—</div>
+  <div class="auto-refresh" id="autoRefreshIndicator" style="display:none">
+    <div class="dot"></div>
+    Auto-refresh in <span id="refreshCountdown">300</span>s
+  </div>
+</div>
+
+<!-- ── Market Bar ───────────────────────────────────────────────────────────── -->
+<div class="market-bar" id="marketBar">
+  <div class="market-item">
+    <span class="label">SPY</span>
+    <span class="val neutral" id="spyChg">—</span>
+  </div>
+  <div class="market-item">
+    <span class="label">QQQ</span>
+    <span class="val neutral" id="qqqChg">—</span>
+  </div>
+  <div class="market-item">
+    <span class="label">VIX</span>
+    <span class="val neutral" id="vixVal">—</span>
+  </div>
+</div>
+
+<!-- ── Sector Heat Map ──────────────────────────────────────────────────────── -->
+<div class="sector-heatmap" id="sectorHeatmap">
+  <div class="shm-header">
+    <div class="shm-label">Sector Heat</div>
+    <div class="shm-legend">
+      <div class="shm-legend-bar">
+        <div class="shm-legend-swatch" style="background:rgba(255,68,102,0.45)"></div>
+        <div class="shm-legend-swatch" style="background:rgba(255,68,102,0.2)"></div>
+        <div class="shm-legend-swatch" style="background:rgba(255,255,255,0.06)"></div>
+        <div class="shm-legend-swatch" style="background:rgba(0,255,136,0.2)"></div>
+        <div class="shm-legend-swatch" style="background:rgba(0,255,136,0.45)"></div>
+      </div>
+      <span>−2% → 0 → +2%</span>
+    </div>
+  </div>
+  <div class="shm-grid" id="sectorGrid">
+    <div style="grid-column:1/-1;text-align:center;color:var(--muted);font-size:11px;padding:8px 0;font-family:var(--mono);">
+      Loading sector data...
+    </div>
+  </div>
+</div>
+
+<!-- ── Controls ────────────────────────────────────────────────────────────── -->
+<div class="controls">
+  <input type="text" id="tickersInput"
+         placeholder="SPY QQQ NVDA AMD — blank = fast universe"
+         style="flex:1;min-width:200px;max-width:420px">
+  <select id="filterSel">
+    <option value="any">Any Setup</option>
+    <option value="all">All Tickers</option>
+    <option value="gap">Gap Fills</option>
+    <option value="inside">Inside Day</option>
+    <option value="highvol">High Vol</option>
+    <option value="breakout">Breakouts</option>
+    <option value="options">Options Score ≥60</option>
+    <option value="a_grade">Grade A Only</option>
+    <option value="laggard">Sector Laggards</option>
+  </select>
+  <select id="sortSel">
+    <option value="setup">Setup Quality</option>
+    <option value="options">Options Score</option>
+    <option value="relvol">Rel Vol</option>
+    <option value="change">Change %</option>
+    <option value="gap">Gap %</option>
+    <option value="lag">Lag Score</option>
+  </select>
+  <div class="toggle-group">
+    <label class="toggle-label" data-tip="Fetch live options chains (slower, ~30s extra)">
+      <input type="checkbox" id="contractsCb"> Contracts
+    </label>
+    <label class="toggle-label" data-tip="Expand universe with today's top movers">
+      <input type="checkbox" id="dynamicCb"> Dynamic
+    </label>
+  </div>
+  <button class="btn-scan" id="scanBtn" onclick="runScan()">▶ SCAN</button>
+</div>
+
+<!-- ── Stats Strip ──────────────────────────────────────────────────────────── -->
+<div class="stats-strip">
+  <div class="stat-card">
+    <div class="s-label">Scanned</div>
+    <div class="s-val accent" id="statScanned">—</div>
+  </div>
+  <div class="stat-card">
+    <div class="s-label">Signals</div>
+    <div class="s-val" id="statSignals">—</div>
+  </div>
+  <div class="stat-card">
+    <div class="s-label">Grade A</div>
+    <div class="s-val pos" id="statGradeA">—</div>
+  </div>
+  <div class="stat-card">
+    <div class="s-label">Top Setup</div>
+    <div class="s-val accent" id="statTopTicker">—</div>
+  </div>
+</div>
+
+<!-- ── Progress ────────────────────────────────────────────────────────────── -->
+<div class="progress-wrap" id="progressWrap">
+  <div class="progress-bar-outer">
+    <div class="progress-bar-inner" id="progressBar"></div>
+  </div>
+  <div class="progress-msg" id="progressMsg">Initializing...</div>
+</div>
+
+<!-- ── Results Table ────────────────────────────────────────────────────────── -->
+<div class="table-wrap">
+  <div id="emptyState" class="empty-state">
+    <div class="big">◈</div>
+    <div class="msg">Hit <strong>▶ SCAN</strong> to run the scanner</div>
+  </div>
+  <table class="results-table" id="resultsTable" style="display:none">
+    <thead>
+      <tr>
+        <th>Ticker</th>
+        <th>Setup</th>
+        <th>Grade</th>
+        <th>Dir</th>
+        <th>Price</th>
+        <th>Chg%</th>
+        <th>RelVol</th>
+        <th>HV20</th>
+        <th>RS</th>
+        <th>Contract</th>
+        <th>OScore</th>
+        <th>IVR</th>
+        <th>EM±</th>
+      </tr>
+    </thead>
+    <tbody id="resultsBody"></tbody>
+  </table>
+</div>
+
+<!-- ── Toast ───────────────────────────────────────────────────────────────── -->
+<div class="toast" id="toast"></div>
+
+<script>
+// ── State ──────────────────────────────────────────────────────────────────────
+let scanResults  = [];
+let expandedRow  = null;
+let autoTimer    = null;
+let countdownInt = null;
+let marketOpen   = false;
+
+// ── Utility ───────────────────────────────────────────────────────────────────
+
+function fmtChg(v) {
+  if (v === null || v === undefined || isNaN(v)) return '—';
+  const s = v >= 0 ? `+${v.toFixed(2)}%` : `${v.toFixed(2)}%`;
+  return `<span class="${v >= 0 ? 'pos-val' : 'neg-val'}">${s}</span>`;
+}
+
+function fmtRelvol(v) {
+  return `<span class="${v >= 2 ? 'pos-val' : 'mono-val'}">${v.toFixed(1)}x</span>`;
+}
+
+function showToast(msg, dur = 4000) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('visible');
+  setTimeout(() => t.classList.remove('visible'), dur);
+}
+
+// ── Market context ─────────────────────────────────────────────────────────────
+
+async function loadMarketContext() {
+  try {
+    const r = await fetch('/api/market');
+    const d = await r.json();
+    marketOpen = d.market_open;
+
+    // VIX
+    if (d.vix > 0) {
+      document.getElementById('vixBadge').textContent = `VIX ${d.vix.toFixed(2)}`;
+      document.getElementById('vixVal').textContent   = d.vix.toFixed(2);
+      const vixEl = document.getElementById('vixVal');
+      if (d.vix >= 25)      vixEl.className = 'val neg';
+      else if (d.vix >= 18) vixEl.className = 'val warn';
+      else                  vixEl.className = 'val pos';
+    }
+
+    // Market badge
+    const mb = document.getElementById('marketBadge');
+    const ms = d.market_status || (d.market_open ? 'MARKET OPEN' : 'CLOSED');
+    mb.textContent = ms;
+    mb.className = 'market-badge ' +
+      (ms.includes('OPEN') ? 'open' : ms.includes('PRE') ? 'pre' : 'closed');
+
+    // SPY / QQQ
+    setChgEl('spyChg', d.spy_chg);
+    setChgEl('qqqChg', d.qqq_chg);
+
+    // Sector strip
+    if (d.sectors && d.sectors.length) {
+      renderSectorStrip(d.sectors);
+    }
+
+    // Auto-refresh when market open
+    if (d.market_open && !autoTimer) {
+      startAutoRefresh();
+    }
+  } catch(e) {
+    console.warn('Market context failed:', e);
+  }
+}
+
+function setChgEl(id, v) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  if (v === null || v === undefined) { el.textContent = '—'; return; }
+  el.innerHTML = v >= 0
+    ? `<span class="val pos">+${v.toFixed(2)}%</span>`
+    : `<span class="val neg">${v.toFixed(2)}%</span>`;
+}
+
+function renderSectorStrip(sectors) {
+  renderSectorHeatMap(sectors);
+}
+
+// Sector name → short display label (4–5 chars)
+const SECTOR_SHORT = {
+  "Tech":        "TECH",
+  "Financials":  "FINL",
+  "Energy":      "ENRG",
+  "Health":      "HLTH",
+  "Industrials": "INDU",
+  "Staples":     "STPL",
+  "Utilities":   "UTIL",
+  "Materials":   "MATL",
+  "CommSvcs":    "COMM",
+  "RealEstate":  "REIT",
+};
+
+function sectorTileStyle(chg) {
+  // Returns {bg, color, borderColor}
+  if      (chg >=  2.5) return { bg:'rgba(0,255,136,0.40)', color:'#00ff88', border:'rgba(0,255,136,0.35)' };
+  else if (chg >=  1.5) return { bg:'rgba(0,255,136,0.24)', color:'#00ee80', border:'rgba(0,255,136,0.2)' };
+  else if (chg >=  0.5) return { bg:'rgba(0,255,136,0.12)', color:'#00cc66', border:'rgba(0,255,136,0.1)' };
+  else if (chg >=  0.0) return { bg:'rgba(0,255,136,0.05)', color:'#558866', border:'rgba(255,255,255,0.06)' };
+  else if (chg > -0.5)  return { bg:'rgba(255,68,102,0.05)', color:'#886655', border:'rgba(255,255,255,0.06)' };
+  else if (chg > -1.5)  return { bg:'rgba(255,68,102,0.13)', color:'#cc4455', border:'rgba(255,68,102,0.12)' };
+  else if (chg > -2.5)  return { bg:'rgba(255,68,102,0.25)', color:'#ff4466', border:'rgba(255,68,102,0.2)' };
+  else                  return { bg:'rgba(255,68,102,0.42)', color:'#ff3355', border:'rgba(255,68,102,0.35)' };
+}
+
+function renderSectorHeatMap(sectors) {
+  const grid = document.getElementById('sectorGrid');
+  if (!grid || !sectors.length) return;
+
+  // Sort by change_pct descending so hottest sectors render left
+  const sorted = [...sectors].sort((a, b) => b.change_pct - a.change_pct);
+
+  grid.innerHTML = sorted.map(s => {
+    const chg   = s.change_pct;
+    const arrow = chg >= 0 ? '+' : '';
+    const style = sectorTileStyle(chg);
+    const label = SECTOR_SHORT[s.name] || s.name.slice(0, 4).toUpperCase();
+    const etf   = s.etf || '';
+    const rvol  = s.rel_vol ? s.rel_vol.toFixed(1) + 'x' : '';
+    const tip   = `${s.name} (${etf}): ${arrow}${chg.toFixed(2)}%${rvol ? ' | RelVol ' + rvol : ''}${s.bias ? ' | ' + s.bias.toUpperCase() : ''}`;
+
+    return `<div class="shm-tile"
+      style="background:${style.bg};color:${style.color};border-color:${style.border}"
+      title="${tip}">
+      <div class="st-name">${label}</div>
+      <div class="st-etf">${etf}</div>
+      <div class="st-chg">${arrow}${chg.toFixed(1)}%</div>
+      <div class="st-bar"></div>
+    </div>`;
+  }).join('');
+}
+
+// ── Auto-refresh ───────────────────────────────────────────────────────────────
+
+function startAutoRefresh() {
+  let secs = 300;
+  const ind = document.getElementById('autoRefreshIndicator');
+  const cnt = document.getElementById('refreshCountdown');
+  ind.style.display = 'flex';
+  cnt.textContent = secs;
+  countdownInt = setInterval(() => {
+    secs--;
+    cnt.textContent = secs;
+    if (secs <= 0) {
+      clearInterval(countdownInt);
+      ind.style.display = 'none';
+      autoTimer = null;
+      runScan();
+    }
+  }, 1000);
+}
+
+function stopAutoRefresh() {
+  if (countdownInt) clearInterval(countdownInt);
+  if (autoTimer)    clearTimeout(autoTimer);
+  autoTimer = null;
+  document.getElementById('autoRefreshIndicator').style.display = 'none';
+}
+
+// ── Scan ───────────────────────────────────────────────────────────────────────
+
+async function runScan() {
+  stopAutoRefresh();
+  const btn = document.getElementById('scanBtn');
+  btn.disabled = true;
+  btn.textContent = '⏳ Scanning...';
+
+  const progressWrap = document.getElementById('progressWrap');
+  const progressBar  = document.getElementById('progressBar');
+  const progressMsg  = document.getElementById('progressMsg');
+  progressWrap.classList.add('visible');
+  progressBar.style.width = '5%';
+
+  // Hide results while scanning
+  document.getElementById('resultsTable').style.display = 'none';
+  document.getElementById('emptyState').style.display   = 'none';
+  expandedRow = null;
+
+  const body = {
+    tickers:        document.getElementById('tickersInput').value,
+    filter:         document.getElementById('filterSel').value,
+    sort:           document.getElementById('sortSel').value,
+    load_contracts: document.getElementById('contractsCb').checked,
+    dynamic:        document.getElementById('dynamicCb').checked,
+  };
+
+  try {
+    const resp = await fetch('/api/scan', {
+      method:  'POST',
+      headers: {'Content-Type': 'application/json'},
+      body:    JSON.stringify(body),
+    });
+
+    const reader = resp.body.getReader();
+    const dec    = new TextDecoder();
+    let buf      = '';
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      const lines = buf.split('\n');
+      buf = lines.pop();
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const msg = JSON.parse(line);
+          handleScanMessage(msg, progressBar, progressMsg);
+        } catch(e) { /* skip malformed */ }
+      }
+    }
+  } catch(e) {
+    showToast('Scan failed: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '▶ SCAN';
+    progressWrap.classList.remove('visible');
+    progressBar.style.width = '0%';
+    // Restart auto-refresh if market open
+    if (marketOpen) startAutoRefresh();
+  }
+}
+
+function handleScanMessage(msg, barEl, msgEl) {
+  if (msg.type === 'progress') {
+    barEl.style.width = (msg.pct || 10) + '%';
+    msgEl.textContent = msg.msg || '';
+  }
+  else if (msg.type === 'sector') {
+    if (msg.sectors && msg.sectors.length) {
+      renderSectorStrip(msg.sectors);
+    }
+    barEl.style.width = '20%';
+  }
+  else if (msg.type === 'stats') {
+    document.getElementById('statScanned').textContent  = msg.total_scanned ?? '—';
+    document.getElementById('statSignals').textContent  = msg.signals_found  ?? '—';
+    document.getElementById('statGradeA').textContent   = msg.a_grade_count  ?? '—';
+    document.getElementById('statTopTicker').textContent = msg.top_ticker    ?? '—';
+    barEl.style.width = '90%';
+  }
+  else if (msg.type === 'results') {
+    marketOpen  = msg.market_open;
+    scanResults = msg.results || [];
+    barEl.style.width = '100%';
+    renderTable(scanResults);
+    const ts = msg.scan_time || new Date().toLocaleTimeString();
+    document.getElementById('scanTime').textContent = 'Last scan: ' + ts;
+  }
+  else if (msg.type === 'done') {
+    msgEl.textContent = msg.msg || 'Done';
+  }
+  else if (msg.type === 'error') {
+    showToast(msg.msg || 'Scan error');
+    msgEl.textContent = 'Error — ' + (msg.msg || '');
+  }
+}
+
+// ── Table Render ───────────────────────────────────────────────────────────────
+
+function renderTable(results) {
+  const tbody = document.getElementById('resultsBody');
+  const table = document.getElementById('resultsTable');
+  const empty = document.getElementById('emptyState');
+
+  if (!results || results.length === 0) {
+    table.style.display = 'none';
+    empty.style.display = 'block';
+    empty.innerHTML = '<div class="big">◈</div><div class="msg">No signals found — try a different filter</div>';
+    return;
+  }
+
+  empty.style.display = 'none';
+  tbody.innerHTML = '';
+  table.style.display = 'table';
+
+  results.forEach((r, idx) => {
+    const row = document.createElement('tr');
+    row.className = `grade-${r.grade}`;
+    row.dataset.idx = idx;
+    row.innerHTML = buildRowHTML(r);
+    row.addEventListener('click', () => toggleExpand(idx, row, r));
+    tbody.appendChild(row);
+  });
+}
+
+function buildRowHTML(r) {
+  // Ticker + sector
+  const tickerCell = `<div class="ticker-cell">
+    <div class="ticker-sym">${r.ticker}</div>
+    <div class="sector-tag">${r.sector}</div>
+  </div>`;
+
+  // Badges
+  const badgeHTML = r.badges && r.badges.length
+    ? `<div class="badges">${r.badges.map(b =>
+        `<span class="badge ${b.cls}" title="${escHtml(b.tooltip)}">${escHtml(b.text)}</span>`
+      ).join('')}</div>`
+    : '<span class="dim-val">—</span>';
+
+  // Grade
+  const gradeCell = `<span class="grade grade-${r.grade}-badge">${r.grade}</span>`;
+
+  // Direction
+  const dirCell = r.direction === 'up'
+    ? `<span class="dir-calls">↑ CALLS</span>`
+    : `<span class="dir-puts">↓ PUTS</span>`;
+
+  // Price
+  const priceCell = `<span class="mono-val">$${r.price.toFixed(2)}</span>`;
+
+  // Change%
+  const chgCell = r.change_pct >= 0
+    ? `<span class="pos-val">+${r.change_pct.toFixed(2)}%</span>`
+    : `<span class="neg-val">${r.change_pct.toFixed(2)}%</span>`;
+
+  // RelVol
+  const rvolCell = `<span class="${r.rel_vol >= 2 ? 'pos-val' : 'mono-val'}">${r.rel_vol.toFixed(1)}x</span>`;
+
+  // HV20 + regime
+  const hv20Pct  = (r.hv20 * 100).toFixed(1);
+  const hvRegCls = `hv-${r.hv_regime}`;
+  const hv20Cell = `<div class="hv-cell">
+    <div class="hv-val mono-val">${hv20Pct}%</div>
+    <div class="hv-regime ${hvRegCls}">${r.hv_regime.toUpperCase()}</div>
+  </div>`;
+
+  // RS vs SPY
+  const rs      = r.rs_vs_spy || 0;
+  const rsClass = rs >= 1 ? 'pos-val' : rs <= -1 ? 'neg-val' : 'dim-val';
+  const rsStr   = rs >= 0 ? `+${rs.toFixed(1)}%` : `${rs.toFixed(1)}%`;
+  const rsCell  = `<span class="${rsClass}">${rsStr}</span>`;
+
+  // Contract
+  const contractCell = buildContractCell(r.contract);
+
+  // OScore
+  const os = r.opt_score || 0;
+  const osColor = os >= 75 ? '#00ff88' : os >= 50 ? '#ffaa00' : '#888899';
+  const oscoreCell = `<div class="oscore">
+    <div class="oscore-bar"><div class="oscore-fill" style="width:${os}%;background:${osColor}"></div></div>
+    <span class="mono-val">${os}</span>
+  </div>`;
+
+  // IVR
+  const ivr     = r.ivr_score ?? 50;
+  const ivrLbl  = r.ivr_label || 'NORMAL';
+  const ivrCls  = ivr >= 70 ? 'neg-val' : ivr <= 30 ? 'pos-val' : 'dim-val';
+  const ivrCell = `<span class="${ivrCls}" title="IVR proxy (HV20/HV60): ${ivrLbl}">${ivr}</span>`;
+
+  // Expected move
+  const em     = r.expected_move_pct || 0;
+  const emCell = em > 0
+    ? `<span class="dim-val" title="1-sigma daily move">±${em.toFixed(1)}%</span>`
+    : '<span class="dim-val">—</span>';
+
+  return `<td>${tickerCell}</td>
+    <td>${badgeHTML}</td>
+    <td>${gradeCell}</td>
+    <td>${dirCell}</td>
+    <td>${priceCell}</td>
+    <td>${chgCell}</td>
+    <td>${rvolCell}</td>
+    <td>${hv20Cell}</td>
+    <td>${rsCell}</td>
+    <td>${contractCell}</td>
+    <td>${oscoreCell}</td>
+    <td>${ivrCell}</td>
+    <td>${emCell}</td>`;
+}
+
+function buildContractCell(c) {
+  if (!c || c.empty || !c.label || c.label === '—') {
+    return `<span class="contract-empty">—</span>`;
+  }
+
+  let statusTag = '';
+  if (c.status_tag === 'AFTER HOURS') {
+    statusTag = `<div class="contract-ah">AFTER HOURS — ${c.price_str}</div>`;
+  } else if (c.status_tag === 'STALE') {
+    statusTag = `<div class="contract-stale">STALE QUOTE</div>`;
+  }
+
+  return `<div class="contract-cell">
+    <div class="contract-main">${escHtml(c.label)}</div>
+    ${statusTag}
+  </div>`;
+}
+
+// ── Row Expand ─────────────────────────────────────────────────────────────────
+
+function toggleExpand(idx, row, r) {
+  // Remove existing expand row
+  const existing = document.getElementById('expandRow');
+  if (existing) {
+    existing.remove();
+    if (expandedRow === idx) {
+      expandedRow = null;
+      return;
+    }
+  }
+  expandedRow = idx;
+
+  const tr = document.createElement('tr');
+  tr.id = 'expandRow';
+  tr.className = 'expand-row';
+  const td = document.createElement('td');
+  td.colSpan = 13;
+  td.innerHTML = buildExpandContent(r);
+  tr.appendChild(td);
+  row.after(tr);
+}
+
+function buildExpandContent(r) {
+  const c = r.contract;
+
+  // Contract card
+  let contractHtml = '<div class="ec-val dim-val">No contract loaded</div>';
+  if (c && !c.empty && c.label !== '—') {
+    const afterHours = !marketOpen || c.stale;
+    const priceDisplay = afterHours
+      ? `<span style="color:var(--warn)">AFTER HOURS — Last: $${c.mid?.toFixed(2) ?? '—'}</span>`
+      : `<span>${c.price_str}</span>`;
+
+    contractHtml = `<div class="contract-detail">
+      <div class="cline"><span class="ckey">Contract:</span>${escHtml(c.exp_short)} ${escHtml(c.strike_str)}${c.type_char}</div>
+      <div class="cline"><span class="ckey">Delta:</span>${escHtml(c.delta_str)}</div>
+      <div class="cline"><span class="ckey">Price:</span>${priceDisplay}</div>
+      <div class="cline"><span class="ckey">Vol/OI:</span>${escHtml(c.vol_oi_str ?? '—')}</div>
+      <div class="cline"><span class="ckey">DTE:</span>${escHtml(c.dte_str)}</div>
+      <div class="cline"><span class="ckey">IV:</span>${c.iv ? (c.iv * 100).toFixed(1) + '%' : '—'}</div>
+      <div class="cline"><span class="ckey">ROI@1σ:</span><span class="${(c.roi ?? 0) >= 0 ? 'pos-val' : 'neg-val'}">${c.roi?.toFixed(1) ?? '—'}%</span></div>
+    </div>`;
+  }
+
+  // Levels card
+  let levelHtml = '<div class="ec-val dim-val">No nearby levels</div>';
+  if (r.near_level) {
+    const nl = r.near_level;
+    const ltype = nl.type === 'support' ? '▲ Support' : '▼ Resistance';
+    const lcls  = nl.type === 'support' ? 'pos' : 'neg';
+    levelHtml = `<div class="contract-detail">
+      <div class="cline"><span class="ckey">Type:</span><span class="${lcls}">${ltype}</span></div>
+      <div class="cline"><span class="ckey">Price:</span>$${nl.price.toFixed(2)}</div>
+      <div class="cline"><span class="ckey">Strength:</span>${'★'.repeat(Math.min(5, nl.strength))}</div>
+      <div class="cline"><span class="ckey">Dist:</span>${nl.dist_pct > 0 ? '+' : ''}${nl.dist_pct.toFixed(2)}%</div>
+    </div>`;
+  }
+
+  // Range reference
+  const rangeHtml = `<div class="contract-detail">
+    <div class="cline"><span class="ckey">Today High:</span>$${r.today_high?.toFixed(2) ?? '—'}</div>
+    <div class="cline"><span class="ckey">Today Low:</span>$${r.today_low?.toFixed(2) ?? '—'}</div>
+    <div class="cline"><span class="ckey">Yest High:</span>$${r.yest_high?.toFixed(2) ?? '—'}</div>
+    <div class="cline"><span class="ckey">Yest Low:</span>$${r.yest_low?.toFixed(2) ?? '—'}</div>
+  </div>`;
+
+  // IVR card
+  const ivr    = r.ivr_score ?? 50;
+  const ivrLbl = r.ivr_label || 'NORMAL';
+  const ivrCls = ivr >= 70 ? 'neg' : ivr <= 30 ? 'pos' : '';
+  const ivHtml = `<div class="contract-detail">
+    <div class="cline"><span class="ckey">IVR Score:</span><span class="${ivrCls}">${ivr} — ${ivrLbl}</span></div>
+    <div class="cline"><span class="ckey">HV20:</span>${(r.hv20 * 100).toFixed(1)}%</div>
+    <div class="cline"><span class="ckey">HV Regime:</span>${r.hv_regime?.toUpperCase() ?? '—'}</div>
+    <div class="cline"><span class="ckey">EM ±:</span>${r.expected_move_pct?.toFixed(2) ?? '—'}% daily</div>
+  </div>`;
+
+  // Signal detail
+  const sigHtml = `<div class="contract-detail">
+    <div class="cline"><span class="ckey">Combo:</span>${r.signal_combo || '—'}</div>
+    <div class="cline"><span class="ckey">Setup Q:</span>${(r.setup_q * 100).toFixed(0)}/100</div>
+    <div class="cline"><span class="ckey">RS vs SPY:</span><span class="${r.rs_vs_spy >= 0 ? 'pos-val' : 'neg-val'}">${r.rs_vs_spy >= 0 ? '+' : ''}${r.rs_vs_spy?.toFixed(2)}%</span></div>
+    <div class="cline"><span class="ckey">Lag:</span>${r.is_laggard ? `${r.lag_pct >= 0 ? '+' : ''}${r.lag_pct?.toFixed(2)}% (${r.direction?.toUpperCase()})` : '—'}</div>
+  </div>`;
+
+  return `<div class="expand-content">
+    <div class="expand-card"><div class="ec-label">Contract</div>${contractHtml}</div>
+    <div class="expand-card"><div class="ec-label">Nearest Level</div>${levelHtml}</div>
+    <div class="expand-card"><div class="ec-label">Day Range</div>${rangeHtml}</div>
+    <div class="expand-card"><div class="ec-label">IV Rank Proxy</div>${ivHtml}</div>
+    <div class="expand-card"><div class="ec-label">Signal Detail</div>${sigHtml}</div>
+  </div>`;
+}
+
+// ── HTML escape ────────────────────────────────────────────────────────────────
+function escHtml(s) {
+  if (s == null) return '';
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+// ── Init ───────────────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  loadMarketContext();
+  // Refresh market context every 60s
+  setInterval(loadMarketContext, 60_000);
+});
+</script>
+</body>
+</html>

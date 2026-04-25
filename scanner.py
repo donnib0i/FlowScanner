@@ -396,6 +396,117 @@ def calc_options_score(avg_vol: float, ivr_proxy: float) -> int:
     os_ = max(0.0, min(10.0, (math.log10(oe) - 3) / (math.log10(1e7) - 3) * 10))
     return min(100, max(0, round(sp + vs + iv + os_)))
 
+# ─── IV Rank Proxy (HV20/HV60 ratio) ────────────────────────────────────────
+def calc_iv_rank_proxy(hist: pd.DataFrame) -> Dict:
+    """
+    Uses HV20/HV60 ratio as an IV rank signal (no live options chain needed).
+    Returns dict with keys: hv20, hv60, ratio, ivr_score (0-100), label.
+      ratio > 1.4  → elevated IV (IVR > 70) — options expensive
+      ratio > 1.1  → normal
+      ratio < 0.8  → compressed (IVR < 30) — options cheap
+    """
+    result = {"hv20": 0.0, "hv60": 0.0, "ratio": 1.0, "ivr_score": 50, "label": "NORMAL"}
+    try:
+        closes = hist["Close"].dropna()
+        if len(closes) < 65:
+            return result
+
+        def _hv(n: int) -> float:
+            c = closes.tail(n + 1)
+            if len(c) < n:
+                return 0.0
+            lr = [math.log(float(c.iloc[i]) / float(c.iloc[i - 1])) for i in range(1, len(c))]
+            mean = sum(lr) / len(lr)
+            var = sum((x - mean) ** 2 for x in lr) / len(lr)
+            return round(math.sqrt(var * 252), 4)
+
+        hv20 = _hv(20)
+        hv60 = _hv(60)
+        if hv60 <= 0:
+            return result
+
+        ratio = round(hv20 / hv60, 3)
+        if ratio > 1.4:
+            ivr_score = min(100, int(50 + (ratio - 1.0) * 50))
+            label = "ELEVATED"
+        elif ratio > 1.1:
+            ivr_score = int(40 + (ratio - 1.0) * 33)
+            label = "NORMAL"
+        elif ratio < 0.8:
+            ivr_score = max(0, int(30 * ratio / 0.8))
+            label = "COMPRESSED"
+        else:
+            ivr_score = int(30 + (ratio - 0.8) * 50)
+            label = "NORMAL"
+
+        return {"hv20": hv20, "hv60": hv60, "ratio": ratio,
+                "ivr_score": ivr_score, "label": label}
+    except Exception:
+        return result
+
+
+def get_contract_display(c: Optional[Dict], market_open: bool = True) -> Dict:
+    """
+    Return a clean structured dict for web UI display — no ANSI codes.
+    Fields: label, exp_short, strike_str, type_char, delta_str, price_str,
+            dte_str, stale, ivr_display, vol_oi_str, confidence.
+    """
+    if not c:
+        return {"label": "—", "stale": False, "empty": True}
+
+    exp_short  = c["exp"][5:]  # MM-DD
+    type_char  = "C" if c["type"] == "call" else "P"
+    strike_str = f"${c['strike']:.0f}" if c["strike"] == int(c["strike"]) else f"${c['strike']:.2f}"
+    delta_str  = f"δ{c['delta']:+.2f}"
+    dte_str    = "0DTE" if c["dte"] == 0 else f"{c['dte']}DTE"
+    stale      = c.get("stale", False) or (c["bid"] == 0 and c["ask"] == 0)
+
+    if stale or not market_open:
+        price_str = f"Last: ${c['mid']:.2f}"
+    else:
+        price_str = f"${c['bid']:.2f}/${c['ask']:.2f}"
+
+    mid_str    = f"${c['mid']:.2f}"
+    voi        = c["vol"] / max(c["oi"], 1)
+    vol_oi_str = f"x{voi:.1f}" if voi >= 1 else "—"
+    label      = f"{exp_short} {strike_str}{type_char} · {delta_str} · {mid_str} · {dte_str}"
+
+    if stale and not market_open:
+        status_tag = "AFTER HOURS"
+    elif stale:
+        status_tag = "STALE"
+    else:
+        status_tag = ""
+
+    return {
+        "label":      label,
+        "exp":        c["exp"],
+        "exp_short":  exp_short,
+        "strike":     c["strike"],
+        "strike_str": strike_str,
+        "type":       c["type"],
+        "type_char":  type_char,
+        "delta":      round(c["delta"], 3),
+        "delta_str":  delta_str,
+        "bid":        c["bid"],
+        "ask":        c["ask"],
+        "mid":        c["mid"],
+        "mid_str":    mid_str,
+        "price_str":  price_str,
+        "dte":        c["dte"],
+        "dte_str":    dte_str,
+        "stale":      stale,
+        "status_tag": status_tag,
+        "vol":        c["vol"],
+        "oi":         c["oi"],
+        "vol_oi_str": vol_oi_str,
+        "iv":         round(c.get("iv", 0), 3),
+        "roi":        c.get("roi", 0),
+        "score":      c.get("score", 0),
+        "empty":      False,
+    }
+
+
 # ─── Key Level Detection ──────────────────────────────────────────────────────
 def find_key_levels(hist: pd.DataFrame, price: float) -> List[Dict]:
     """
@@ -1543,6 +1654,12 @@ def _process_ticker(ticker: str, hist: pd.DataFrame, live_price: float = 0.0, sp
         spread_label, _, _ = get_spread_tier(avg_vol)
         opt_score          = calc_options_score(avg_vol, ivr_proxy)
 
+        # Full IV rank proxy (HV20/HV60 ratio) — richer than the scalar ivr_proxy
+        iv_rank_data = calc_iv_rank_proxy(hist)
+
+        # Expected move (1-sigma, annualized HV20): ±% of current price
+        expected_move_pct = round(hv20 / math.sqrt(252) * 100, 2) if hv20 > 0 else 0.0
+
         # Key levels (use 60d window — same as before)
         levels     = find_key_levels(hist60, price)
         near_level = next((l for l in levels if l["strength"] >= 2), levels[0] if levels else None)
@@ -1666,6 +1783,8 @@ def _process_ticker(ticker: str, hist: pd.DataFrame, live_price: float = 0.0, sp
             "today_low":     today_low,
             "yest_high":     yest_high,
             "yest_low":      yest_low,
+            "iv_rank_data":  iv_rank_data,
+            "expected_move_pct": expected_move_pct,
         }
     except Exception:
         return None
