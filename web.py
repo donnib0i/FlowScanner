@@ -48,17 +48,26 @@ TEMPLATES_DIR = Path(__file__).parent / "templates"
 
 # ── Fast default universe ──────────────────────────────────────────────────────
 FAST_UNIVERSE = [
-    "SPX", "SPY", "QQQ", "IWM", "VXX", "UVXY",
-    "TQQQ", "SQQQ", "SOXL", "SOXS", "UPRO", "SPXS",
-    "NVDA", "AMD", "AAPL", "MSFT", "META", "AMZN", "GOOGL", "TSLA",
-    "COIN", "PLTR", "MSTR", "HOOD", "MARA", "BULL",
+    # Indices / broad market — deepest option chains
+    "SPX", "SPY", "QQQ", "IWM", "DIA",
+    # Mega-cap tech — highest OI, most liquid options
+    "NVDA", "AAPL", "MSFT", "META", "AMZN", "GOOGL", "TSLA",
+    # Semis
+    "AMD", "AVGO", "MU", "ARM", "INTC", "SMCI",
+    # High-beta / meme / crypto-adjacent — real options volume
+    "COIN", "PLTR", "MSTR", "HOOD", "MARA",
+    # Growth tech with active chains
     "NFLX", "CRWD", "PANW", "NET", "APP", "RDDT",
-    "GS", "JPM", "SOFI", "AFRM", "NU",
-    "HIMS", "GME", "AMC", "ONDS",
-    "ARM", "AVGO", "MU", "SMCI",
-    "RIVN", "NIO", "XPEV",
-    "XOM", "CVX", "FCX", "CPER",
-    "RXRX", "MRNA", "LLY",
+    # Financials — large OI, active options
+    "GS", "JPM", "BAC", "MS",
+    # Consumer / retail / misc high-OI names
+    "AMGN", "LLY", "MRNA",
+    # Energy — legit options volume
+    "XOM", "CVX",
+    # Mobility / EV with real US options chains
+    "UBER",
+    # Smaller active names (keep if chain is real, drop if thin)
+    "GME", "AMC", "SOFI", "AFRM",
 ]
 
 

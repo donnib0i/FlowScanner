@@ -631,6 +631,11 @@ def _score_contract(row: pd.Series, S: float, T: float, direction: str,
 
         if mid <= 0.05:
             return -1.0
+
+        # Hard reject illiquid contracts — no point scoring zero-OI junk
+        if oi < 50 and cvol < 25:
+            return -1.0
+
         # Penalize stale quotes (market closed / no live bid-ask) — still score but discount
         stale_penalty = 0.60 if stale else 1.0
 
