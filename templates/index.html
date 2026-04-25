@@ -243,118 +243,34 @@ html, body {
   .shm-tile .st-etf { display: none; }
 }
 
-/* ── Ticker Flow Heat Map ─────────────────────────────────────────────────── */
-.ticker-heatmap {
-  padding: 6px 20px 10px;
+/* ── Ticker Treemap ───────────────────────────────────────────────────────── */
+.treemap-section {
+  padding: 8px 20px 10px;
   border-bottom: 1px solid var(--border);
   background: var(--bg2);
 }
 
-.thm-header {
+.treemap-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 7px;
+  margin-bottom: 8px;
   cursor: pointer;
   user-select: none;
 }
 
-.thm-header:hover .shm-label { color: var(--accent2); }
+.treemap-header:hover .shm-label { color: var(--accent2); }
 
-.thm-toggle {
-  font-size: 9px;
-  font-family: var(--mono);
-  color: var(--muted);
-  letter-spacing: 1px;
-}
-
-.thm-body {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.thm-group {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.thm-group-label {
-  font-size: 9px;
-  font-family: var(--mono);
-  color: var(--muted);
-  width: 68px;
-  flex-shrink: 0;
-  text-align: right;
-  letter-spacing: 0.3px;
-  text-transform: uppercase;
-}
-
-.thm-tiles {
-  display: flex;
-  gap: 3px;
-  flex-wrap: wrap;
-}
-
-.thm-tile {
-  border-radius: 4px;
-  padding: 4px 6px 3px;
-  text-align: center;
-  cursor: default;
-  border: 1px solid transparent;
-  transition: transform 0.1s, box-shadow 0.1s, border-color 0.1s;
-  min-width: 40px;
+.treemap-canvas {
   position: relative;
+  width: 100%;
+  height: 210px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: var(--bg);
 }
 
-.thm-tile:hover {
-  border-color: rgba(255,255,255,0.18) !important;
-  transform: translateY(-1px);
-  box-shadow: 0 3px 10px rgba(0,0,0,0.4);
-  z-index: 2;
-}
-
-.thm-tile .tt-sym {
-  font-family: var(--mono);
-  font-size: 10px;
-  font-weight: 700;
-  line-height: 1;
-}
-
-.thm-tile .tt-chg {
-  font-family: var(--mono);
-  font-size: 9px;
-  line-height: 1.3;
-  opacity: 0.8;
-  margin-top: 1px;
-}
-
-.thm-tile .tt-vol {
-  font-family: var(--mono);
-  font-size: 8px;
-  opacity: 0.55;
-  min-height: 10px;
-}
-
-/* Grade dot in top-right corner after scan */
-.thm-tile .tt-grade {
-  position: absolute;
-  top: 2px;
-  right: 3px;
-  font-size: 7px;
-  font-weight: 900;
-  font-family: var(--mono);
-  opacity: 0.7;
-  line-height: 1;
-}
-
-@media (max-width: 700px) {
-  .thm-group-label { width: 48px; font-size: 8px; }
-  .thm-tile { min-width: 34px; padding: 3px 4px 2px; }
-  .thm-tile .tt-sym { font-size: 9px; }
-  .thm-tile .tt-chg, .thm-tile .tt-vol { font-size: 8px; }
-}
+@media (max-width: 600px) { .treemap-canvas { height: 155px; } }
 
 /* ── Controls ─────────────────────────────────────────────────────────────── */
 .controls {
@@ -1018,28 +934,26 @@ tr.grade-D { background: rgba(255,112,144,0.02); }
   </div>
 </div>
 
-<!-- ── Ticker Flow Heat Map ──────────────────────────────────────────────────── -->
-<div class="ticker-heatmap" id="tickerHeatmap">
-  <div class="thm-header" onclick="toggleTickerHeatmap()">
-    <div class="shm-label">Flow Heat — Tickers</div>
-    <div id="thmLegend" style="display:flex;align-items:center;gap:14px">
-      <span style="font-size:9px;font-family:var(--mono);color:var(--muted)">intensity = relVol</span>
+<!-- ── Ticker Treemap ───────────────────────────────────────────────────────── -->
+<div class="treemap-section" id="treemapSection">
+  <div class="treemap-header" onclick="toggleTreemap()">
+    <div class="shm-label">Market Flow — size = mkt cap · color = change % × vol</div>
+    <div style="display:flex;align-items:center;gap:12px">
       <div class="shm-legend">
         <div class="shm-legend-bar">
-          <div class="shm-legend-swatch" style="background:rgba(255,112,144,0.42)"></div>
+          <div class="shm-legend-swatch" style="background:rgba(255,112,144,0.45)"></div>
           <div class="shm-legend-swatch" style="background:rgba(255,112,144,0.2)"></div>
           <div class="shm-legend-swatch" style="background:rgba(255,255,255,0.06)"></div>
           <div class="shm-legend-swatch" style="background:rgba(122,250,176,0.2)"></div>
-          <div class="shm-legend-swatch" style="background:rgba(122,250,176,0.42)"></div>
+          <div class="shm-legend-swatch" style="background:rgba(122,250,176,0.45)"></div>
         </div>
-        <span>hot vol</span>
       </div>
-      <div class="thm-toggle" id="thmToggle">▲</div>
+      <span id="tmToggle" style="font-size:9px;font-family:var(--mono);color:var(--muted)">▲</span>
     </div>
   </div>
-  <div class="thm-body" id="thmBody">
-    <div style="color:var(--muted);font-size:11px;font-family:var(--mono);padding:2px 0 4px;">
-      Loading flow data...
+  <div id="thmCanvas" class="treemap-canvas">
+    <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:11px;font-family:var(--mono)">
+      Loading...
     </div>
   </div>
 </div>
@@ -1717,91 +1631,150 @@ function escHtml(s) {
     .replace(/"/g, '&quot;');
 }
 
-// ── Ticker Heat Map ────────────────────────────────────────────────────────────
+// ── Ticker Treemap ─────────────────────────────────────────────────────────────
 
-const TICKER_GROUPS = [
-  { label: "Indices",      tickers: ["SPY", "QQQ", "IWM", "DIA"] },
-  { label: "Technology",   tickers: ["NVDA", "AAPL", "MSFT", "AMD", "AVGO", "PLTR", "CRWD", "PANW"] },
-  { label: "Comm Svcs",    tickers: ["META", "GOOGL", "NFLX"] },
-  { label: "Cons Discr",   tickers: ["AMZN", "TSLA", "UBER"] },
-  { label: "Financials",   tickers: ["JPM", "GS", "BAC", "MS", "COIN"] },
-  { label: "Health Care",  tickers: ["LLY", "AMGN", "MRNA"] },
-  { label: "Energy",       tickers: ["XOM", "CVX"] },
+// Market cap $B — drives tile size (approximate)
+const TREEMAP_DATA = [
+  { sector:"Indices",    tickers:[
+    {sym:"SPY",mcap:5000},{sym:"QQQ",mcap:2500},{sym:"IWM",mcap:350},{sym:"DIA",mcap:150},
+  ]},
+  { sector:"Technology", tickers:[
+    {sym:"AAPL",mcap:3100},{sym:"MSFT",mcap:2900},{sym:"NVDA",mcap:2800},
+    {sym:"AVGO",mcap:900},{sym:"AMD",mcap:200},{sym:"PLTR",mcap:220},
+    {sym:"PANW",mcap:130},{sym:"CRWD",mcap:90},
+  ]},
+  { sector:"Comm Svcs",  tickers:[
+    {sym:"GOOGL",mcap:2000},{sym:"META",mcap:1400},{sym:"NFLX",mcap:380},
+  ]},
+  { sector:"Cons Discr", tickers:[
+    {sym:"AMZN",mcap:2000},{sym:"TSLA",mcap:800},{sym:"UBER",mcap:160},
+  ]},
+  { sector:"Financials", tickers:[
+    {sym:"JPM",mcap:700},{sym:"BAC",mcap:350},{sym:"MS",mcap:200},
+    {sym:"GS",mcap:180},{sym:"COIN",mcap:65},
+  ]},
+  { sector:"Health Care",tickers:[
+    {sym:"LLY",mcap:700},{sym:"AMGN",mcap:150},{sym:"MRNA",mcap:18},
+  ]},
+  { sector:"Energy",     tickers:[
+    {sym:"XOM",mcap:500},{sym:"CVX",mcap:280},
+  ]},
 ];
 
-let flowData    = {};   // ticker -> {change_pct, rel_vol, grade?, direction?}
-let thmCollapsed = false;
+let flowData    = {};
+let tmCollapsed = false;
 
-function toggleTickerHeatmap() {
-  thmCollapsed = !thmCollapsed;
-  const body = document.getElementById('thmBody');
-  const tog  = document.getElementById('thmToggle');
-  if (body) body.style.display = thmCollapsed ? 'none' : '';
-  if (tog)  tog.textContent    = thmCollapsed ? '▼' : '▲';
+const GRADE_COLORS = {A:'var(--pos)',B:'var(--warn)',C:'var(--dim)',D:'var(--neg)'};
+
+function toggleTreemap() {
+  tmCollapsed = !tmCollapsed;
+  const canvas = document.getElementById('thmCanvas');
+  const tog    = document.getElementById('tmToggle');
+  if (canvas) canvas.style.display = tmCollapsed ? 'none' : '';
+  if (tog)    tog.textContent = tmCollapsed ? '▼' : '▲';
 }
 
-function _tickerTileStyle(chg, relVol) {
-  // Intensity 0→1 driven by relVol (0.5x = 0, 3x = 1)
+function _tileStyle(chg, relVol) {
   const intensity = Math.min(Math.max((relVol - 0.5) / 2.5, 0), 1);
-  if (chg >= 0) {
-    const a = (0.05 + intensity * 0.40).toFixed(2);
-    const bord = (0.03 + intensity * 0.25).toFixed(2);
-    return {
-      bg:    `rgba(122,250,176,${a})`,
-      color: intensity > 0.40 ? 'var(--pos)' : '#6a9980',
-      border:`rgba(122,250,176,${bord})`,
-    };
-  } else {
-    const a = (0.05 + intensity * 0.40).toFixed(2);
-    const bord = (0.03 + intensity * 0.25).toFixed(2);
-    return {
-      bg:    `rgba(255,112,144,${a})`,
-      color: intensity > 0.40 ? 'var(--neg)' : '#997060',
-      border:`rgba(255,112,144,${bord})`,
-    };
-  }
+  const a    = (0.05 + intensity * 0.42).toFixed(2);
+  const bord = (0.03 + intensity * 0.28).toFixed(2);
+  if (chg >= 0) return { bg:`rgba(122,250,176,${a})`, border:`rgba(122,250,176,${bord})`, color: intensity > 0.35 ? 'var(--pos)' : '#658870' };
+  return             { bg:`rgba(255,112,144,${a})`, border:`rgba(255,112,144,${bord})`, color: intensity > 0.35 ? 'var(--neg)' : '#906055' };
 }
 
-const GRADE_COLORS = { A: 'var(--pos)', B: 'var(--warn)', C: 'var(--dim)', D: 'var(--neg)' };
+// Squarified treemap — returns [{...node, x, y, w, h}]
+function squarifyTreemap(nodes, rect) {
+  const sorted = [...nodes].sort((a,b) => b.value - a.value);
+  const total  = sorted.reduce((s,n) => s + n.value, 0);
+  if (!total) return [];
+  const out = [];
 
-function renderTickerHeatMap() {
-  const body = document.getElementById('thmBody');
-  if (!body) return;
+  function wAR(row, rv, tv, w, h) {
+    const iw = w >= h;
+    const sw = iw ? (rv/tv)*w : w, sh = iw ? h : (rv/tv)*h;
+    let worst = 0;
+    for (const n of row) {
+      const f=n.value/rv, tw=iw?sw:f*sw, th=iw?f*sh:sh;
+      if (tw>0&&th>0) worst = Math.max(worst, Math.max(tw/th,th/tw));
+    }
+    return worst;
+  }
 
-  const html = TICKER_GROUPS.map(group => {
-    const tiles = group.tickers.map(sym => {
-      const d  = flowData[sym];
-      if (!d) {
-        return `<div class="thm-tile" style="background:rgba(255,255,255,0.03);border-color:rgba(255,255,255,0.05);color:var(--muted)" title="${sym}">
-          <div class="tt-sym">${sym}</div>
-          <div class="tt-chg">—</div>
-          <div class="tt-vol"></div>
-        </div>`;
-      }
+  function place(items, x, y, w, h, tv) {
+    if (!items.length) return;
+    if (items.length===1) { out.push({...items[0],x,y,w,h}); return; }
+    const iw = w >= h;
+    let row=[items[0]], rv=items[0].value;
+    for (let i=1; i<items.length; i++) {
+      if (wAR([...row,items[i]], rv+items[i].value, tv, w, h) > wAR(row,rv,tv,w,h)) break;
+      row.push(items[i]); rv+=items[i].value;
+    }
+    const sw=iw?(rv/tv)*w:w, sh=iw?h:(rv/tv)*h;
+    let pos=iw?y:x;
+    for (const n of row) {
+      const f=n.value/rv, tw=iw?sw:f*sw, th=iw?f*sh:sh;
+      out.push({...n, x:iw?x:pos, y:iw?pos:y, w:tw, h:th});
+      pos+=iw?th:tw;
+    }
+    const rest=items.slice(row.length), rv2=tv-rv;
+    if (rest.length&&rv2>0) iw ? place(rest,x+sw,y,w-sw,h,rv2) : place(rest,x,y+sh,w,h-sh,rv2);
+  }
 
-      const st   = _tickerTileStyle(d.change_pct, d.rel_vol);
-      const sign = d.change_pct >= 0 ? '+' : '';
-      const rvol = d.rel_vol >= 1.8 ? `${d.rel_vol.toFixed(1)}x` : '';
-      const gradeDot = d.grade
-        ? `<div class="tt-grade" style="color:${GRADE_COLORS[d.grade] || 'var(--dim)'}">${d.grade}</div>` : '';
-      const dir  = d.direction === 'up' ? '↑' : d.direction === 'down' ? '↓' : '';
-      const tip  = `${sym}${dir ? ' ' + dir : ''}: ${sign}${d.change_pct.toFixed(2)}% · ${d.rel_vol.toFixed(1)}x vol${d.grade ? ' · Grade ' + d.grade : ''}`;
+  place(sorted, rect.x, rect.y, rect.w, rect.h, total);
+  return out;
+}
 
-      return `<div class="thm-tile" style="background:${st.bg};border-color:${st.border};color:${st.color}" title="${tip}">
-        ${gradeDot}
-        <div class="tt-sym">${sym}</div>
-        <div class="tt-chg">${sign}${d.change_pct.toFixed(1)}%</div>
-        <div class="tt-vol">${rvol}</div>
-      </div>`;
-    }).join('');
+function renderTreemap() {
+  const canvas = document.getElementById('thmCanvas');
+  if (!canvas || tmCollapsed) return;
+  const W=canvas.offsetWidth, H=canvas.offsetHeight;
+  if (W<20||H<20) return;
 
-    return `<div class="thm-group">
-      <div class="thm-group-label">${group.label}</div>
-      <div class="thm-tiles">${tiles}</div>
-    </div>`;
-  }).join('');
+  const GAP=2;
+  const sectors = TREEMAP_DATA.map(s=>({...s, value:s.tickers.reduce((sum,t)=>sum+t.mcap,0)}))
+                              .sort((a,b)=>b.value-a.value);
+  const sRects  = squarifyTreemap(sectors, {x:0,y:0,w:W,h:H});
+  const divs    = [];
 
-  body.innerHTML = html;
+  for (const sr of sRects) {
+    const inner = {x:sr.x+GAP, y:sr.y+GAP, w:sr.w-GAP*2, h:sr.h-GAP*2};
+    if (inner.w<4||inner.h<4) continue;
+
+    const tRects = squarifyTreemap(sr.tickers.map(t=>({...t,value:t.mcap})), inner);
+
+    for (const tr of tRects) {
+      const d  = flowData[tr.sym] || {change_pct:0, rel_vol:1.0};
+      const st = _tileStyle(d.change_pct, d.rel_vol);
+      const tw=tr.w-1, th=tr.h-1;
+      if (tw<2||th<2) continue;
+      const sign  = d.change_pct>=0?'+':'';
+      const symF  = tw>55?12:tw>30?10:9;
+      const grade = d.grade ? `<div style="position:absolute;top:2px;right:3px;font-size:7px;font-weight:900;color:${GRADE_COLORS[d.grade]};opacity:0.8;font-family:var(--mono)">${d.grade}</div>` : '';
+      const sym   = tw>20&&th>13 ? `<div style="font-size:${symF}px;font-weight:700;line-height:1">${tr.sym}</div>` : '';
+      const chg   = tw>26&&th>26 ? `<div style="font-size:9px;opacity:0.82;margin-top:1px">${sign}${d.change_pct.toFixed(1)}%</div>` : '';
+      const vol   = tw>32&&th>40&&d.rel_vol>=1.8 ? `<div style="font-size:8px;opacity:0.5;margin-top:1px">${d.rel_vol.toFixed(1)}x</div>` : '';
+      const tip   = `${tr.sym}: ${sign}${d.change_pct.toFixed(2)}% · ${d.rel_vol.toFixed(1)}x vol${d.grade?' · Grade '+d.grade:''}`;
+
+      divs.push(`<div title="${tip}" onmouseenter="this.style.filter='brightness(1.25)'" onmouseleave="this.style.filter=''"
+        style="position:absolute;left:${tr.x}px;top:${tr.y}px;width:${tw}px;height:${th}px;
+          background:${st.bg};border:1px solid ${st.border};color:${st.color};
+          box-sizing:border-box;overflow:hidden;border-radius:2px;cursor:default;
+          display:flex;flex-direction:column;align-items:center;justify-content:center;
+          font-family:var(--mono);transition:filter 0.1s">
+        ${grade}${sym}${chg}${vol}
+      </div>`);
+    }
+
+    // Sector label
+    if (sr.w>50&&sr.h>14) divs.push(
+      `<div style="position:absolute;left:${sr.x+GAP+3}px;top:${sr.y+GAP+2}px;
+        font-size:8px;font-family:var(--mono);color:rgba(255,255,255,0.2);
+        letter-spacing:.5px;text-transform:uppercase;pointer-events:none;z-index:5;
+        white-space:nowrap;line-height:1">${sr.sector}</div>`
+    );
+  }
+
+  canvas.innerHTML = divs.join('');
 }
 
 async function loadFlowData() {
@@ -1811,29 +1784,25 @@ async function loadFlowData() {
     if (d.tickers && d.tickers.length) {
       flowData = {};
       for (const t of d.tickers) flowData[t.ticker] = t;
-      renderTickerHeatMap();
+      requestAnimationFrame(renderTreemap);
     }
   } catch(e) {
     console.warn('Flow data failed:', e);
-    const body = document.getElementById('thmBody');
-    if (body) body.innerHTML = '<div style="color:var(--muted);font-size:11px;font-family:var(--mono)">Flow data unavailable</div>';
+    const c = document.getElementById('thmCanvas');
+    if (c) c.innerHTML = '<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:11px;font-family:var(--mono)">Flow data unavailable</div>';
   }
 }
 
-// Called after a scan completes — enriches flow tiles with grade + direction
 function updateTickerHeatMapFromScan(results) {
-  if (!results || !results.length) return;
+  if (!results||!results.length) return;
   for (const r of results) {
-    if (!flowData[r.ticker]) {
-      flowData[r.ticker] = { ticker: r.ticker, change_pct: r.change_pct, rel_vol: r.rel_vol };
-    }
-    flowData[r.ticker].change_pct = r.change_pct;
-    flowData[r.ticker].rel_vol    = r.rel_vol;
-    flowData[r.ticker].grade      = r.grade;
-    flowData[r.ticker].direction  = r.direction;
+    if (!flowData[r.ticker]) flowData[r.ticker]={ticker:r.ticker,change_pct:r.change_pct,rel_vol:r.rel_vol};
+    Object.assign(flowData[r.ticker],{change_pct:r.change_pct,rel_vol:r.rel_vol,grade:r.grade,direction:r.direction});
   }
-  renderTickerHeatMap();
+  requestAnimationFrame(renderTreemap);
 }
+
+window.addEventListener('resize', () => requestAnimationFrame(renderTreemap));
 
 // ── Guide ──────────────────────────────────────────────────────────────────────
 function openGuide()  { document.getElementById('guideOverlay').classList.add('open'); }
