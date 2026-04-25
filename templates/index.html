@@ -9,20 +9,20 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
-  --bg:         #080809;
-  --bg2:        #0c0c0e;
-  --card:       rgba(255,255,255,0.028);
-  --border:     rgba(255,255,255,0.09);
-  --accent:     #d8d8e8;
-  --accent2:    #a0a0b4;
-  --pos:        #7afab0;
-  --neg:        #ff7090;
-  --warn:       #ffcc66;
-  --text:       #ededf4;
-  --muted:      #38383e;
-  --dim:        #787884;
-  --purple:     #b899ff;
-  --cyan:       #d8d8e8;
+  --bg:         #f2f2f7;
+  --bg2:        #ffffff;
+  --card:       rgba(0,0,0,0.025);
+  --border:     rgba(0,0,0,0.07);
+  --accent:     #0f0f1e;
+  --accent2:    #3d3d80;
+  --pos:        #0a8c50;
+  --neg:        #c8203e;
+  --warn:       #b86e00;
+  --text:       #0f0f1e;
+  --muted:      #5c5c7a;
+  --dim:        #8888a8;
+  --purple:     #5533bb;
+  --cyan:       #1a1a3e;
   --font:       system-ui, -apple-system, "SF Pro Display", "Segoe UI", sans-serif;
   --mono:       "SF Mono", "Fira Code", "Cascadia Code", monospace;
   --radius:     6px;
@@ -59,6 +59,7 @@ html, body {
   color: var(--accent);
   text-transform: uppercase;
   font-family: var(--mono);
+  opacity: 1;
 }
 
 .logo span { color: var(--text); opacity: 0.5; }
@@ -76,8 +77,8 @@ html, body {
   font-size: 11px;
   font-weight: 600;
   font-family: var(--mono);
-  border: 1px solid rgba(216,216,232,0.3);
-  background: rgba(216,216,232,0.08);
+  border: 1px solid rgba(15,15,30,0.3);
+  background: rgba(15,15,30,0.08);
   color: var(--accent);
 }
 
@@ -88,9 +89,9 @@ html, body {
   font-weight: 600;
   letter-spacing: 1px;
 }
-.market-badge.open   { background: rgba(122,250,176,0.12); color: var(--pos); border: 1px solid rgba(122,250,176,0.3); }
-.market-badge.closed { background: rgba(255,112,144,0.10); color: var(--neg); border: 1px solid rgba(255,112,144,0.25); }
-.market-badge.pre    { background: rgba(255,204,102,0.10); color: var(--warn); border: 1px solid rgba(255,204,102,0.25); }
+.market-badge.open   { background: rgba(10,140,80,0.12); color: var(--pos); border: 1px solid rgba(10,140,80,0.3); }
+.market-badge.closed { background: rgba(200,32,62,0.10); color: var(--neg); border: 1px solid rgba(200,32,62,0.25); }
+.market-badge.pre    { background: rgba(184,110,0,0.10); color: var(--warn); border: 1px solid rgba(184,110,0,0.25); }
 
 .scan-time {
   font-size: 11px;
@@ -189,12 +190,12 @@ html, body {
   inset: 0;
   opacity: 0;
   transition: opacity 0.12s;
-  background: rgba(255,255,255,0.05);
+  background: rgba(0,0,0,0.04);
 }
 
 .shm-tile:hover::before { opacity: 1; }
 .shm-tile:hover {
-  border-color: rgba(255,255,255,0.12);
+  border-color: rgba(0,0,0,0.10);
   transform: translateY(-1px);
   box-shadow: 0 4px 12px rgba(0,0,0,0.4);
   z-index: 1;
@@ -300,7 +301,7 @@ html, body {
 
 .controls input[type="text"]:focus {
   border-color: var(--accent);
-  box-shadow: 0 0 0 2px rgba(216,216,232,0.12);
+  box-shadow: 0 0 0 2px rgba(15,15,30,0.12);
 }
 
 .controls select {
@@ -340,8 +341,8 @@ html, body {
 }
 
 .btn-scan {
-  background: rgba(255,255,255,0.9);
-  color: #080809;
+  background: #0f0f1e;
+  color: #ffffff;
   border: none;
   border-radius: var(--radius);
   padding: 8px 22px;
@@ -353,9 +354,9 @@ html, body {
   white-space: nowrap;
 }
 
-.btn-scan:hover { background: #ffffff; }
+.btn-scan:hover { background: #1a1a3e; }
 .btn-scan:active { transform: scale(0.97); }
-.btn-scan:disabled { background: var(--muted); cursor: not-allowed; color: var(--dim); }
+.btn-scan:disabled { background: rgba(0,0,0,0.1); cursor: not-allowed; color: var(--dim); }
 
 /* ── Stats Strip ──────────────────────────────────────────────────────────── */
 .stats-strip {
@@ -370,6 +371,7 @@ html, body {
   background: var(--bg2);
   padding: 10px 16px;
   text-align: center;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
 }
 
 .stat-card .s-label {
@@ -408,7 +410,7 @@ html, body {
 
 .progress-bar-inner {
   height: 100%;
-  background: linear-gradient(90deg, var(--accent), var(--pos));
+  background: linear-gradient(90deg, #0f0f1e, #0a8c50);
   border-radius: 20px;
   width: 0%;
   transition: width 0.3s ease;
@@ -453,7 +455,7 @@ table.results-table th.active .sort-arrow { opacity: 1; color: var(--accent); }
 
 table.results-table td {
   padding: 9px 10px;
-  border-bottom: 1px solid rgba(255,255,255,0.04);
+  border-bottom: 1px solid rgba(0,0,0,0.03);
   vertical-align: middle;
   white-space: nowrap;
 }
@@ -464,14 +466,14 @@ table.results-table tbody tr {
 }
 
 table.results-table tbody tr:hover {
-  background: rgba(255,255,255,0.04) !important;
+  background: rgba(0,0,0,0.03) !important;
 }
 
 /* Grade row tints */
-tr.grade-A { background: rgba(122,250,176,0.03); }
-tr.grade-B { background: rgba(255,204,102,0.02); }
+tr.grade-A { background: rgba(10,140,80,0.04); }
+tr.grade-B { background: rgba(184,110,0,0.035); }
 tr.grade-C { background: transparent; }
-tr.grade-D { background: rgba(255,112,144,0.02); }
+tr.grade-D { background: rgba(200,32,62,0.03); }
 
 /* ── Ticker Cell ──────────────────────────────────────────────────────────── */
 .ticker-cell { display: flex; flex-direction: column; gap: 2px; }
@@ -499,10 +501,10 @@ tr.grade-D { background: rgba(255,112,144,0.02); }
   font-size: 13px;
   font-family: var(--mono);
 }
-.grade-A-badge { background: rgba(122,250,176,0.15); color: var(--pos); border: 1px solid rgba(122,250,176,0.3); }
-.grade-B-badge { background: rgba(255,204,102,0.12); color: var(--warn); border: 1px solid rgba(255,204,102,0.25); }
-.grade-C-badge { background: rgba(255,255,255,0.06); color: var(--dim); border: 1px solid var(--border); }
-.grade-D-badge { background: rgba(255,112,144,0.10); color: var(--neg); border: 1px solid rgba(255,112,144,0.2); }
+.grade-A-badge { background: rgba(10,140,80,0.15); color: var(--pos); border: 1px solid rgba(10,140,80,0.3); }
+.grade-B-badge { background: rgba(184,110,0,0.12); color: var(--warn); border: 1px solid rgba(184,110,0,0.25); }
+.grade-C-badge { background: rgba(0,0,0,0.05); color: var(--dim); border: 1px solid var(--border); }
+.grade-D-badge { background: rgba(200,32,62,0.10); color: var(--neg); border: 1px solid rgba(200,32,62,0.2); }
 
 /* ── Signal Badges ────────────────────────────────────────────────────────── */
 .setup-wrap { display: flex; flex-direction: column; gap: 4px; }
@@ -521,14 +523,14 @@ tr.grade-D { background: rgba(255,112,144,0.02); }
   cursor: help;
 }
 
-.badge-green-bright { background: rgba(122,250,176,0.18); color: var(--pos); border: 1px solid rgba(122,250,176,0.4); }
-.badge-green        { background: rgba(122,250,176,0.10); color: var(--pos); border: 1px solid rgba(122,250,176,0.25); }
-.badge-red-bright   { background: rgba(255,112,144,0.18); color: var(--neg); border: 1px solid rgba(255,112,144,0.4); }
-.badge-red          { background: rgba(255,112,144,0.10); color: var(--neg); border: 1px solid rgba(255,112,144,0.25); }
-.badge-cyan         { background: rgba(216,216,232,0.10); color: var(--cyan); border: 1px solid rgba(216,216,232,0.3); }
-.badge-yellow       { background: rgba(255,204,102,0.10); color: #ffcc66; border: 1px solid rgba(255,204,102,0.25); }
-.badge-purple       { background: rgba(184,153,255,0.12); color: var(--purple); border: 1px solid rgba(184,153,255,0.3); }
-.badge-dim          { background: rgba(255,255,255,0.05); color: var(--dim); border: 1px solid var(--border); }
+.badge-green-bright { background: rgba(10,140,80,0.18); color: var(--pos); border: 1px solid rgba(10,140,80,0.4); }
+.badge-green        { background: rgba(10,140,80,0.10); color: var(--pos); border: 1px solid rgba(10,140,80,0.25); }
+.badge-red-bright   { background: rgba(200,32,62,0.18); color: var(--neg); border: 1px solid rgba(200,32,62,0.4); }
+.badge-red          { background: rgba(200,32,62,0.10); color: var(--neg); border: 1px solid rgba(200,32,62,0.25); }
+.badge-cyan         { background: rgba(15,15,30,0.10); color: var(--cyan); border: 1px solid rgba(15,15,30,0.3); }
+.badge-yellow       { background: rgba(184,110,0,0.10); color: #b86e00; border: 1px solid rgba(184,110,0,0.25); }
+.badge-purple       { background: rgba(85,51,187,0.12); color: var(--purple); border: 1px solid rgba(85,51,187,0.3); }
+.badge-dim          { background: rgba(0,0,0,0.04); color: var(--dim); border: 1px solid var(--border); }
 
 /* ── Direction Cell ───────────────────────────────────────────────────────── */
 .dir-calls { color: var(--pos); font-weight: 600; font-family: var(--mono); font-size: 11px; }
@@ -551,9 +553,9 @@ tr.grade-D { background: rgba(255,112,144,0.02); }
   border-radius: 8px;
   display: inline-block;
 }
-.hv-volatile { background: rgba(255,112,144,0.15); color: var(--neg); }
-.hv-normal   { background: rgba(255,204,102,0.12); color: var(--warn); }
-.hv-calm     { background: rgba(255,255,255,0.07); color: var(--dim); }
+.hv-volatile { background: rgba(200,32,62,0.10); color: #c8203e; }
+.hv-normal   { background: rgba(184,110,0,0.10); color: #b86e00; }
+.hv-calm     { background: rgba(0,0,0,0.05); color: var(--dim); }
 
 /* ── Contract Cell ────────────────────────────────────────────────────────── */
 .contract-cell { display: flex; flex-direction: column; gap: 2px; }
@@ -596,13 +598,13 @@ tr.grade-D { background: rgba(255,112,144,0.02); }
 .oscore-fill {
   height: 100%;
   border-radius: 2px;
-  background: linear-gradient(90deg, var(--accent), var(--pos));
+  background: linear-gradient(90deg, #0f0f1e, #0a8c50);
 }
 
 /* ── Expanded Row ─────────────────────────────────────────────────────────── */
 .expand-row td {
-  background: rgba(216,216,232,0.03);
-  border-bottom: 2px solid rgba(216,216,232,0.1);
+  background: rgba(0,0,0,0.02);
+  border-bottom: 2px solid rgba(15,15,30,0.1);
   padding: 0;
 }
 
@@ -614,7 +616,7 @@ tr.grade-D { background: rgba(255,112,144,0.02); }
 }
 
 .expand-card {
-  background: rgba(255,255,255,0.03);
+  background: rgba(0,0,0,0.025);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 10px 14px;
@@ -668,7 +670,8 @@ tr.grade-D { background: rgba(255,112,144,0.02); }
   bottom: calc(100% + 6px);
   left: 50%;
   transform: translateX(-50%);
-  background: #111116;
+  background: #ffffff;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.12);
   border: 1px solid var(--border);
   border-radius: 4px;
   padding: 5px 9px;
@@ -686,8 +689,8 @@ tr.grade-D { background: rgba(255,112,144,0.02); }
   position: fixed;
   bottom: 20px;
   right: 20px;
-  background: rgba(255,112,144,0.15);
-  border: 1px solid rgba(255,112,144,0.4);
+  background: rgba(200,32,62,0.15);
+  border: 1px solid rgba(200,32,62,0.4);
   color: var(--neg);
   padding: 12px 16px;
   border-radius: var(--radius);
@@ -728,7 +731,7 @@ tr.grade-D { background: rgba(255,112,144,0.02); }
   transition: all var(--transition);
   white-space: nowrap;
 }
-.btn-guide:hover { color: var(--accent); border-color: rgba(216,216,232,0.4); }
+.btn-guide:hover { color: var(--accent); border-color: rgba(15,15,30,0.4); }
 
 /* ── Guide modal ──────────────────────────────────────────────────────────── */
 .guide-overlay {
@@ -741,8 +744,9 @@ tr.grade-D { background: rgba(255,112,144,0.02); }
 @keyframes gFadeIn { from{opacity:0} to{opacity:1} }
 
 .guide-box {
-  background: #0d0d16;
-  border: 1px solid rgba(255,255,255,0.1);
+  background: #fafafa;
+  box-shadow: 0 8px 40px rgba(0,0,0,0.12);
+  border: 1px solid rgba(0,0,0,0.08);
   border-radius: 12px;
   width: 100%;
   max-width: 680px;
@@ -772,7 +776,7 @@ tr.grade-D { background: rgba(255,112,144,0.02); }
   font-size: 10px; font-weight: 700; letter-spacing: 2px;
   text-transform: uppercase; color: var(--accent);
   margin-bottom: 10px; padding-bottom: 6px;
-  border-bottom: 1px solid rgba(216,216,232,0.15);
+  border-bottom: 1px solid rgba(15,15,30,0.15);
 }
 
 .guide-grid {
@@ -783,8 +787,8 @@ tr.grade-D { background: rgba(255,112,144,0.02); }
 @media (max-width: 500px) { .guide-grid { grid-template-columns: 1fr; } }
 
 .guide-item {
-  background: rgba(255,255,255,0.03);
-  border: 1px solid rgba(255,255,255,0.06);
+  background: rgba(0,0,0,0.025);
+  border: 1px solid rgba(0,0,0,0.05);
   border-radius: 8px;
   padding: 10px 13px;
 }
@@ -804,8 +808,8 @@ tr.grade-D { background: rgba(255,112,144,0.02); }
 }
 
 .guide-note {
-  background: rgba(216,216,232,0.05);
-  border: 1px solid rgba(216,216,232,0.15);
+  background: rgba(15,15,30,0.05);
+  border: 1px solid rgba(15,15,30,0.15);
   border-radius: 8px;
   padding: 12px 14px;
   font-size: 12px;
@@ -823,7 +827,7 @@ tr.grade-D { background: rgba(255,112,144,0.02); }
 .gs b { color: var(--text); }
 .gs-num {
   width: 22px; height: 22px; border-radius: 50%; flex-shrink: 0;
-  background: rgba(216,216,232,0.12); border: 1px solid rgba(216,216,232,0.25);
+  background: rgba(15,15,30,0.12); border: 1px solid rgba(15,15,30,0.25);
   color: var(--accent); font-size: 11px; font-weight: 700;
   display: flex; align-items: center; justify-content: center;
   font-family: var(--mono);
@@ -834,7 +838,7 @@ tr.grade-D { background: rgba(255,112,144,0.02); }
 .gr {
   display: flex; align-items: baseline; gap: 10px;
   padding: 7px 0;
-  border-bottom: 1px solid rgba(255,255,255,0.04);
+  border-bottom: 1px solid rgba(0,0,0,0.03);
   font-size: 12px;
 }
 .gr:last-child { border-bottom: none; }
@@ -845,11 +849,87 @@ tr.grade-D { background: rgba(255,112,144,0.02); }
 }
 .gr-v { color: var(--dim); line-height: 1.5; }
 
+/* ── Events Banner ────────────────────────────────────────────────────────── */
+.events-banner {
+  padding: 7px 20px;
+  background: rgba(184,110,0,0.07);
+  border-bottom: 1px solid rgba(184,110,0,0.18);
+  display: flex; align-items: center; gap: 12px;
+  font-size: 12px; color: var(--warn); font-family: var(--mono); flex-wrap: wrap;
+}
+.events-banner.high { background: rgba(200,32,62,0.06); border-bottom-color: rgba(200,32,62,0.18); color: var(--neg); }
+.ev-items { display: flex; gap: 16px; flex-wrap: wrap; flex: 1; }
+.ev-item  { display: flex; align-items: center; gap: 5px; }
+.ev-item .ev-name { font-weight: 600; }
+.ev-item .ev-time { opacity: 0.65; font-size: 11px; }
+.ev-today { background: rgba(200,32,62,0.08); border-radius: 4px; padding: 2px 6px; }
+.ev-today span:first-child { color: var(--neg); }
+.ev-dismiss { margin-left: auto; cursor: pointer; opacity: 0.4; font-size: 16px;
+              background: none; border: none; color: inherit; padding: 0 4px; line-height:1; }
+.ev-dismiss:hover { opacity: 0.8; }
+
+/* ── Top Pick Callout ─────────────────────────────────────────────────────── */
+.top-pick {
+  margin: 10px 20px 0;
+  padding: 12px 18px;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--pos);
+  border-radius: var(--radius);
+  display: flex; align-items: center; gap: 18px; flex-wrap: wrap;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+}
+.top-pick .tp-label { font-size: 9px; letter-spacing: 2px; text-transform: uppercase; color: var(--dim); font-family: var(--mono); }
+.top-pick .tp-ticker { font-size: 20px; font-weight: 800; font-family: var(--mono); color: var(--text); line-height: 1; }
+.top-pick .tp-dir { font-size: 13px; font-weight: 700; font-family: var(--mono); }
+.top-pick .tp-dir.calls { color: var(--pos); }
+.top-pick .tp-dir.puts  { color: var(--neg); }
+.top-pick .tp-contract { font-family: var(--mono); font-size: 13px; color: var(--accent2); }
+.top-pick .tp-meta { font-family: var(--mono); font-size: 11px; color: var(--dim); }
+.top-pick .tp-why { font-size: 12px; color: var(--muted); flex: 1; min-width: 140px; }
+
+/* ── DTE Tabs ─────────────────────────────────────────────────────────────── */
+.dte-tabs {
+  display: flex; gap: 2px;
+  background: rgba(0,0,0,0.04);
+  border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 2px;
+}
+.dte-tab {
+  padding: 5px 11px; border-radius: calc(var(--radius) - 2px);
+  font-size: 11px; font-weight: 600; font-family: var(--mono);
+  cursor: pointer; color: var(--dim); border: none; background: none;
+  transition: all var(--transition); letter-spacing: 0.3px; white-space: nowrap;
+}
+.dte-tab:hover { color: var(--text); }
+.dte-tab.active { background: var(--bg2); color: var(--accent); box-shadow: 0 1px 3px rgba(0,0,0,0.10); }
+
+/* ── Account + Position Sizing ────────────────────────────────────────────── */
+.acct-wrap { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--dim); }
+.acct-wrap input {
+  width: 76px; background: rgba(0,0,0,0.03); border: 1px solid var(--border);
+  border-radius: var(--radius); color: var(--text); padding: 5px 8px;
+  font-family: var(--mono); font-size: 12px; outline: none;
+}
+.acct-wrap input:focus { border-color: var(--accent2); }
+
+/* ── Watchlist Star ────────────────────────────────────────────────────────── */
+.star-btn {
+  background: none; border: none; cursor: pointer;
+  font-size: 13px; color: var(--dim); padding: 2px 3px;
+  transition: color var(--transition); line-height: 1; opacity: 0.5;
+}
+.star-btn:hover { color: var(--warn); opacity: 1; }
+.star-btn.starred { color: var(--warn); opacity: 1; }
+
+/* ── Sparkline cell ────────────────────────────────────────────────────────── */
+.spark-cell { display: flex; align-items: center; }
+
 /* ── Scrollbar styling ────────────────────────────────────────────────────── */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
-::-webkit-scrollbar-track { background: var(--bg); }
-::-webkit-scrollbar-thumb { background: var(--muted); border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: var(--dim); }
+::-webkit-scrollbar-track { background: #ebebf0; }
+::-webkit-scrollbar-thumb { background: #c0c0d0; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #a0a0b8; }
 
 /* ── Animations ───────────────────────────────────────────────────────────── */
 @keyframes pulse {
@@ -881,6 +961,13 @@ tr.grade-D { background: rgba(255,112,144,0.02); }
 </head>
 <body>
 
+<!-- ── Events Banner ────────────────────────────────────────────────────────── -->
+<div class="events-banner" id="eventsBanner" style="display:none">
+  <span style="font-weight:700;letter-spacing:1.5px;font-size:9px;text-transform:uppercase;opacity:0.8">Events</span>
+  <div class="ev-items" id="evItems"></div>
+  <button class="ev-dismiss" onclick="document.getElementById('eventsBanner').style.display='none'">×</button>
+</div>
+
 <!-- ── Header ──────────────────────────────────────────────────────────────── -->
 <div class="header">
   <div class="logo">Flow<span>.</span>Digger</div>
@@ -910,6 +997,10 @@ tr.grade-D { background: rgba(255,112,144,0.02); }
     <span class="label">VIX</span>
     <span class="val neutral" id="vixVal">—</span>
   </div>
+  <div class="market-item" id="breadthItem" style="margin-left:8px">
+    <span class="label">Breadth</span>
+    <span class="val neutral" id="breadthVal">—</span>
+  </div>
 </div>
 
 <!-- ── Sector Heat Map ──────────────────────────────────────────────────────── -->
@@ -918,11 +1009,11 @@ tr.grade-D { background: rgba(255,112,144,0.02); }
     <div class="shm-label">Sector Heat</div>
     <div class="shm-legend">
       <div class="shm-legend-bar">
-        <div class="shm-legend-swatch" style="background:rgba(255,112,144,0.45)"></div>
-        <div class="shm-legend-swatch" style="background:rgba(255,112,144,0.2)"></div>
-        <div class="shm-legend-swatch" style="background:rgba(255,255,255,0.06)"></div>
-        <div class="shm-legend-swatch" style="background:rgba(122,250,176,0.2)"></div>
-        <div class="shm-legend-swatch" style="background:rgba(122,250,176,0.45)"></div>
+        <div class="shm-legend-swatch" style="background:rgba(200,32,62,0.45)"></div>
+        <div class="shm-legend-swatch" style="background:rgba(200,32,62,0.2)"></div>
+        <div class="shm-legend-swatch" style="background:rgba(0,0,0,0.05)"></div>
+        <div class="shm-legend-swatch" style="background:rgba(10,140,80,0.2)"></div>
+        <div class="shm-legend-swatch" style="background:rgba(10,140,80,0.45)"></div>
       </div>
       <span>−2% → 0 → +2%</span>
     </div>
@@ -941,11 +1032,11 @@ tr.grade-D { background: rgba(255,112,144,0.02); }
     <div style="display:flex;align-items:center;gap:12px">
       <div class="shm-legend">
         <div class="shm-legend-bar">
-          <div class="shm-legend-swatch" style="background:rgba(255,112,144,0.45)"></div>
-          <div class="shm-legend-swatch" style="background:rgba(255,112,144,0.2)"></div>
-          <div class="shm-legend-swatch" style="background:rgba(255,255,255,0.06)"></div>
-          <div class="shm-legend-swatch" style="background:rgba(122,250,176,0.2)"></div>
-          <div class="shm-legend-swatch" style="background:rgba(122,250,176,0.45)"></div>
+          <div class="shm-legend-swatch" style="background:rgba(200,32,62,0.45)"></div>
+          <div class="shm-legend-swatch" style="background:rgba(200,32,62,0.2)"></div>
+          <div class="shm-legend-swatch" style="background:rgba(0,0,0,0.05)"></div>
+          <div class="shm-legend-swatch" style="background:rgba(10,140,80,0.2)"></div>
+          <div class="shm-legend-swatch" style="background:rgba(10,140,80,0.45)"></div>
         </div>
       </div>
       <span id="tmToggle" style="font-size:9px;font-family:var(--mono);color:var(--muted)">▲</span>
@@ -973,6 +1064,7 @@ tr.grade-D { background: rgba(255,112,144,0.02); }
     <option value="options">Options Score ≥60</option>
     <option value="a_grade">Grade A Only</option>
     <option value="laggard">Sector Laggards</option>
+    <option value="watchlist">Watchlist ★</option>
   </select>
   <select id="sortSel">
     <option value="setup">Setup Quality</option>
@@ -989,6 +1081,16 @@ tr.grade-D { background: rgba(255,112,144,0.02); }
     <label class="toggle-label" data-tip="Expand universe with today's top movers">
       <input type="checkbox" id="dynamicCb"> Dynamic
     </label>
+  </div>
+  <div class="dte-tabs" id="dteTabs">
+    <button class="dte-tab active" data-dte="0dte"    onclick="setDTE(this)">0DTE</button>
+    <button class="dte-tab"        data-dte="weekly"   onclick="setDTE(this)">Weekly</button>
+    <button class="dte-tab"        data-dte="monthly"  onclick="setDTE(this)">Monthly</button>
+    <button class="dte-tab"        data-dte="all"      onclick="setDTE(this)">All</button>
+  </div>
+  <div class="acct-wrap">
+    <span>$</span>
+    <input type="number" id="acctSize" placeholder="Acct" min="100" step="100" title="Account size for position sizing" oninput="saveAcct()">
   </div>
   <button class="btn-scan" id="scanBtn" onclick="runScan()">▶ SCAN</button>
 </div>
@@ -1013,6 +1115,23 @@ tr.grade-D { background: rgba(255,112,144,0.02); }
   </div>
 </div>
 
+<!-- ── Top Pick ─────────────────────────────────────────────────────────────── -->
+<div class="top-pick" id="topPick" style="display:none">
+  <div>
+    <div class="tp-label">Best Setup Today</div>
+    <div style="display:flex;align-items:center;gap:10px;margin-top:5px">
+      <div class="tp-ticker" id="tpTicker">—</div>
+      <div class="tp-dir" id="tpDir"></div>
+    </div>
+  </div>
+  <div>
+    <div class="tp-contract" id="tpContract"></div>
+    <div class="tp-meta" id="tpMeta" style="margin-top:3px"></div>
+  </div>
+  <div class="tp-why" id="tpWhy"></div>
+  <a href="/backtest" style="font-size:10px;font-family:var(--mono);color:var(--dim);text-decoration:none;margin-left:auto;white-space:nowrap;opacity:0.7" target="_blank">Backtest ↗</a>
+</div>
+
 <!-- ── Progress ────────────────────────────────────────────────────────────── -->
 <div class="progress-wrap" id="progressWrap">
   <div class="progress-bar-outer">
@@ -1030,6 +1149,7 @@ tr.grade-D { background: rgba(255,112,144,0.02); }
   <table class="results-table" id="resultsTable" style="display:none">
     <thead>
       <tr>
+        <th style="width:28px"></th>
         <th>Ticker</th>
         <th>Setup</th>
         <th>Grade</th>
@@ -1038,6 +1158,7 @@ tr.grade-D { background: rgba(255,112,144,0.02); }
         <th>Chg%</th>
         <th>RelVol</th>
         <th>HV20</th>
+        <th style="width:70px">Spark</th>
         <th>RS</th>
         <th>Contract</th>
         <th>OScore</th>
@@ -1213,14 +1334,14 @@ const SECTOR_SHORT = {
 
 function sectorTileStyle(chg) {
   // Returns {bg, color, borderColor}
-  if      (chg >=  2.5) return { bg:'rgba(122,250,176,0.40)', color:'var(--pos)', border:'rgba(122,250,176,0.35)' };
-  else if (chg >=  1.5) return { bg:'rgba(122,250,176,0.24)', color:'#5effa8', border:'rgba(122,250,176,0.2)' };
-  else if (chg >=  0.5) return { bg:'rgba(122,250,176,0.12)', color:'#44e090', border:'rgba(122,250,176,0.1)' };
-  else if (chg >=  0.0) return { bg:'rgba(122,250,176,0.05)', color:'#668877', border:'rgba(255,255,255,0.06)' };
-  else if (chg > -0.5)  return { bg:'rgba(255,112,144,0.05)', color:'#776655', border:'rgba(255,255,255,0.06)' };
-  else if (chg > -1.5)  return { bg:'rgba(255,112,144,0.13)', color:'#dd5566', border:'rgba(255,112,144,0.12)' };
-  else if (chg > -2.5)  return { bg:'rgba(255,112,144,0.25)', color:'#ff7090', border:'rgba(255,112,144,0.2)' };
-  else                  return { bg:'rgba(255,112,144,0.42)', color:'#ff6080', border:'rgba(255,112,144,0.35)' };
+  if      (chg >=  2.5) return { bg:'rgba(10,140,80,0.40)', color:'var(--pos)', border:'rgba(10,140,80,0.35)' };
+  else if (chg >=  1.5) return { bg:'rgba(10,140,80,0.24)', color:'#087040', border:'rgba(10,140,80,0.2)' };
+  else if (chg >=  0.5) return { bg:'rgba(10,140,80,0.12)', color:'#0a8c50', border:'rgba(10,140,80,0.1)' };
+  else if (chg >=  0.0) return { bg:'rgba(10,140,80,0.05)', color:'#6a9980', border:'rgba(0,0,0,0.05)' };
+  else if (chg > -0.5)  return { bg:'rgba(200,32,62,0.05)', color:'#997060', border:'rgba(0,0,0,0.05)' };
+  else if (chg > -1.5)  return { bg:'rgba(200,32,62,0.13)', color:'#b81830', border:'rgba(200,32,62,0.12)' };
+  else if (chg > -2.5)  return { bg:'rgba(200,32,62,0.25)', color:'#c8203e', border:'rgba(200,32,62,0.2)' };
+  else                  return { bg:'rgba(200,32,62,0.42)', color:'#ff6080', border:'rgba(200,32,62,0.35)' };
 }
 
 function renderSectorHeatMap(sectors) {
@@ -1296,12 +1417,29 @@ async function runScan() {
   document.getElementById('emptyState').style.display   = 'none';
   expandedRow = null;
 
+  const filterVal = document.getElementById('filterSel').value;
+  // "watchlist" is client-side — pass tickers explicitly, use "any" server-side
+  let tickerOverride = document.getElementById('tickersInput').value;
+  let serverFilter   = filterVal;
+  if (filterVal === 'watchlist') {
+    const wl = [...WATCHLIST];
+    if (!wl.length) {
+      showToast('Watchlist is empty — star some tickers first');
+      btn.disabled = false; btn.textContent = '▶ SCAN';
+      progressWrap.classList.remove('visible');
+      return;
+    }
+    tickerOverride = wl.join(' ');
+    serverFilter   = 'any';
+  }
+
   const body = {
-    tickers:        document.getElementById('tickersInput').value,
-    filter:         document.getElementById('filterSel').value,
+    tickers:        tickerOverride,
+    filter:         serverFilter,
     sort:           document.getElementById('sortSel').value,
     load_contracts: document.getElementById('contractsCb').checked,
     dynamic:        document.getElementById('dynamicCb').checked,
+    dte_mode:       currentDTE,
   };
 
   try {
@@ -1365,6 +1503,7 @@ function handleScanMessage(msg, barEl, msgEl) {
     barEl.style.width = '100%';
     renderTable(scanResults);
     updateTickerHeatMapFromScan(scanResults);
+    updateTopPick(scanResults);
     const ts = msg.scan_time || new Date().toLocaleTimeString();
     document.getElementById('scanTime').textContent = 'Last scan: ' + ts;
   }
@@ -1492,7 +1631,26 @@ function buildRowHTML(r) {
     ? `<span class="dim-val" title="1-sigma daily move">±${em.toFixed(1)}%</span>`
     : '<span class="dim-val">—</span>';
 
-  return `<td>${tickerCell}</td>
+  // Star
+  const isStarred = WATCHLIST.has(r.ticker);
+  const starCell  = `<button class="star-btn${isStarred?' starred':''}" onclick="event.stopPropagation();toggleStar('${r.ticker}',this)" title="Watch ${r.ticker}">★</button>`;
+
+  // Sparkline
+  const sparkCell = `<td class="spark-cell">${buildSparkline(r.sparkline, r.direction)}</td>`;
+
+  // Earnings warning badge in ticker cell
+  const earningsBadge = r.earnings_warn
+    ? `<div style="font-size:9px;color:var(--warn);font-family:var(--mono);font-weight:700;letter-spacing:.5px">EARN ${r.earnings_days}d</div>`
+    : '';
+
+  const tickerCellFull = `<div class="ticker-cell">
+    <div class="ticker-sym">${r.ticker}</div>
+    <div class="sector-tag">${r.sector}</div>
+    ${earningsBadge}
+  </div>`;
+
+  return `<td style="padding:0 4px">${starCell}</td>
+    <td>${tickerCellFull}</td>
     <td>${badgeHTML}</td>
     <td>${gradeCell}</td>
     <td>${dirCell}</td>
@@ -1500,6 +1658,7 @@ function buildRowHTML(r) {
     <td>${chgCell}</td>
     <td>${rvolCell}</td>
     <td>${hv20Cell}</td>
+    ${sparkCell}
     <td>${rsCell}</td>
     <td>${contractCell}</td>
     <td>${oscoreCell}</td>
@@ -1543,7 +1702,7 @@ function toggleExpand(idx, row, r) {
   tr.id = 'expandRow';
   tr.className = 'expand-row';
   const td = document.createElement('td');
-  td.colSpan = 13;
+  td.colSpan = 15;
   td.innerHTML = buildExpandContent(r);
   tr.appendChild(td);
   row.after(tr);
@@ -1612,8 +1771,23 @@ function buildExpandContent(r) {
     <div class="cline"><span class="ckey">Lag:</span>${r.is_laggard ? `${r.lag_pct >= 0 ? '+' : ''}${r.lag_pct?.toFixed(2)}% (${r.direction?.toUpperCase()})` : '—'}</div>
   </div>`;
 
+  // Position sizing card
+  let posHtml = '<div class="ec-val dim-val">Set account size above</div>';
+  if (acctSize > 0 && c && !c.empty && c.mid) {
+    const contracts = positionSize(c.mid);
+    const cost      = contracts * c.mid * 100;
+    const risk      = (acctSize * 0.02).toFixed(0);
+    posHtml = `<div class="contract-detail">
+      <div class="cline"><span class="ckey">Account:</span>$${acctSize.toLocaleString()}</div>
+      <div class="cline"><span class="ckey">Risk (2%):</span>$${risk}</div>
+      <div class="cline"><span class="ckey">Contracts:</span><span style="color:var(--accent);font-weight:700">${contracts}</span></div>
+      <div class="cline"><span class="ckey">Cost:</span>~$${cost.toFixed(0)}</div>
+    </div>`;
+  }
+
   return `<div class="expand-content">
     <div class="expand-card"><div class="ec-label">Contract</div>${contractHtml}</div>
+    <div class="expand-card"><div class="ec-label">Position Size</div>${posHtml}</div>
     <div class="expand-card"><div class="ec-label">Nearest Level</div>${levelHtml}</div>
     <div class="expand-card"><div class="ec-label">Day Range</div>${rangeHtml}</div>
     <div class="expand-card"><div class="ec-label">IV Rank Proxy</div>${ivHtml}</div>
@@ -1676,10 +1850,16 @@ function toggleTreemap() {
 
 function _tileStyle(chg, relVol) {
   const intensity = Math.min(Math.max((relVol - 0.5) / 2.5, 0), 1);
-  const a    = (0.05 + intensity * 0.42).toFixed(2);
-  const bord = (0.03 + intensity * 0.28).toFixed(2);
-  if (chg >= 0) return { bg:`rgba(122,250,176,${a})`, border:`rgba(122,250,176,${bord})`, color: intensity > 0.35 ? 'var(--pos)' : '#658870' };
-  return             { bg:`rgba(255,112,144,${a})`, border:`rgba(255,112,144,${bord})`, color: intensity > 0.35 ? 'var(--neg)' : '#906055' };
+  const a    = (0.05 + intensity * 0.22).toFixed(2);
+  const bord = (0.03 + intensity * 0.18).toFixed(2);
+  if (chg >= 0) return {
+    bg:`rgba(10,140,80,${a})`, border:`rgba(10,140,80,${bord})`,
+    color: intensity > 0.5 ? '#065c36' : intensity > 0.2 ? '#0a8c50' : '#6a9980',
+  };
+  return {
+    bg:`rgba(200,32,62,${a})`, border:`rgba(200,32,62,${bord})`,
+    color: intensity > 0.5 ? '#8c0020' : intensity > 0.2 ? '#c8203e' : '#906055',
+  };
 }
 
 // Squarified treemap — returns [{...node, x, y, w, h}]
@@ -1768,7 +1948,7 @@ function renderTreemap() {
     // Sector label
     if (sr.w>50&&sr.h>14) divs.push(
       `<div style="position:absolute;left:${sr.x+GAP+3}px;top:${sr.y+GAP+2}px;
-        font-size:8px;font-family:var(--mono);color:rgba(255,255,255,0.2);
+        font-size:8px;font-family:var(--mono);color:rgba(15,15,30,0.28);
         letter-spacing:.5px;text-transform:uppercase;pointer-events:none;z-index:5;
         white-space:nowrap;line-height:1">${sr.sector}</div>`
     );
@@ -1804,6 +1984,148 @@ function updateTickerHeatMapFromScan(results) {
 
 window.addEventListener('resize', () => requestAnimationFrame(renderTreemap));
 
+// ── DTE Mode ───────────────────────────────────────────────────────────────────
+let currentDTE = '0dte';
+
+function setDTE(btn) {
+  currentDTE = btn.dataset.dte;
+  document.querySelectorAll('.dte-tab').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  // Re-run scan with new DTE if we have results
+  const scanBtn = document.getElementById('scanBtn');
+  if (scanBtn && !scanBtn.disabled) {
+    // just update label; user can re-scan
+  }
+  showToast(`DTE mode: ${btn.textContent}`);
+}
+
+// ── Account Size / Position Sizing ─────────────────────────────────────────────
+let acctSize = 0;
+
+function saveAcct() {
+  const v = parseFloat(document.getElementById('acctSize').value);
+  acctSize = isNaN(v) ? 0 : v;
+  localStorage.setItem('acctSize', acctSize);
+}
+
+function loadAcct() {
+  const v = localStorage.getItem('acctSize');
+  if (v) {
+    acctSize = parseFloat(v) || 0;
+    const el = document.getElementById('acctSize');
+    if (el) el.value = acctSize || '';
+  }
+}
+
+function positionSize(contractPrice) {
+  if (!acctSize || !contractPrice) return null;
+  const riskAmt   = acctSize * 0.02;          // 2% of account
+  const contracts = Math.floor(riskAmt / (contractPrice * 100));
+  return contracts > 0 ? contracts : 1;
+}
+
+// ── Watchlist ──────────────────────────────────────────────────────────────────
+const WATCHLIST = new Set(JSON.parse(localStorage.getItem('watchlist') || '[]'));
+
+function toggleStar(ticker, btn) {
+  if (WATCHLIST.has(ticker)) {
+    WATCHLIST.delete(ticker);
+    btn.classList.remove('starred');
+    showToast(`Removed ${ticker} from watchlist`);
+  } else {
+    WATCHLIST.add(ticker);
+    btn.classList.add('starred');
+    showToast(`Added ${ticker} to watchlist`);
+  }
+  localStorage.setItem('watchlist', JSON.stringify([...WATCHLIST]));
+}
+
+// ── Sparkline ──────────────────────────────────────────────────────────────────
+function buildSparkline(data, direction) {
+  if (!data || data.length < 2) return '<span style="color:var(--dim);font-size:10px">—</span>';
+  const W = 64, H = 22, pad = 2;
+  const pts = data.slice(-20);
+  const min  = Math.min(...pts), max = Math.max(...pts);
+  const range = max - min || 1;
+  const norm  = pts.map(v => (v - min) / range);
+  const step  = (W - pad*2) / (norm.length - 1);
+  const poly  = norm.map((v,i) => `${pad + i*step},${H - pad - v*(H - pad*2)}`).join(' ');
+  const col   = direction === 'up' ? 'var(--pos)' : 'var(--neg)';
+  return `<svg width="${W}" height="${H}" style="display:block">
+    <polyline points="${poly}" fill="none" stroke="${col}" stroke-width="1.2" stroke-linejoin="round" stroke-linecap="round" opacity="0.8"/>
+  </svg>`;
+}
+
+// ── Top Pick ───────────────────────────────────────────────────────────────────
+function updateTopPick(results) {
+  const el = document.getElementById('topPick');
+  if (!el) return;
+  const gradeA = results.filter(r => r.grade === 'A' && r.contract && !r.contract.empty);
+  if (!gradeA.length) { el.style.display = 'none'; return; }
+
+  const best = gradeA.sort((a,b) => (b.opt_score||0) - (a.opt_score||0))[0];
+  const c    = best.contract;
+  const dirCls = best.direction === 'up' ? 'calls' : 'puts';
+  const dirTxt = best.direction === 'up' ? '↑ CALLS' : '↓ PUTS';
+
+  const sigMap = {
+    "HV_PURE":"Pure vol edge","HV+ID":"Coiled + vol","HV+GD":"Gap fill setup",
+    "HV+GU_FADE":"Fade the gap","HV+BK":"Vol breakout","BK":"Breakout","ID":"Inside day",
+    "GD":"Gap fill","GU":"Gap up continue",
+  };
+  const why = sigMap[best.signal_combo] || (best.is_laggard ? 'Sector laggard' : 'Top scan signal');
+
+  el.innerHTML = `
+    <div class="tp-label">TOP PICK</div>
+    <div class="tp-ticker">${best.ticker}</div>
+    <div class="tp-dir ${dirCls}">${dirTxt}</div>
+    <div class="tp-contract">${c.label || '—'}</div>
+    <div class="tp-meta">OScore: ${best.opt_score||0} · IVR: ${best.ivr_score||'—'}</div>
+    <div class="tp-why">${why}</div>`;
+  el.style.display = 'flex';
+}
+
+// ── Economic Events ─────────────────────────────────────────────────────────────
+async function loadEvents() {
+  try {
+    const r = await fetch('/api/events');
+    const d = await r.json();
+    if (!d.events || !d.events.length) return;
+    const banner = document.getElementById('eventsBanner');
+    const items  = document.getElementById('evItems');
+    if (!banner || !items) return;
+    items.innerHTML = d.events.map(ev =>
+      `<div class="ev-item${ev.is_today?' ev-today':''}" title="${escHtml(ev.date)}">
+        <span style="font-weight:700">${escHtml(ev.label)}</span>
+        <span style="opacity:0.7">${ev.is_today ? 'TODAY' : 'in ' + ev.days_out + 'd'}</span>
+      </div>`
+    ).join('');
+    banner.style.display = 'flex';
+    if (d.events.some(e => e.is_today || e.days_out <= 1)) banner.classList.add('high');
+    else banner.classList.remove('high');
+  } catch(e) { console.warn('Events failed:', e); }
+}
+
+// ── Market Breadth ──────────────────────────────────────────────────────────────
+async function loadBreadth() {
+  try {
+    const r = await fetch('/api/breadth');
+    const d = await r.json();
+    const el = document.getElementById('breadthVal');
+    if (!el) return;
+    if (d.breadth_score !== undefined) {
+      const s   = Math.round(d.breadth_score);
+      const cls = s >= 60 ? 'pos' : s <= 40 ? 'neg' : 'neutral';
+      el.textContent = `${s}% positive`;
+      el.className   = `val ${cls}`;
+      if (d.ad_ratio !== undefined) {
+        const ad = d.ad_ratio;
+        el.title = `A/D ratio: ${ad.toFixed(2)} · Sectors: ${d.sector_count || '—'}`;
+      }
+    }
+  } catch(e) { console.warn('Breadth failed:', e); }
+}
+
 // ── Guide ──────────────────────────────────────────────────────────────────────
 function openGuide()  { document.getElementById('guideOverlay').classList.add('open'); }
 function closeGuide() { document.getElementById('guideOverlay').classList.remove('open'); }
@@ -1813,9 +2135,14 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') closeGuide()
 document.addEventListener('DOMContentLoaded', () => {
   loadMarketContext();
   loadFlowData();
-  // Refresh market context every 60s; flow data every 5 min
+  loadEvents();
+  loadBreadth();
+  loadAcct();
+  // Refresh market context every 60s; flow data every 5 min; breadth every 3 min
   setInterval(loadMarketContext, 60_000);
   setInterval(loadFlowData, 300_000);
+  setInterval(loadBreadth, 180_000);
+  setInterval(loadEvents, 600_000);
 });
 </script>
 </body>

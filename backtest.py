@@ -1163,7 +1163,7 @@ def main():
             cfg2 = BacktestConfig(tickers=config.tickers, lookback_days=config.lookback_days,
                                   hold_candles=hold, delta_target=config.delta_target,
                                   stop_pct=config.stop_pct, target_pct=config.target_pct)
-            recs2 = run_backtest(cfg2)
+            recs2 = run_backtest_cli(cfg2)
             for sig in signals_to_test:
                 subset = [r for r in recs2 if sig in r["signal_types"] and r.get("hv20", 0) >= 0.35]
                 if len(subset) < 5:
@@ -1188,7 +1188,7 @@ def main():
     # Compare mode: run all signal types
     if args.compare:
         print(f"\n{Fore.CYAN + Style.BRIGHT}  D — SIGNAL COMPARISON{Style.RESET_ALL}\n")
-        all_records = run_backtest(config)
+        all_records = run_backtest_cli(config)
         signal_types = ["gap_up", "gap_down", "inside", "double_inside", "highvol", "trend", "breakout"]
         rows = []
         for sig in signal_types:
@@ -1217,7 +1217,7 @@ def main():
         return
 
     # Standard backtest
-    records = run_backtest(config)
+    records = run_backtest_cli(config)
     if not records:
         print(f"\n  {Fore.RED}No signals found.{Style.RESET_ALL}")
         return

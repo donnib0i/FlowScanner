@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FlowDigger — Backtest</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:      #f2f2f7;
+  --bg2:     #ffffff;
+  --border:  rgba(0,0,0,0.07);
+  --text:    #0f0f1e;
+  --muted:   #5c5c7a;
+  --dim:     #8888a8;
+  --accent:  #0f0f1e;
+  --pos:     #0a8c50;
+  --neg:     #c8203e;
+  --warn:    #b86e00;
+  --mono:    "SF Mono", "Fira Code", monospace;
+  --font:    system-ui, -apple-system, sans-serif;
+  --radius:  8px;
+}
+
+html, body { background: var(--bg); color: var(--text); font-family: var(--font); font-size: 13px; line-height: 1.5; min-height: 100vh; }
+
+.header {
+  display: flex; align-items: center; gap: 16px;
+  padding: 12px 20px; border-bottom: 1px solid var(--border);
+  background: var(--bg2); position: sticky; top: 0; z-index: 10;
+}
+.logo { font-size: 16px; font-weight: 700; letter-spacing: 3px; font-family: var(--mono); }
+.logo span { opacity: 0.4; }
+.back-btn {
+  font-size: 12px; font-family: var(--mono); color: var(--muted);
+  text-decoration: none; padding: 4px 10px; border: 1px solid var(--border);
+  border-radius: 20px; transition: 0.15s;
+}
+.back-btn:hover { color: var(--text); border-color: rgba(0,0,0,0.2); }
+
+.main { max-width: 1100px; margin: 0 auto; padding: 24px 20px; }
+
+h2 { font-size: 15px; font-weight: 700; margin-bottom: 4px; }
+.sub { color: var(--muted); font-size: 12px; margin-bottom: 20px; }
+
+/* Controls */
+.controls {
+  display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end;
+  background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 16px 20px; margin-bottom: 20px;
+}
+.ctrl-group { display: flex; flex-direction: column; gap: 4px; }
+.ctrl-group label { font-size: 10px; font-weight: 600; letter-spacing: 1px; text-transform: uppercase; color: var(--dim); font-family: var(--mono); }
+.ctrl-group select, .ctrl-group input {
+  padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px;
+  background: var(--bg); color: var(--text); font-size: 12px; font-family: var(--mono);
+  outline: none;
+}
+.ctrl-group select:focus, .ctrl-group input:focus { border-color: var(--accent); }
+
+.run-btn {
+  padding: 8px 22px; background: var(--accent); color: #fff; border: none;
+  border-radius: 6px; font-size: 13px; font-weight: 700; cursor: pointer;
+  font-family: var(--mono); letter-spacing: 1px; transition: opacity 0.15s;
+  align-self: flex-end;
+}
+.run-btn:hover { opacity: 0.85; }
+.run-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* Status */
+.status-bar { display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--muted); font-family: var(--mono); min-height: 28px; margin-bottom: 16px; }
+.spinner { width: 14px; height: 14px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.7s linear infinite; display: none; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Metrics grid */
+.metrics-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; margin-bottom: 20px; }
+.metric-card {
+  background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 14px 16px;
+}
+.metric-label { font-size: 10px; font-weight: 600; letter-spacing: 1px; text-transform: uppercase; color: var(--dim); font-family: var(--mono); margin-bottom: 4px; }
+.metric-val { font-size: 22px; font-weight: 800; font-family: var(--mono); }
+.metric-val.pos { color: var(--pos); }
+.metric-val.neg { color: var(--neg); }
+.metric-val.warn { color: var(--warn); }
+.metric-sub { font-size: 10px; color: var(--dim); margin-top: 2px; }
+
+/* Charts row */
+.charts-row { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; margin-bottom: 20px; }
+@media (max-width: 680px) { .charts-row { grid-template-columns: 1fr; } }
+.chart-card {
+  background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px;
+}
+.chart-title { font-size: 11px; font-weight: 600; letter-spacing: 1px; text-transform: uppercase; color: var(--dim); font-family: var(--mono); margin-bottom: 10px; }
+canvas { display: block; width: 100%; }
+
+/* Signal breakdown */
+.breakdown { display: flex; flex-direction: column; gap: 6px; }
+.bk-row { display: flex; align-items: center; gap: 8px; }
+.bk-label { font-size: 11px; font-family: var(--mono); min-width: 90px; color: var(--text); }
+.bk-bar-wrap { flex: 1; height: 8px; background: rgba(0,0,0,0.05); border-radius: 4px; overflow: hidden; }
+.bk-bar-fill { height: 100%; border-radius: 4px; background: var(--accent); transition: width 0.4s; }
+.bk-count { font-size: 10px; color: var(--dim); font-family: var(--mono); min-width: 30px; text-align: right; }
+
+/* Trades table */
+.trades-wrap { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.trades-header { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid var(--border); }
+.trades-header h3 { font-size: 12px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: var(--dim); font-family: var(--mono); }
+.trades-scroll { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; }
+th { padding: 8px 12px; text-align: left; font-size: 10px; font-weight: 600; letter-spacing: 1px; text-transform: uppercase; color: var(--dim); font-family: var(--mono); border-bottom: 1px solid var(--border); background: var(--bg); white-space: nowrap; }
+td { padding: 8px 12px; font-size: 12px; border-bottom: 1px solid rgba(0,0,0,0.04); font-family: var(--mono); vertical-align: middle; }
+tr:last-child td { border-bottom: none; }
+tr:hover td { background: rgba(0,0,0,0.015); }
+
+.pos-val { color: var(--pos); }
+.neg-val { color: var(--neg); }
+.dim-val { color: var(--dim); }
+
+.dir-calls { color: var(--pos); font-weight: 700; }
+.dir-puts  { color: var(--neg); font-weight: 700; }
+.correct-yes { color: var(--pos); }
+.correct-no  { color: var(--neg); }
+
+/* Disclaimer */
+.disclaimer { margin-top: 24px; padding: 12px 16px; background: rgba(184,110,0,0.06); border: 1px solid rgba(184,110,0,0.2); border-radius: var(--radius); font-size: 11px; color: var(--warn); line-height: 1.6; }
+
+/* Empty state */
+.empty-state { text-align: center; padding: 48px 20px; color: var(--dim); font-family: var(--mono); font-size: 12px; }
+.empty-state .big { font-size: 32px; margin-bottom: 8px; opacity: 0.3; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="logo">FLOW<span>.</span>DIGGER</div>
+  <span style="color:var(--dim);font-family:var(--mono);font-size:11px">/ BACKTEST</span>
+  <a href="/" class="back-btn" style="margin-left:auto">← Scanner</a>
+</div>
+
+<div class="main">
+  <h2>Signal Backtest Engine</h2>
+  <p class="sub">Tests scanner signals against historical data — directional accuracy, option P&L, win rates. Research tool only.</p>
+
+  <div class="controls">
+    <div class="ctrl-group">
+      <label>Signal Filter</label>
+      <select id="signalSel">
+        <option value="all">All Signals</option>
+        <option value="gap">Gap Fills</option>
+        <option value="inside">Inside Bar</option>
+        <option value="highvol">High Vol</option>
+        <option value="laggard">Sector Laggard</option>
+      </select>
+    </div>
+    <div class="ctrl-group">
+      <label>Lookback</label>
+      <select id="daysSel">
+        <option value="30">30 days</option>
+        <option value="60" selected>60 days</option>
+        <option value="90">90 days</option>
+        <option value="120">120 days</option>
+      </select>
+    </div>
+    <div class="ctrl-group">
+      <label>Hold (bars)</label>
+      <select id="holdSel">
+        <option value="1" selected>1 day</option>
+        <option value="2">2 days</option>
+        <option value="3">3 days</option>
+        <option value="5">5 days (week)</option>
+      </select>
+    </div>
+    <div class="ctrl-group">
+      <label>Stop Loss</label>
+      <select id="stopSel">
+        <option value="0.30">30%</option>
+        <option value="0.50" selected>50%</option>
+        <option value="0.75">75%</option>
+        <option value="1.00">100% (no stop)</option>
+      </select>
+    </div>
+    <div class="ctrl-group">
+      <label>Profit Target</label>
+      <select id="targetSel">
+        <option value="0.50">50%</option>
+        <option value="1.00" selected>100%</option>
+        <option value="1.50">150%</option>
+        <option value="2.00">200%</option>
+      </select>
+    </div>
+    <button class="run-btn" id="runBtn" onclick="runBacktest()">RUN</button>
+  </div>
+
+  <div class="status-bar">
+    <div class="spinner" id="spinner"></div>
+    <span id="statusMsg">Configure and run a backtest above.</span>
+  </div>
+
+  <!-- Metrics -->
+  <div class="metrics-grid" id="metricsGrid" style="display:none"></div>
+
+  <!-- Charts -->
+  <div class="charts-row" id="chartsRow" style="display:none">
+    <div class="chart-card">
+      <div class="chart-title">Equity Curve (normalized to 100)</div>
+      <canvas id="equityCanvas" height="160"></canvas>
+    </div>
+    <div class="chart-card">
+      <div class="chart-title">Signal Breakdown</div>
+      <div class="breakdown" id="breakdownEl"></div>
+    </div>
+  </div>
+
+  <!-- Trades -->
+  <div class="trades-wrap" id="tradesWrap" style="display:none">
+    <div class="trades-header">
+      <h3>Recent Trades</h3>
+      <span id="tradesCount" style="font-size:11px;color:var(--dim);font-family:var(--mono)"></span>
+    </div>
+    <div class="trades-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Ticker</th>
+            <th>Signal</th>
+            <th>Dir</th>
+            <th>Correct</th>
+            <th>Price Ret%</th>
+            <th>Option Ret%</th>
+          </tr>
+        </thead>
+        <tbody id="tradesTbody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="empty-state" id="emptyState">
+    <div class="big">⟳</div>
+    Set parameters and click RUN to backtest scanner signals.
+  </div>
+
+  <div class="disclaimer">
+    <strong>Research disclaimer:</strong> Uses EOD prices, not intraday fills. IV estimated from HV20 × 1.2 (vol risk premium proxy). No real bid/ask spread history — simulates 5% spread on mid. Historical signal performance does not guarantee future results. This is a directional accuracy and P&L research tool, not a trading system.
+  </div>
+</div>
+
+<script>
+async function runBacktest() {
+  const btn    = document.getElementById('runBtn');
+  const spin   = document.getElementById('spinner');
+  const status = document.getElementById('statusMsg');
+  btn.disabled = true;
+  spin.style.display = 'block';
+  status.textContent = 'Running backtest… this may take 30–90s depending on lookback period.';
+
+  document.getElementById('metricsGrid').style.display  = 'none';
+  document.getElementById('chartsRow').style.display    = 'none';
+  document.getElementById('tradesWrap').style.display   = 'none';
+  document.getElementById('emptyState').style.display   = 'block';
+
+  const body = {
+    signal:     document.getElementById('signalSel').value,
+    days:       parseInt(document.getElementById('daysSel').value),
+    hold:       parseInt(document.getElementById('holdSel').value),
+    stop_pct:   parseFloat(document.getElementById('stopSel').value),
+    target_pct: parseFloat(document.getElementById('targetSel').value),
+  };
+
+  try {
+    const resp = await fetch('/api/backtest', {
+      method:  'POST',
+      headers: {'Content-Type': 'application/json'},
+      body:    JSON.stringify(body),
+    });
+    const d = await resp.json();
+    if (!d.ok) throw new Error(d.error || 'Backtest failed');
+    renderResults(d);
+  } catch(e) {
+    status.textContent = 'Error: ' + e.message;
+  } finally {
+    btn.disabled = false;
+    spin.style.display = 'none';
+  }
+}
+
+function renderResults(d) {
+  const m = d.metrics;
+  const status = document.getElementById('statusMsg');
+  status.textContent = `Done — ${d.count} signals found across ${d.config.tickers} tickers, ${d.config.days}d lookback.`;
+  document.getElementById('emptyState').style.display = 'none';
+
+  if (!d.count) { status.textContent = 'No signals found for that filter/period.'; return; }
+
+  // ── Metrics ──
+  const grid = document.getElementById('metricsGrid');
+  grid.style.display = 'grid';
+
+  const winRatePct = ((m.win_rate || 0) * 100).toFixed(1);
+  const avgRet     = (m.avg_return || 0).toFixed(2);
+  const sharpe     = (m.sharpe || 0).toFixed(2);
+  const pf         = isFinite(m.profit_factor) ? (m.profit_factor || 0).toFixed(2) : '∞';
+  const maxDD      = ((m.max_drawdown || 0) * 100).toFixed(1);
+  const totalPnl   = m.total_pnl_pct !== undefined ? m.total_pnl_pct.toFixed(1) : '—';
+
+  const optWR  = m.opt_win_rate !== undefined ? (m.opt_win_rate * 100).toFixed(1) + '%' : '—';
+  const optAvg = m.opt_avg_pnl !== undefined ? (m.opt_avg_pnl >= 0 ? '+' : '') + m.opt_avg_pnl.toFixed(1) + '%' : '—';
+  const optAvgCls = m.opt_avg_pnl > 0 ? 'pos' : m.opt_avg_pnl < 0 ? 'neg' : '';
+  const optPF  = m.opt_pf !== undefined ? (isFinite(m.opt_pf) ? m.opt_pf.toFixed(2) : '∞') : '—';
+
+  grid.innerHTML = `
+    ${metricCard('Win Rate', winRatePct + '%', m.win_rate >= 0.55 ? 'pos' : m.win_rate >= 0.45 ? 'warn' : 'neg', d.count + ' trades')}
+    ${metricCard('Avg Price Ret', avgRet + '%', avgRet >= 0 ? 'pos' : 'neg', 'per trade (EOD)')}
+    ${metricCard('Sharpe', sharpe, sharpe >= 1 ? 'pos' : sharpe >= 0 ? 'warn' : 'neg', 'annualized')}
+    ${metricCard('Profit Factor', pf, parseFloat(pf) >= 1.5 ? 'pos' : parseFloat(pf) >= 1 ? 'warn' : 'neg', 'wins/losses')}
+    ${metricCard('Max Drawdown', '-' + maxDD + '%', maxDD <= 15 ? 'pos' : maxDD <= 30 ? 'warn' : 'neg', 'equity curve')}
+    ${metricCard('Opt Win Rate', optWR, m.opt_win_rate >= 0.5 ? 'pos' : m.opt_win_rate >= 0.4 ? 'warn' : 'neg', m.opt_count + ' contracts sim')}
+    ${metricCard('Avg Opt P&L', optAvg, optAvgCls, 'BS-simulated')}
+    ${metricCard('Opt Prof Factor', optPF, parseFloat(optPF) >= 1.5 ? 'pos' : parseFloat(optPF) >= 1 ? 'warn' : 'neg', 'options only')}
+  `;
+
+  // ── Equity curve ──
+  document.getElementById('chartsRow').style.display = 'grid';
+  drawEquityCurve(d.equity_curve);
+
+  // ── Signal breakdown ──
+  const bkEl  = document.getElementById('breakdownEl');
+  const bkData = d.signal_breakdown || {};
+  const total  = Object.values(bkData).reduce((s,v) => s+v, 0) || 1;
+  bkEl.innerHTML = Object.entries(bkData).sort((a,b)=>b[1]-a[1]).map(([k,v]) => `
+    <div class="bk-row">
+      <div class="bk-label">${k}</div>
+      <div class="bk-bar-wrap"><div class="bk-bar-fill" style="width:${(v/total*100).toFixed(0)}%"></div></div>
+      <div class="bk-count">${v}</div>
+    </div>`).join('');
+
+  // ── Trades table ──
+  const tradesWrap = document.getElementById('tradesWrap');
+  tradesWrap.style.display = 'block';
+  document.getElementById('tradesCount').textContent = `Showing ${d.trades.length} of ${d.count} trades`;
+
+  const tbody = document.getElementById('tradesTbody');
+  tbody.innerHTML = d.trades.slice().reverse().map(t => {
+    const retCls = t.ret_pct >= 0 ? 'pos-val' : 'neg-val';
+    const optCls = t.opt_ret >= 0 ? 'pos-val' : 'neg-val';
+    const dirCls = t.dir === 'up' ? 'dir-calls' : 'dir-puts';
+    const dirTxt = t.dir === 'up' ? '↑ CALLS' : '↓ PUTS';
+    return `<tr>
+      <td>${t.date}</td>
+      <td style="font-weight:700">${t.ticker}</td>
+      <td>${t.signal}</td>
+      <td class="${dirCls}">${dirTxt}</td>
+      <td class="${t.correct ? 'correct-yes' : 'correct-no'}">${t.correct ? '✓' : '✗'}</td>
+      <td class="${retCls}">${t.ret_pct >= 0 ? '+' : ''}${t.ret_pct}%</td>
+      <td class="${optCls}">${t.opt_ret >= 0 ? '+' : ''}${t.opt_ret}%</td>
+    </tr>`;
+  }).join('');
+}
+
+function metricCard(label, val, cls, sub) {
+  return `<div class="metric-card">
+    <div class="metric-label">${label}</div>
+    <div class="metric-val ${cls}">${val}</div>
+    ${sub ? `<div class="metric-sub">${sub}</div>` : ''}
+  </div>`;
+}
+
+function drawEquityCurve(data) {
+  const canvas = document.getElementById('equityCanvas');
+  canvas.width  = canvas.offsetWidth * window.devicePixelRatio || 600;
+  canvas.height = 160 * window.devicePixelRatio || 160;
+  const ctx = canvas.getContext('2d');
+  const W   = canvas.width, H = canvas.height;
+  const dpr = window.devicePixelRatio || 1;
+  ctx.scale(dpr, dpr);
+  const w = W/dpr, h = H/dpr;
+
+  if (!data || data.length < 2) return;
+
+  const min  = Math.min(...data) * 0.995;
+  const max  = Math.max(...data) * 1.005;
+  const range = max - min || 1;
+  const step  = w / (data.length - 1);
+
+  // Baseline at 100
+  const base100y = h - ((100 - min) / range) * h;
+
+  ctx.strokeStyle = 'rgba(0,0,0,0.06)';
+  ctx.lineWidth   = 1;
+  ctx.setLineDash([3, 4]);
+  ctx.beginPath();
+  ctx.moveTo(0, base100y);
+  ctx.lineTo(w, base100y);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Gradient fill
+  const final = data[data.length - 1];
+  const upColor   = 'rgba(10,140,80,';
+  const downColor = 'rgba(200,32,62,';
+  const lineColor = final >= 100 ? '#0a8c50' : '#c8203e';
+  const fillBase  = final >= 100 ? upColor : downColor;
+
+  const grad = ctx.createLinearGradient(0, 0, 0, h);
+  grad.addColorStop(0, fillBase + '0.12)');
+  grad.addColorStop(1, fillBase + '0.01)');
+
+  ctx.beginPath();
+  for (let i = 0; i < data.length; i++) {
+    const x = i * step;
+    const y = h - ((data[i] - min) / range) * h;
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  }
+  ctx.lineTo((data.length-1)*step, h);
+  ctx.lineTo(0, h);
+  ctx.closePath();
+  ctx.fillStyle = grad;
+  ctx.fill();
+
+  // Line
+  ctx.beginPath();
+  for (let i = 0; i < data.length; i++) {
+    const x = i * step;
+    const y = h - ((data[i] - min) / range) * h;
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  }
+  ctx.strokeStyle = lineColor;
+  ctx.lineWidth   = 1.5;
+  ctx.stroke();
+
+  // Labels
+  ctx.fillStyle   = 'rgba(15,15,30,0.45)';
+  ctx.font        = `${10 * dpr}px "SF Mono", monospace`;
+  ctx.fillText(`${data[0].toFixed(0)}`, 4, h - 4);
+  ctx.fillText(`${final.toFixed(1)}`, w - 36, 14);
+}
+</script>
+</body>
+</html>

@@ -690,10 +690,99 @@ async def economic_events():
         try:
             ev_date = date.fromisoformat(ev["date"])
             if today <= ev_date <= window_end:
-                days_away = (ev_date - today).days
-                upcoming.append({**ev, "days_away": days_away, "is_today": days_away == 0})
+                days_out = (ev_date - today).days
+                upcoming.append({**ev, "days_out": days_out, "is_today": days_out == 0})
         except Exception:
             pass
 
     upcoming.sort(key=lambda e: e["date"])
     return JSONResponse(content={"events": upcoming})
+
+
+# ── Backtest ───────────────────────────────────────────────────────────────────
+
+@app.get("/backtest", response_class=HTMLResponse)
+async def backtest_page():
+    tpl = TEMPLATES_DIR / "backtest.html"
+    if tpl.exists():
+        return HTMLResponse(tpl.read_text(encoding="utf-8"))
+    return HTMLResponse("<h1>backtest.html not found</h1>", status_code=404)
+
+
+@app.post("/api/backtest")
+async def run_backtest_api(request: Request):
+    """
+    Run a historical signal backtest.
+    Body params (all optional):
+      tickers: list[str] | null   — default = FAST_UNIVERSE
+      days:    int                — lookback days (default 60, max 180)
+      signal:  str                — all | gap | inside | highvol | laggard
+      hold:    int                — hold bars (default 1)
+      stop_pct: float             — stop loss % on option (default 0.50)
+      target_pct: float           — profit target % on option (default 1.00)
+    """
+    try:
+        from backtest import BacktestConfig, run_backtest_cli, calc_metrics
+        body = await request.json()
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+    tickers   = body.get("tickers") or FAST_UNIVERSE
+    days      = min(int(body.get("days", 60)), 180)
+    signal    = body.get("signal", "all")
+    hold      = int(body.get("hold", 1))
+    stop_pct  = float(body.get("stop_pct", 0.50))
+    target_pct= float(body.get("target_pct", 1.00))
+
+    cfg = BacktestConfig(
+        tickers=tickers,
+        lookback_days=days,
+        signal_filter=signal,
+        hold_candles=hold,
+        stop_pct=stop_pct,
+        target_pct=target_pct,
+    )
+
+    try:
+        records = await asyncio.get_event_loop().run_in_executor(
+            None, run_backtest_cli, cfg
+        )
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+    metrics = calc_metrics(records, label=f"{signal.upper()} / {days}d")
+
+    # Build equity curve (simple 100-base)
+    equity = [100.0]
+    for r in records:
+        equity.append(round(equity[-1] * (1 + r.get("signed_return_pct", 0) / 100), 2))
+
+    # Signal breakdown
+    from collections import Counter
+    signal_counts = Counter(r.get("signal") for r in records)
+
+    return JSONResponse({
+        "ok":      True,
+        "metrics": metrics,
+        "equity_curve": equity[-120:],   # last 120 pts max
+        "signal_breakdown": dict(signal_counts),
+        "trades": [
+            {
+                "date":    r.get("date", ""),
+                "ticker":  r.get("ticker", ""),
+                "signal":  r.get("signal", ""),
+                "dir":     r.get("direction", ""),
+                "correct": bool(r.get("direction_correct", 0)),
+                "ret_pct": round(r.get("signed_return_pct", 0), 2),
+                "opt_ret": round(r.get("opt_pnl_pct") or 0, 2),
+            }
+            for r in records[-200:]  # most recent 200 trades
+        ],
+        "count": len(records),
+        "config": {
+            "tickers": len(tickers),
+            "days": days,
+            "signal": signal,
+            "hold": hold,
+        },
+    })
