@@ -201,14 +201,13 @@ html, body {
 }
 
 .shm-tile .st-name {
-  font-size: 8px;
-  font-weight: 700;
-  letter-spacing: 0.8px;
-  text-transform: uppercase;
-  opacity: 0.65;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  line-height: 1.2;
+  opacity: 0.8;
+  word-break: break-word;
+  hyphens: auto;
 }
 
 .shm-tile .st-etf {
@@ -685,6 +684,105 @@ tr.grade-D { background: rgba(255,68,102,0.02); }
   animation: pulse 2s ease-in-out infinite;
 }
 
+/* ── Guide button ─────────────────────────────────────────────────────────── */
+.btn-guide {
+  padding: 4px 12px;
+  border-radius: 20px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--dim);
+  font-size: 11px;
+  cursor: pointer;
+  letter-spacing: 0.5px;
+  transition: all var(--transition);
+  white-space: nowrap;
+}
+.btn-guide:hover { color: var(--accent); border-color: rgba(0,212,255,0.4); }
+
+/* ── Guide modal ──────────────────────────────────────────────────────────── */
+.guide-overlay {
+  position: fixed; inset: 0; z-index: 500;
+  background: rgba(0,0,0,0.75); backdrop-filter: blur(6px);
+  display: none; align-items: flex-start; justify-content: center;
+  padding: 20px 16px; overflow-y: auto;
+}
+.guide-overlay.open { display: flex; animation: gFadeIn 0.18s ease; }
+@keyframes gFadeIn { from{opacity:0} to{opacity:1} }
+
+.guide-box {
+  background: #0d0d16;
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 12px;
+  width: 100%;
+  max-width: 680px;
+  padding: 28px 28px 32px;
+  position: relative;
+  margin: auto;
+}
+
+.guide-close {
+  position: absolute; top: 16px; right: 18px;
+  font-size: 20px; color: var(--muted); cursor: pointer;
+  background: none; border: none; transition: color var(--transition);
+  line-height: 1;
+}
+.guide-close:hover { color: var(--text); }
+
+.guide-title {
+  font-size: 18px; font-weight: 700; color: var(--accent);
+  margin-bottom: 4px; font-family: var(--mono); letter-spacing: 2px;
+}
+.guide-sub {
+  font-size: 12px; color: var(--dim); margin-bottom: 24px;
+}
+
+.guide-section { margin-bottom: 22px; }
+.guide-section-title {
+  font-size: 10px; font-weight: 700; letter-spacing: 2px;
+  text-transform: uppercase; color: var(--accent);
+  margin-bottom: 10px; padding-bottom: 6px;
+  border-bottom: 1px solid rgba(0,212,255,0.15);
+}
+
+.guide-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+@media (max-width: 500px) { .guide-grid { grid-template-columns: 1fr; } }
+
+.guide-item {
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 8px;
+  padding: 10px 13px;
+}
+.guide-item .gi-key {
+  font-size: 11px; font-weight: 700;
+  font-family: var(--mono); color: var(--text);
+  margin-bottom: 3px;
+}
+.guide-item .gi-val {
+  font-size: 11px; color: var(--dim); line-height: 1.5;
+}
+.guide-item .gi-val b { color: var(--text); font-weight: 500; }
+.guide-item.full { grid-column: 1 / -1; }
+
+.guide-badges-row {
+  display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px;
+}
+
+.guide-note {
+  background: rgba(0,212,255,0.05);
+  border: 1px solid rgba(0,212,255,0.15);
+  border-radius: 8px;
+  padding: 12px 14px;
+  font-size: 12px;
+  color: var(--dim);
+  line-height: 1.6;
+}
+.guide-note b { color: var(--accent); font-weight: 500; }
+
 /* ── Scrollbar styling ────────────────────────────────────────────────────── */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: var(--bg); }
@@ -729,6 +827,7 @@ tr.grade-D { background: rgba(255,68,102,0.02); }
     <div class="market-badge closed" id="marketBadge">LOADING</div>
   </div>
   <div class="scan-time" id="scanTime">—</div>
+  <button class="btn-guide" onclick="openGuide()">? Guide</button>
   <div class="auto-refresh" id="autoRefreshIndicator" style="display:none">
     <div class="dot"></div>
     Auto-refresh in <span id="refreshCountdown">300</span>s
@@ -867,6 +966,172 @@ tr.grade-D { background: rgba(255,68,102,0.02); }
 <!-- ── Toast ───────────────────────────────────────────────────────────────── -->
 <div class="toast" id="toast"></div>
 
+<!-- ── Guide Modal ─────────────────────────────────────────────────────────── -->
+<div class="guide-overlay" id="guideOverlay" onclick="if(event.target===this)closeGuide()">
+  <div class="guide-box">
+    <button class="guide-close" onclick="closeGuide()">×</button>
+    <div class="guide-title">FLOW.SCANNER</div>
+    <div class="guide-sub">0DTE options flow scanner — reads the market, finds the setups, recommends the contract</div>
+
+    <!-- What it does -->
+    <div class="guide-section">
+      <div class="guide-section-title">What This Does</div>
+      <div class="guide-note">
+        FlowScanner scans a universe of stocks and ETFs every time you hit <b>▶ SCAN</b>. It reads price action, volume, volatility, and sector momentum — then surfaces tickers that have a <b>tradeable setup</b> for that day. Enable <b>Contracts</b> and it also picks the best options contract (strike, expiry, delta) for each signal. Think of it as your morning prep tool: run it before the open, see what's setting up, plan your trade.
+      </div>
+    </div>
+
+    <!-- How to use -->
+    <div class="guide-section">
+      <div class="guide-section-title">How To Use It</div>
+      <div class="guide-grid">
+        <div class="guide-item">
+          <div class="gi-key">1. Hit ▶ SCAN</div>
+          <div class="gi-val">Leave the ticker box blank to scan the full default universe (~55 tickers). Or type specific tickers like <b>NVDA AMD TSLA</b>.</div>
+        </div>
+        <div class="guide-item">
+          <div class="gi-key">2. Enable Contracts</div>
+          <div class="gi-val">Check the <b>Contracts</b> box before scanning. It fetches live options chains and recommends a specific strike + expiry for each signal.</div>
+        </div>
+        <div class="guide-item">
+          <div class="gi-key">3. Read the table</div>
+          <div class="gi-val">Grade A/B tickers are the strongest setups. Click any row to expand it — you'll see the contract detail, key levels, and signal breakdown.</div>
+        </div>
+        <div class="guide-item">
+          <div class="gi-key">4. Check sector heat</div>
+          <div class="gi-val">The colored tiles at the top show which sectors are moving. Trade <b>with</b> the hot sectors — avoid fading them early in the day.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Column guide -->
+    <div class="guide-section">
+      <div class="guide-section-title">Column Reference</div>
+      <div class="guide-grid">
+        <div class="guide-item">
+          <div class="gi-key">Grade (A / B / C / D)</div>
+          <div class="gi-val">Overall signal quality. <b>A</b> = all systems go. <b>B</b> = solid setup, minor caveat. <b>C</b> = weak. <b>D</b> = skip it.</div>
+        </div>
+        <div class="guide-item">
+          <div class="gi-key">Setup (badges)</div>
+          <div class="gi-val">The pattern detected — see Signals section below for what each one means.</div>
+        </div>
+        <div class="guide-item">
+          <div class="gi-key">Dir (↑ CALLS / ↓ PUTS)</div>
+          <div class="gi-val">Which direction the setup favors. <b>Calls</b> = bullish play. <b>Puts</b> = bearish play.</div>
+        </div>
+        <div class="guide-item">
+          <div class="gi-key">RelVol</div>
+          <div class="gi-val">Relative volume vs the 10-day average. <b>2x+</b> = unusually active, confirms the move. Under 1x = low conviction.</div>
+        </div>
+        <div class="guide-item">
+          <div class="gi-key">HV20 + Regime</div>
+          <div class="gi-val">20-day historical volatility. <b>Volatile (≥35%)</b> = options setups have best edge. <b>Normal (20–35%)</b> = standard. <b>Calm (&lt;20%)</b> = skip vol plays.</div>
+        </div>
+        <div class="guide-item">
+          <div class="gi-key">RS (Relative Strength)</div>
+          <div class="gi-val">How the stock is performing vs SPY today. <b>+2%+</b> = outperforming. Negative = lagging the market.</div>
+        </div>
+        <div class="guide-item">
+          <div class="gi-key">OScore (0–100)</div>
+          <div class="gi-val">Options attractiveness score. Combines RelVol, HV regime, and delta. <b>75+</b> = strong. <b>50–74</b> = decent. Under 50 = weak.</div>
+        </div>
+        <div class="guide-item">
+          <div class="gi-key">IVR (IV Rank proxy)</div>
+          <div class="gi-val">Where implied volatility sits relative to its recent range. <b>High IVR (70+)</b> = IV is expensive, favor selling. <b>Low IVR (≤30)</b> = IV is cheap, favor buying.</div>
+        </div>
+        <div class="guide-item">
+          <div class="gi-key">EM± (Expected Move)</div>
+          <div class="gi-val">The 1-sigma expected daily price move based on HV20. Example: <b>±2.1%</b> means the market expects a ~2% range today.</div>
+        </div>
+        <div class="guide-item">
+          <div class="gi-key">Contract</div>
+          <div class="gi-val">The recommended options contract — strike, expiry, and mid-price. Only shows when <b>Contracts</b> is checked. Click the row to see delta, IV, and ROI.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Signals -->
+    <div class="guide-section">
+      <div class="guide-section-title">Signal Badges Explained</div>
+      <div class="guide-grid">
+        <div class="guide-item">
+          <div class="gi-key">HV★ (HV Pure) — green bright</div>
+          <div class="gi-val">Best setup. Stock is in a <b>volatile HV regime</b> with no conflicting pattern. Backtested Sharpe ~4.9. High conviction directional play.</div>
+        </div>
+        <div class="guide-item">
+          <div class="gi-key">HV+ID — green</div>
+          <div class="gi-val"><b>High vol + Inside Day</b>. The stock coiled inside yesterday's range while volatile. Sharpe ~3.1. Wait for the breakout of today's range.</div>
+        </div>
+        <div class="guide-item">
+          <div class="gi-key">HV+G↓ — green</div>
+          <div class="gi-val"><b>High vol + Gap Down</b>. Stock gapped down — bias is for a fill back toward prior close. Sharpe ~2.9. Play calls if gap fill confirmed.</div>
+        </div>
+        <div class="guide-item">
+          <div class="gi-key">HV+G↑FADE — red bright</div>
+          <div class="gi-val"><b>High vol + Gap Up — fade it</b>. Backtests show gap-ups in volatile regimes tend to fail. Sharpe ~2.4 on the put side.</div>
+        </div>
+        <div class="guide-item">
+          <div class="gi-key">ID (Inside Day) — purple</div>
+          <div class="gi-val">Price compressed inside yesterday's range. <b>Wait</b> — don't trade until it breaks above the high or below the low. Then trade the breakout.</div>
+        </div>
+        <div class="guide-item">
+          <div class="gi-key">BK (Breakout) — cyan</div>
+          <div class="gi-val">Price broke above a key level with volume confirmation. <b>Don't fade it</b> — trade in the direction of the break.</div>
+        </div>
+        <div class="guide-item">
+          <div class="gi-key">G↑ / G↓ (Gap) — yellow/cyan</div>
+          <div class="gi-val">Stock opened with a gap from prior close. G↓ gaps tend to fill (bullish). G↑ gaps tend to stall or fade in volatile regimes.</div>
+        </div>
+        <div class="guide-item">
+          <div class="gi-key">LAG+X% — cyan</div>
+          <div class="gi-val"><b>Sector laggard</b>. The sector is running but this stock hasn't moved yet. Play the catch-up — it tends to close the gap within the session.</div>
+        </div>
+        <div class="guide-item">
+          <div class="gi-key">⚠CALM — dim</div>
+          <div class="gi-val">Warning: HV-based signals lose edge when the stock is in a calm volatility regime. Reduce size or skip.</div>
+        </div>
+        <div class="guide-item">
+          <div class="gi-key">★LVL / ★★LVL — red</div>
+          <div class="gi-val">Price is near a <b>key support or resistance level</b>. Strong levels (★★) tend to cause sharp reactions — either a bounce or a break.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Sector heat -->
+    <div class="guide-section">
+      <div class="guide-section-title">Sector Heat Map</div>
+      <div class="guide-note">
+        The colored tiles show all 10 S&P sectors sorted hottest to coldest left to right. <b>Green = sector gaining, Red = sector losing</b>. Intensity = magnitude. Use it to know the market's narrative before you trade: if Technology is bright green and Energy is red, trade with tech momentum. The ETF ticker (XLK, XLF, etc.) is shown under each name so you can pull up the chart yourself.
+      </div>
+    </div>
+
+    <!-- Filters -->
+    <div class="guide-section">
+      <div class="guide-section-title">Filters &amp; Sorting</div>
+      <div class="guide-grid">
+        <div class="guide-item">
+          <div class="gi-key">Any Setup</div>
+          <div class="gi-val">Shows everything with a signal. Good starting point for a full market read.</div>
+        </div>
+        <div class="guide-item">
+          <div class="gi-key">Grade A Only</div>
+          <div class="gi-val">Only the highest-conviction setups. Use this when you want one clean trade instead of a list.</div>
+        </div>
+        <div class="guide-item">
+          <div class="gi-key">Sector Laggards</div>
+          <div class="gi-val">Stocks whose sector is ripping but the stock itself hasn't moved. Classic catch-up trade.</div>
+        </div>
+        <div class="guide-item">
+          <div class="gi-key">Dynamic mode</div>
+          <div class="gi-val">Adds today's top movers to the scan universe. Good for catching breakouts outside the default list.</div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
 <script>
 // ── State ──────────────────────────────────────────────────────────────────────
 let scanResults  = [];
@@ -952,16 +1217,16 @@ function renderSectorStrip(sectors) {
 
 // Sector name → short display label (4–5 chars)
 const SECTOR_SHORT = {
-  "Tech":        "TECH",
-  "Financials":  "FINL",
-  "Energy":      "ENRG",
-  "Health":      "HLTH",
-  "Industrials": "INDU",
-  "Staples":     "STPL",
-  "Utilities":   "UTIL",
-  "Materials":   "MATL",
-  "CommSvcs":    "COMM",
-  "RealEstate":  "REIT",
+  "Tech":        "Technology",
+  "Financials":  "Financials",
+  "Energy":      "Energy",
+  "Health":      "Healthcare",
+  "Industrials": "Industrials",
+  "Staples":     "Cons. Staples",
+  "Utilities":   "Utilities",
+  "Materials":   "Materials",
+  "CommSvcs":    "Comm. Services",
+  "RealEstate":  "Real Estate",
 };
 
 function sectorTileStyle(chg) {
@@ -1365,6 +1630,11 @@ function escHtml(s) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
 }
+
+// ── Guide ──────────────────────────────────────────────────────────────────────
+function openGuide()  { document.getElementById('guideOverlay').classList.add('open'); }
+function closeGuide() { document.getElementById('guideOverlay').classList.remove('open'); }
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeGuide(); });
 
 // ── Init ───────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
