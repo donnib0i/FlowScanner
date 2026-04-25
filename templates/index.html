@@ -1720,15 +1720,13 @@ function escHtml(s) {
 // ── Ticker Heat Map ────────────────────────────────────────────────────────────
 
 const TICKER_GROUPS = [
-  { label: "Indices",     tickers: ["SPY", "QQQ", "IWM", "DIA"] },
-  { label: "Mega-Cap",    tickers: ["NVDA", "AAPL", "MSFT", "META", "AMZN", "GOOGL", "TSLA"] },
-  { label: "Semis",       tickers: ["AMD", "AVGO", "MU", "ARM", "INTC", "SMCI"] },
-  { label: "High-Beta",   tickers: ["COIN", "PLTR", "MSTR", "HOOD", "MARA"] },
-  { label: "Growth Tech", tickers: ["NFLX", "CRWD", "PANW", "NET", "APP", "RDDT"] },
-  { label: "Financials",  tickers: ["GS", "JPM", "BAC", "MS"] },
-  { label: "Bio/Health",  tickers: ["AMGN", "LLY", "MRNA"] },
-  { label: "Energy",      tickers: ["XOM", "CVX"] },
-  { label: "Other",       tickers: ["UBER", "GME", "AMC", "SOFI", "AFRM"] },
+  { label: "Indices",      tickers: ["SPY", "QQQ", "IWM", "DIA"] },
+  { label: "Technology",   tickers: ["NVDA", "AAPL", "MSFT", "AMD", "AVGO", "PLTR", "CRWD", "PANW"] },
+  { label: "Comm Svcs",    tickers: ["META", "GOOGL", "NFLX"] },
+  { label: "Cons Discr",   tickers: ["AMZN", "TSLA", "UBER"] },
+  { label: "Financials",   tickers: ["JPM", "GS", "BAC", "MS", "COIN"] },
+  { label: "Health Care",  tickers: ["LLY", "AMGN", "MRNA"] },
+  { label: "Energy",       tickers: ["XOM", "CVX"] },
 ];
 
 let flowData    = {};   // ticker -> {change_pct, rel_vol, grade?, direction?}
