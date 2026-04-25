@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>FlowScanner — 0DTE Options Terminal</title>
+<title>FlowDigger — 0DTE Options Terminal</title>
 <style>
 /* ── Reset & Base ─────────────────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -783,6 +783,37 @@ tr.grade-D { background: rgba(255,68,102,0.02); }
 }
 .guide-note b { color: var(--accent); font-weight: 500; }
 
+/* Steps */
+.guide-steps { display: flex; flex-direction: column; gap: 8px; }
+.gs {
+  display: flex; align-items: flex-start; gap: 12px;
+  font-size: 12px; color: var(--dim); line-height: 1.5;
+}
+.gs b { color: var(--text); }
+.gs-num {
+  width: 22px; height: 22px; border-radius: 50%; flex-shrink: 0;
+  background: rgba(0,212,255,0.12); border: 1px solid rgba(0,212,255,0.25);
+  color: var(--accent); font-size: 11px; font-weight: 700;
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--mono);
+}
+
+/* Compact rows */
+.guide-rows { display: flex; flex-direction: column; gap: 0; }
+.gr {
+  display: flex; align-items: baseline; gap: 10px;
+  padding: 7px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+  font-size: 12px;
+}
+.gr:last-child { border-bottom: none; }
+.gr-k {
+  flex-shrink: 0; width: 110px;
+  font-family: var(--mono); font-size: 11px;
+  font-weight: 700; color: var(--text);
+}
+.gr-v { color: var(--dim); line-height: 1.5; }
+
 /* ── Scrollbar styling ────────────────────────────────────────────────────── */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: var(--bg); }
@@ -821,7 +852,7 @@ tr.grade-D { background: rgba(255,68,102,0.02); }
 
 <!-- ── Header ──────────────────────────────────────────────────────────────── -->
 <div class="header">
-  <div class="logo">Flow<span>.</span>Scanner</div>
+  <div class="logo">Flow<span>.</span>Digger</div>
   <div class="header-badges">
     <div class="vix-badge" id="vixBadge">VIX —</div>
     <div class="market-badge closed" id="marketBadge">LOADING</div>
@@ -970,162 +1001,58 @@ tr.grade-D { background: rgba(255,68,102,0.02); }
 <div class="guide-overlay" id="guideOverlay" onclick="if(event.target===this)closeGuide()">
   <div class="guide-box">
     <button class="guide-close" onclick="closeGuide()">×</button>
-    <div class="guide-title">FLOW.SCANNER</div>
-    <div class="guide-sub">0DTE options flow scanner — reads the market, finds the setups, recommends the contract</div>
+    <div class="guide-title">FLOW.DIGGER</div>
+    <div class="guide-sub">Scans ~55 stocks every morning. Finds the setup. Picks the contract. You trade.</div>
 
-    <!-- What it does -->
+    <!-- Steps -->
     <div class="guide-section">
-      <div class="guide-section-title">What This Does</div>
-      <div class="guide-note">
-        FlowScanner scans a universe of stocks and ETFs every time you hit <b>▶ SCAN</b>. It reads price action, volume, volatility, and sector momentum — then surfaces tickers that have a <b>tradeable setup</b> for that day. Enable <b>Contracts</b> and it also picks the best options contract (strike, expiry, delta) for each signal. Think of it as your morning prep tool: run it before the open, see what's setting up, plan your trade.
-      </div>
-    </div>
-
-    <!-- How to use -->
-    <div class="guide-section">
-      <div class="guide-section-title">How To Use It</div>
-      <div class="guide-grid">
-        <div class="guide-item">
-          <div class="gi-key">1. Hit ▶ SCAN</div>
-          <div class="gi-val">Leave the ticker box blank to scan the full default universe (~55 tickers). Or type specific tickers like <b>NVDA AMD TSLA</b>.</div>
+      <div class="guide-section-title">How To Use</div>
+      <div class="guide-steps">
+        <div class="gs">
+          <div class="gs-num">1</div>
+          <div><b>Check the sector heat</b> — green sectors are moving. Trade with them, not against.</div>
         </div>
-        <div class="guide-item">
-          <div class="gi-key">2. Enable Contracts</div>
-          <div class="gi-val">Check the <b>Contracts</b> box before scanning. It fetches live options chains and recommends a specific strike + expiry for each signal.</div>
+        <div class="gs">
+          <div class="gs-num">2</div>
+          <div>Check <b>Contracts</b>, hit <b>▶ SCAN</b>. Leave the ticker box blank for the full universe.</div>
         </div>
-        <div class="guide-item">
-          <div class="gi-key">3. Read the table</div>
-          <div class="gi-val">Grade A/B tickers are the strongest setups. Click any row to expand it — you'll see the contract detail, key levels, and signal breakdown.</div>
-        </div>
-        <div class="guide-item">
-          <div class="gi-key">4. Check sector heat</div>
-          <div class="gi-val">The colored tiles at the top show which sectors are moving. Trade <b>with</b> the hot sectors — avoid fading them early in the day.</div>
+        <div class="gs">
+          <div class="gs-num">3</div>
+          <div>Focus on <b>Grade A/B</b> rows. Click a row to see the recommended contract + key levels.</div>
         </div>
       </div>
     </div>
 
-    <!-- Column guide -->
+    <!-- Columns -->
     <div class="guide-section">
-      <div class="guide-section-title">Column Reference</div>
-      <div class="guide-grid">
-        <div class="guide-item">
-          <div class="gi-key">Grade (A / B / C / D)</div>
-          <div class="gi-val">Overall signal quality. <b>A</b> = all systems go. <b>B</b> = solid setup, minor caveat. <b>C</b> = weak. <b>D</b> = skip it.</div>
-        </div>
-        <div class="guide-item">
-          <div class="gi-key">Setup (badges)</div>
-          <div class="gi-val">The pattern detected — see Signals section below for what each one means.</div>
-        </div>
-        <div class="guide-item">
-          <div class="gi-key">Dir (↑ CALLS / ↓ PUTS)</div>
-          <div class="gi-val">Which direction the setup favors. <b>Calls</b> = bullish play. <b>Puts</b> = bearish play.</div>
-        </div>
-        <div class="guide-item">
-          <div class="gi-key">RelVol</div>
-          <div class="gi-val">Relative volume vs the 10-day average. <b>2x+</b> = unusually active, confirms the move. Under 1x = low conviction.</div>
-        </div>
-        <div class="guide-item">
-          <div class="gi-key">HV20 + Regime</div>
-          <div class="gi-val">20-day historical volatility. <b>Volatile (≥35%)</b> = options setups have best edge. <b>Normal (20–35%)</b> = standard. <b>Calm (&lt;20%)</b> = skip vol plays.</div>
-        </div>
-        <div class="guide-item">
-          <div class="gi-key">RS (Relative Strength)</div>
-          <div class="gi-val">How the stock is performing vs SPY today. <b>+2%+</b> = outperforming. Negative = lagging the market.</div>
-        </div>
-        <div class="guide-item">
-          <div class="gi-key">OScore (0–100)</div>
-          <div class="gi-val">Options attractiveness score. Combines RelVol, HV regime, and delta. <b>75+</b> = strong. <b>50–74</b> = decent. Under 50 = weak.</div>
-        </div>
-        <div class="guide-item">
-          <div class="gi-key">IVR (IV Rank proxy)</div>
-          <div class="gi-val">Where implied volatility sits relative to its recent range. <b>High IVR (70+)</b> = IV is expensive, favor selling. <b>Low IVR (≤30)</b> = IV is cheap, favor buying.</div>
-        </div>
-        <div class="guide-item">
-          <div class="gi-key">EM± (Expected Move)</div>
-          <div class="gi-val">The 1-sigma expected daily price move based on HV20. Example: <b>±2.1%</b> means the market expects a ~2% range today.</div>
-        </div>
-        <div class="guide-item">
-          <div class="gi-key">Contract</div>
-          <div class="gi-val">The recommended options contract — strike, expiry, and mid-price. Only shows when <b>Contracts</b> is checked. Click the row to see delta, IV, and ROI.</div>
-        </div>
+      <div class="guide-section-title">What The Columns Mean</div>
+      <div class="guide-rows">
+        <div class="gr"><span class="gr-k">Grade A→D</span><span class="gr-v">Signal quality. A = strong, D = skip.</span></div>
+        <div class="gr"><span class="gr-k">Dir</span><span class="gr-v">↑ CALLS = buy calls (bullish) · ↓ PUTS = buy puts (bearish)</span></div>
+        <div class="gr"><span class="gr-k">RelVol</span><span class="gr-v">Volume vs normal. 2x+ = real move. Under 1x = low conviction.</span></div>
+        <div class="gr"><span class="gr-k">HV20</span><span class="gr-v">Volatility level. <span style="color:var(--neg)">VOLATILE</span> = best edge · <span style="color:var(--warn)">NORMAL</span> = ok · <span style="color:var(--dim)">CALM</span> = skip vol plays</span></div>
+        <div class="gr"><span class="gr-k">RS</span><span class="gr-v">Stock vs SPY today. +2%+ = outperforming · negative = lagging</span></div>
+        <div class="gr"><span class="gr-k">OScore</span><span class="gr-v">Options score 0–100. 75+ = strong · 50–74 = ok · under 50 = weak</span></div>
+        <div class="gr"><span class="gr-k">IVR</span><span class="gr-v">Is IV cheap or expensive? 70+ = expensive · 30 or less = cheap, good to buy</span></div>
+        <div class="gr"><span class="gr-k">EM±</span><span class="gr-v">Expected daily move. ±2% means the market expects a ~2% range today.</span></div>
+        <div class="gr"><span class="gr-k">Contract</span><span class="gr-v">Recommended options contract. Click the row to see delta, IV, strike, price.</span></div>
       </div>
     </div>
 
     <!-- Signals -->
     <div class="guide-section">
-      <div class="guide-section-title">Signal Badges Explained</div>
-      <div class="guide-grid">
-        <div class="guide-item">
-          <div class="gi-key">HV★ (HV Pure) — green bright</div>
-          <div class="gi-val">Best setup. Stock is in a <b>volatile HV regime</b> with no conflicting pattern. Backtested Sharpe ~4.9. High conviction directional play.</div>
-        </div>
-        <div class="guide-item">
-          <div class="gi-key">HV+ID — green</div>
-          <div class="gi-val"><b>High vol + Inside Day</b>. The stock coiled inside yesterday's range while volatile. Sharpe ~3.1. Wait for the breakout of today's range.</div>
-        </div>
-        <div class="guide-item">
-          <div class="gi-key">HV+G↓ — green</div>
-          <div class="gi-val"><b>High vol + Gap Down</b>. Stock gapped down — bias is for a fill back toward prior close. Sharpe ~2.9. Play calls if gap fill confirmed.</div>
-        </div>
-        <div class="guide-item">
-          <div class="gi-key">HV+G↑FADE — red bright</div>
-          <div class="gi-val"><b>High vol + Gap Up — fade it</b>. Backtests show gap-ups in volatile regimes tend to fail. Sharpe ~2.4 on the put side.</div>
-        </div>
-        <div class="guide-item">
-          <div class="gi-key">ID (Inside Day) — purple</div>
-          <div class="gi-val">Price compressed inside yesterday's range. <b>Wait</b> — don't trade until it breaks above the high or below the low. Then trade the breakout.</div>
-        </div>
-        <div class="guide-item">
-          <div class="gi-key">BK (Breakout) — cyan</div>
-          <div class="gi-val">Price broke above a key level with volume confirmation. <b>Don't fade it</b> — trade in the direction of the break.</div>
-        </div>
-        <div class="guide-item">
-          <div class="gi-key">G↑ / G↓ (Gap) — yellow/cyan</div>
-          <div class="gi-val">Stock opened with a gap from prior close. G↓ gaps tend to fill (bullish). G↑ gaps tend to stall or fade in volatile regimes.</div>
-        </div>
-        <div class="guide-item">
-          <div class="gi-key">LAG+X% — cyan</div>
-          <div class="gi-val"><b>Sector laggard</b>. The sector is running but this stock hasn't moved yet. Play the catch-up — it tends to close the gap within the session.</div>
-        </div>
-        <div class="guide-item">
-          <div class="gi-key">⚠CALM — dim</div>
-          <div class="gi-val">Warning: HV-based signals lose edge when the stock is in a calm volatility regime. Reduce size or skip.</div>
-        </div>
-        <div class="guide-item">
-          <div class="gi-key">★LVL / ★★LVL — red</div>
-          <div class="gi-val">Price is near a <b>key support or resistance level</b>. Strong levels (★★) tend to cause sharp reactions — either a bounce or a break.</div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Sector heat -->
-    <div class="guide-section">
-      <div class="guide-section-title">Sector Heat Map</div>
-      <div class="guide-note">
-        The colored tiles show all 10 S&P sectors sorted hottest to coldest left to right. <b>Green = sector gaining, Red = sector losing</b>. Intensity = magnitude. Use it to know the market's narrative before you trade: if Technology is bright green and Energy is red, trade with tech momentum. The ETF ticker (XLK, XLF, etc.) is shown under each name so you can pull up the chart yourself.
-      </div>
-    </div>
-
-    <!-- Filters -->
-    <div class="guide-section">
-      <div class="guide-section-title">Filters &amp; Sorting</div>
-      <div class="guide-grid">
-        <div class="guide-item">
-          <div class="gi-key">Any Setup</div>
-          <div class="gi-val">Shows everything with a signal. Good starting point for a full market read.</div>
-        </div>
-        <div class="guide-item">
-          <div class="gi-key">Grade A Only</div>
-          <div class="gi-val">Only the highest-conviction setups. Use this when you want one clean trade instead of a list.</div>
-        </div>
-        <div class="guide-item">
-          <div class="gi-key">Sector Laggards</div>
-          <div class="gi-val">Stocks whose sector is ripping but the stock itself hasn't moved. Classic catch-up trade.</div>
-        </div>
-        <div class="guide-item">
-          <div class="gi-key">Dynamic mode</div>
-          <div class="gi-val">Adds today's top movers to the scan universe. Good for catching breakouts outside the default list.</div>
-        </div>
+      <div class="guide-section-title">Signal Badges</div>
+      <div class="guide-rows">
+        <div class="gr"><span class="gr-k badge badge-green-bright">HV★</span><span class="gr-v">Best setup. High volatility, clean signal. High conviction play.</span></div>
+        <div class="gr"><span class="gr-k badge badge-green">HV+ID</span><span class="gr-v">High vol + price coiled inside yesterday's range. Wait for the breakout, then trade it.</span></div>
+        <div class="gr"><span class="gr-k badge badge-green">HV+G↓</span><span class="gr-v">High vol + gapped down. Bias = calls, price tends to fill the gap back up.</span></div>
+        <div class="gr"><span class="gr-k badge badge-red-bright">HV+G↑FADE</span><span class="gr-v">High vol + gapped up. Fade it — puts. Gap-ups in volatile stocks tend to reverse.</span></div>
+        <div class="gr"><span class="gr-k badge badge-purple">ID</span><span class="gr-v">Inside Day. Price is coiling. Don't trade yet — wait for it to break above/below yesterday's range.</span></div>
+        <div class="gr"><span class="gr-k badge badge-cyan">BK</span><span class="gr-v">Breakout with volume. Trade with it, don't fade.</span></div>
+        <div class="gr"><span class="gr-k badge badge-cyan">LAG+X%</span><span class="gr-v">Sector is running, this stock hasn't moved yet. Catch-up play.</span></div>
+        <div class="gr"><span class="gr-k badge badge-yellow">G↑</span><span class="gr-v">Gapped up. Continuation lean, but cautious — can stall.</span></div>
+        <div class="gr"><span class="gr-k badge badge-cyan">G↓</span><span class="gr-v">Gapped down. Fill bias — stock tends to recover toward prior close.</span></div>
+        <div class="gr"><span class="gr-k badge badge-dim">⚠CALM</span><span class="gr-v">Warning: low volatility environment. Vol-based signals have no edge here. Skip or size down.</span></div>
       </div>
     </div>
 
