@@ -618,7 +618,7 @@ def _nan0(v):
 
 
 def _score_contract(row: pd.Series, S: float, T: float, direction: str,
-                    target_delta: float = 0.45) -> float:
+                    target_delta: float = 0.45, dte_mode: str = "0dte") -> float:
     try:
         K     = float(row["strike"])
         iv    = _nan0(row.get("impliedVolatility", 0.3)) or 0.3
@@ -669,23 +669,40 @@ def _score_contract(row: pd.Series, S: float, T: float, direction: str,
         voi_score    = min(1.0, math.log10(max(vol_oi_ratio, 1.0)) / math.log10(50))
         delta_score  = max(0.0, 1.0 - abs(delta - target_delta) / 0.15)
         liq_score    = min(1.0, math.log10(max(oi + cvol + 1, 1)) / 5.5)
+        # Soft OI penalty — thin contracts still score, just lower
+        if oi < 200 and cvol < 100:
+            liq_score *= 0.75
+        elif oi < 500 and cvol < 200:
+            liq_score *= 0.88
         spread_score = max(0.0, 1.0 - spread_pct * 2.5)
 
         # Soft penalty for expensive contracts (>$10 mid) — still ranked, just lower priority
         price_penalty = 1.0 if mid <= 10.0 else max(0.6, 1.0 - (mid - 10.0) / 40.0)
 
-        # ROI is the primary rank signal; delta/liq keep us from chasing worthless lotto contracts
-        return (roi_score * 35 + delta_score * 25 + liq_score * 22 + spread_score * 10 + voi_score * 8) * stale_penalty * price_penalty
+        # Strike gravity — round number strikes attract institutional OI (gamma levels)
+        # Strikes at $5 increments are the market's focal points for 0DTE hedging
+        if K % 50 == 0:
+            strike_gravity = 1.08
+        elif K % 25 == 0:
+            strike_gravity = 1.05
+        elif K % 10 == 0:
+            strike_gravity = 1.03
+        elif K % 5 == 0:
+            strike_gravity = 1.01
+        else:
+            strike_gravity = 1.0
+
+        return (roi_score * 26 + delta_score * 20 + liq_score * 34 + spread_score * 10 + voi_score * 10) * stale_penalty * price_penalty * strike_gravity
     except Exception:
         return -1.0
 
 
 def get_best_contract(ticker: str, direction: str, price: float,
                       vix: float = -1.0, top_n: int = 1,
-                      dte_type: str = "weekly") -> Optional[Dict]:
+                      dte_mode: str = "0dte") -> Optional[Dict]:
     """
     direction: "up" → calls, "down" → puts.
-    dte_type: "0dte" (today only), "weekly" (≤7 DTE), "swing" (8–60 DTE)
+    dte_mode: "0dte" (same-day only), "weekly" (2–7 DTE), "monthly" (8–45 DTE), "all" (no constraint)
     VIX is used to set the ideal delta target (high VIX → further OTM).
     Returns the contract with the best composite score or None.
     """
@@ -721,26 +738,34 @@ def get_best_contract(ticker: str, direction: str, price: float,
         min_dte = 0 if _market_open else 1
         future = [e for e in exps if dte(e) >= min_dte]
 
-        # Filter candidates by dte_type
-        if dte_type == "0dte":
+        # Filter candidates by dte_mode
+        if dte_mode == "0dte":
             cands = [e for e in future if dte(e) == 0]
             if not cands and not _market_open:
                 cands = [e for e in future if dte(e) <= 1]  # after hours: next day
-        elif dte_type == "swing":
-            cands = [e for e in future if 8 <= dte(e) <= 60]
-            if not cands:
-                cands = [e for e in future if dte(e) <= 90]
-        else:  # weekly (default)
+        elif dte_mode == "weekly":
             cands = (
-                [e for e in future if dte(e) <= 7]
+                [e for e in future if 2 <= dte(e) <= 7]
                 or [e for e in future if dte(e) <= 14]
             )
+        elif dte_mode == "monthly":
+            cands = [e for e in future if 8 <= dte(e) <= 45]
+            if not cands:
+                cands = [e for e in future if dte(e) <= 90]
+        else:  # "all" — no constraint
+            cands = list(future)
         if not cands:
             cands = list(future[:2])
         if not cands:
             cands = list(exps[:2])
 
-        target_delta = vix_delta_target(vix)
+        # Base delta target varies by DTE mode; VIX further adjusts within each mode
+        _mode_delta = {"0dte": 0.45, "weekly": 0.38, "monthly": 0.30, "all": 0.38}
+        target_delta = _mode_delta.get(dte_mode, 0.45)
+        # Apply VIX overlay only if VIX is known and moves the target further OTM
+        vix_dt = vix_delta_target(vix)
+        if vix > 0:
+            target_delta = min(target_delta, vix_dt)
         scored: List[tuple] = []   # (score, contract_dict)
 
         for exp in cands[:3]:
@@ -780,7 +805,7 @@ def get_best_contract(ticker: str, direction: str, price: float,
                 continue
 
             for _, row in df.iterrows():
-                sc = _score_contract(row, price, T, direction, target_delta)
+                sc = _score_contract(row, price, T, direction, target_delta, dte_mode)
                 if sc <= 0:
                     continue
                 K     = float(row["strike"])
@@ -818,7 +843,8 @@ def get_best_contract(ticker: str, direction: str, price: float,
                     "roi":    roi_pct,    # expected % ROI at 1-sigma move
                 }))
 
-        scored.sort(key=lambda x: x[0], reverse=True)
+        # Sort by score descending; tiebreak by OI descending (contracts within 3 pts prefer higher OI)
+        scored.sort(key=lambda x: (-x[0], -x[1].get("oi", 0)))
         top = [c for _, c in scored[:top_n]]
         if not top:
             return None
@@ -1853,10 +1879,12 @@ def scan_tickers(tickers: List[str], show_progress: bool = True) -> List[Dict]:
     return results
 
 
-def enrich_contracts(results: List[Dict], top_n: int = 20, vix: float = -1.0) -> None:
+def enrich_contracts(results: List[Dict], top_n: int = 20, vix: float = -1.0,
+                     dte_mode: str = "0dte") -> None:
     """
     Fetch options chains for the top-N tickers by setup quality.
     Populates result['contract'] in place. VIX adjusts delta target.
+    dte_mode: "0dte" | "weekly" | "monthly" | "all"
     """
     ranked = sorted(
         [r for r in results if r["gap_flag"] or r["inside_day"] or r["high_vol"] or r.get("breakout")],
@@ -1872,7 +1900,8 @@ def enrich_contracts(results: List[Dict], top_n: int = 20, vix: float = -1.0) ->
     for i, r in enumerate(ranked, 1):
         sys.stdout.write(f"\r  Options [{i}/{len(ranked)}] {Fore.CYAN}{r['ticker']:<6}{Style.RESET_ALL}  ")
         sys.stdout.flush()
-        r["contract"] = get_best_contract(r["ticker"], r["direction"], r["price"], vix=vix)
+        r["contract"] = get_best_contract(r["ticker"], r["direction"], r["price"], vix=vix,
+                                          dte_mode=dte_mode)
         time.sleep(0.15)
     sys.stdout.write("\r" + " " * 55 + "\r")
     sys.stdout.flush()
