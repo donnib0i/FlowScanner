@@ -243,6 +243,119 @@ html, body {
   .shm-tile .st-etf { display: none; }
 }
 
+/* ── Ticker Flow Heat Map ─────────────────────────────────────────────────── */
+.ticker-heatmap {
+  padding: 6px 20px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg2);
+}
+
+.thm-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 7px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.thm-header:hover .shm-label { color: var(--accent2); }
+
+.thm-toggle {
+  font-size: 9px;
+  font-family: var(--mono);
+  color: var(--muted);
+  letter-spacing: 1px;
+}
+
+.thm-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.thm-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.thm-group-label {
+  font-size: 9px;
+  font-family: var(--mono);
+  color: var(--muted);
+  width: 68px;
+  flex-shrink: 0;
+  text-align: right;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+}
+
+.thm-tiles {
+  display: flex;
+  gap: 3px;
+  flex-wrap: wrap;
+}
+
+.thm-tile {
+  border-radius: 4px;
+  padding: 4px 6px 3px;
+  text-align: center;
+  cursor: default;
+  border: 1px solid transparent;
+  transition: transform 0.1s, box-shadow 0.1s, border-color 0.1s;
+  min-width: 40px;
+  position: relative;
+}
+
+.thm-tile:hover {
+  border-color: rgba(255,255,255,0.18) !important;
+  transform: translateY(-1px);
+  box-shadow: 0 3px 10px rgba(0,0,0,0.4);
+  z-index: 2;
+}
+
+.thm-tile .tt-sym {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.thm-tile .tt-chg {
+  font-family: var(--mono);
+  font-size: 9px;
+  line-height: 1.3;
+  opacity: 0.8;
+  margin-top: 1px;
+}
+
+.thm-tile .tt-vol {
+  font-family: var(--mono);
+  font-size: 8px;
+  opacity: 0.55;
+  min-height: 10px;
+}
+
+/* Grade dot in top-right corner after scan */
+.thm-tile .tt-grade {
+  position: absolute;
+  top: 2px;
+  right: 3px;
+  font-size: 7px;
+  font-weight: 900;
+  font-family: var(--mono);
+  opacity: 0.7;
+  line-height: 1;
+}
+
+@media (max-width: 700px) {
+  .thm-group-label { width: 48px; font-size: 8px; }
+  .thm-tile { min-width: 34px; padding: 3px 4px 2px; }
+  .thm-tile .tt-sym { font-size: 9px; }
+  .thm-tile .tt-chg, .thm-tile .tt-vol { font-size: 8px; }
+}
+
 /* ── Controls ─────────────────────────────────────────────────────────────── */
 .controls {
   padding: 12px 20px;
@@ -905,6 +1018,32 @@ tr.grade-D { background: rgba(255,112,144,0.02); }
   </div>
 </div>
 
+<!-- ── Ticker Flow Heat Map ──────────────────────────────────────────────────── -->
+<div class="ticker-heatmap" id="tickerHeatmap">
+  <div class="thm-header" onclick="toggleTickerHeatmap()">
+    <div class="shm-label">Flow Heat — Tickers</div>
+    <div id="thmLegend" style="display:flex;align-items:center;gap:14px">
+      <span style="font-size:9px;font-family:var(--mono);color:var(--muted)">intensity = relVol</span>
+      <div class="shm-legend">
+        <div class="shm-legend-bar">
+          <div class="shm-legend-swatch" style="background:rgba(255,112,144,0.42)"></div>
+          <div class="shm-legend-swatch" style="background:rgba(255,112,144,0.2)"></div>
+          <div class="shm-legend-swatch" style="background:rgba(255,255,255,0.06)"></div>
+          <div class="shm-legend-swatch" style="background:rgba(122,250,176,0.2)"></div>
+          <div class="shm-legend-swatch" style="background:rgba(122,250,176,0.42)"></div>
+        </div>
+        <span>hot vol</span>
+      </div>
+      <div class="thm-toggle" id="thmToggle">▲</div>
+    </div>
+  </div>
+  <div class="thm-body" id="thmBody">
+    <div style="color:var(--muted);font-size:11px;font-family:var(--mono);padding:2px 0 4px;">
+      Loading flow data...
+    </div>
+  </div>
+</div>
+
 <!-- ── Controls ────────────────────────────────────────────────────────────── -->
 <div class="controls">
   <input type="text" id="tickersInput"
@@ -1311,6 +1450,7 @@ function handleScanMessage(msg, barEl, msgEl) {
     scanResults = msg.results || [];
     barEl.style.width = '100%';
     renderTable(scanResults);
+    updateTickerHeatMapFromScan(scanResults);
     const ts = msg.scan_time || new Date().toLocaleTimeString();
     document.getElementById('scanTime').textContent = 'Last scan: ' + ts;
   }
@@ -1577,6 +1717,126 @@ function escHtml(s) {
     .replace(/"/g, '&quot;');
 }
 
+// ── Ticker Heat Map ────────────────────────────────────────────────────────────
+
+const TICKER_GROUPS = [
+  { label: "Indices",     tickers: ["SPY", "QQQ", "IWM", "DIA"] },
+  { label: "Mega-Cap",    tickers: ["NVDA", "AAPL", "MSFT", "META", "AMZN", "GOOGL", "TSLA"] },
+  { label: "Semis",       tickers: ["AMD", "AVGO", "MU", "ARM", "INTC", "SMCI"] },
+  { label: "High-Beta",   tickers: ["COIN", "PLTR", "MSTR", "HOOD", "MARA"] },
+  { label: "Growth Tech", tickers: ["NFLX", "CRWD", "PANW", "NET", "APP", "RDDT"] },
+  { label: "Financials",  tickers: ["GS", "JPM", "BAC", "MS"] },
+  { label: "Bio/Health",  tickers: ["AMGN", "LLY", "MRNA"] },
+  { label: "Energy",      tickers: ["XOM", "CVX"] },
+  { label: "Other",       tickers: ["UBER", "GME", "AMC", "SOFI", "AFRM"] },
+];
+
+let flowData    = {};   // ticker -> {change_pct, rel_vol, grade?, direction?}
+let thmCollapsed = false;
+
+function toggleTickerHeatmap() {
+  thmCollapsed = !thmCollapsed;
+  const body = document.getElementById('thmBody');
+  const tog  = document.getElementById('thmToggle');
+  if (body) body.style.display = thmCollapsed ? 'none' : '';
+  if (tog)  tog.textContent    = thmCollapsed ? '▼' : '▲';
+}
+
+function _tickerTileStyle(chg, relVol) {
+  // Intensity 0→1 driven by relVol (0.5x = 0, 3x = 1)
+  const intensity = Math.min(Math.max((relVol - 0.5) / 2.5, 0), 1);
+  if (chg >= 0) {
+    const a = (0.05 + intensity * 0.40).toFixed(2);
+    const bord = (0.03 + intensity * 0.25).toFixed(2);
+    return {
+      bg:    `rgba(122,250,176,${a})`,
+      color: intensity > 0.40 ? 'var(--pos)' : '#6a9980',
+      border:`rgba(122,250,176,${bord})`,
+    };
+  } else {
+    const a = (0.05 + intensity * 0.40).toFixed(2);
+    const bord = (0.03 + intensity * 0.25).toFixed(2);
+    return {
+      bg:    `rgba(255,112,144,${a})`,
+      color: intensity > 0.40 ? 'var(--neg)' : '#997060',
+      border:`rgba(255,112,144,${bord})`,
+    };
+  }
+}
+
+const GRADE_COLORS = { A: 'var(--pos)', B: 'var(--warn)', C: 'var(--dim)', D: 'var(--neg)' };
+
+function renderTickerHeatMap() {
+  const body = document.getElementById('thmBody');
+  if (!body) return;
+
+  const html = TICKER_GROUPS.map(group => {
+    const tiles = group.tickers.map(sym => {
+      const d  = flowData[sym];
+      if (!d) {
+        return `<div class="thm-tile" style="background:rgba(255,255,255,0.03);border-color:rgba(255,255,255,0.05);color:var(--muted)" title="${sym}">
+          <div class="tt-sym">${sym}</div>
+          <div class="tt-chg">—</div>
+          <div class="tt-vol"></div>
+        </div>`;
+      }
+
+      const st   = _tickerTileStyle(d.change_pct, d.rel_vol);
+      const sign = d.change_pct >= 0 ? '+' : '';
+      const rvol = d.rel_vol >= 1.8 ? `${d.rel_vol.toFixed(1)}x` : '';
+      const gradeDot = d.grade
+        ? `<div class="tt-grade" style="color:${GRADE_COLORS[d.grade] || 'var(--dim)'}">${d.grade}</div>` : '';
+      const dir  = d.direction === 'up' ? '↑' : d.direction === 'down' ? '↓' : '';
+      const tip  = `${sym}${dir ? ' ' + dir : ''}: ${sign}${d.change_pct.toFixed(2)}% · ${d.rel_vol.toFixed(1)}x vol${d.grade ? ' · Grade ' + d.grade : ''}`;
+
+      return `<div class="thm-tile" style="background:${st.bg};border-color:${st.border};color:${st.color}" title="${tip}">
+        ${gradeDot}
+        <div class="tt-sym">${sym}</div>
+        <div class="tt-chg">${sign}${d.change_pct.toFixed(1)}%</div>
+        <div class="tt-vol">${rvol}</div>
+      </div>`;
+    }).join('');
+
+    return `<div class="thm-group">
+      <div class="thm-group-label">${group.label}</div>
+      <div class="thm-tiles">${tiles}</div>
+    </div>`;
+  }).join('');
+
+  body.innerHTML = html;
+}
+
+async function loadFlowData() {
+  try {
+    const r = await fetch('/api/flow');
+    const d = await r.json();
+    if (d.tickers && d.tickers.length) {
+      flowData = {};
+      for (const t of d.tickers) flowData[t.ticker] = t;
+      renderTickerHeatMap();
+    }
+  } catch(e) {
+    console.warn('Flow data failed:', e);
+    const body = document.getElementById('thmBody');
+    if (body) body.innerHTML = '<div style="color:var(--muted);font-size:11px;font-family:var(--mono)">Flow data unavailable</div>';
+  }
+}
+
+// Called after a scan completes — enriches flow tiles with grade + direction
+function updateTickerHeatMapFromScan(results) {
+  if (!results || !results.length) return;
+  for (const r of results) {
+    if (!flowData[r.ticker]) {
+      flowData[r.ticker] = { ticker: r.ticker, change_pct: r.change_pct, rel_vol: r.rel_vol };
+    }
+    flowData[r.ticker].change_pct = r.change_pct;
+    flowData[r.ticker].rel_vol    = r.rel_vol;
+    flowData[r.ticker].grade      = r.grade;
+    flowData[r.ticker].direction  = r.direction;
+  }
+  renderTickerHeatMap();
+}
+
 // ── Guide ──────────────────────────────────────────────────────────────────────
 function openGuide()  { document.getElementById('guideOverlay').classList.add('open'); }
 function closeGuide() { document.getElementById('guideOverlay').classList.remove('open'); }
@@ -1585,8 +1845,10 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') closeGuide()
 // ── Init ───────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
   loadMarketContext();
-  // Refresh market context every 60s
+  loadFlowData();
+  // Refresh market context every 60s; flow data every 5 min
   setInterval(loadMarketContext, 60_000);
+  setInterval(loadFlowData, 300_000);
 });
 </script>
 </body>

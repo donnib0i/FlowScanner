@@ -249,6 +249,63 @@ async def health():
     return {"status": "ok", "market_open": is_market_open(), "vix": vix}
 
 
+@app.get("/api/flow")
+async def flow_heatmap():
+    """Batch-fetch change% and relVol for all FAST_UNIVERSE tickers. Used by ticker heat map."""
+    loop = asyncio.get_event_loop()
+
+    def _fetch():
+        import yfinance as yf
+        import pandas as pd
+        import warnings
+        warnings.filterwarnings("ignore")
+
+        # SPX needs ^GSPC in yfinance — skip it (SPY covers it)
+        syms = [t for t in FAST_UNIVERSE if t != "SPX"]
+
+        try:
+            raw = yf.download(syms, period="5d", interval="1d", progress=False, auto_adjust=True)
+        except Exception:
+            return []
+
+        results = []
+        for sym in syms:
+            try:
+                if isinstance(raw.columns, pd.MultiIndex):
+                    close = raw["Close"][sym].dropna()
+                    vol   = raw["Volume"][sym].dropna()
+                else:
+                    close = raw["Close"].dropna()
+                    vol   = raw["Volume"].dropna()
+
+                if len(close) < 2:
+                    results.append({"ticker": sym, "change_pct": 0.0, "rel_vol": 1.0})
+                    continue
+
+                prev = float(close.iloc[-2])
+                curr = float(close.iloc[-1])
+                chg  = (curr - prev) / prev * 100 if prev > 0 else 0.0
+
+                today_vol = float(vol.iloc[-1]) if len(vol) >= 1 else 0.0
+                avg_vol   = float(vol.iloc[:-1].mean()) if len(vol) >= 2 else max(today_vol, 1.0)
+                rel_vol   = today_vol / avg_vol if avg_vol > 0 else 1.0
+
+                results.append({
+                    "ticker":     sym,
+                    "change_pct": round(chg, 2),
+                    "rel_vol":    round(min(rel_vol, 9.9), 2),
+                })
+            except Exception:
+                results.append({"ticker": sym, "change_pct": 0.0, "rel_vol": 1.0})
+
+        # Sort by rel_vol descending so hottest tickers are first
+        results.sort(key=lambda x: x["rel_vol"], reverse=True)
+        return results
+
+    data = await loop.run_in_executor(None, _fetch)
+    return JSONResponse(content={"tickers": data})
+
+
 @app.get("/api/market")
 async def market_context():
     """Returns SPY/QQQ change%, VIX, market status, and sector heat strip."""
