@@ -70,14 +70,15 @@ class BacktestConfig:
         tickers: List[str] = None,
         lookback_days: int = 60,
         signal_filter: str = "all",       # all | gap | inside | highvol | laggard
-        hold_candles: int = 1,            # how many daily bars to hold (1 = next day close)
-        delta_target: float = 0.30,       # target delta for simulated contract
+        hold_candles: int = 3,            # how many daily bars to hold (3 = 3-day hold, calibrated for 1-5 DTE swing)
+        delta_target: float = 0.35,       # target delta for simulated contract (0.35 = swing-friendly, slightly OTM)
         stop_pct: float = 0.50,           # stop at 50% loss on contract
-        target_pct: float = 1.00,         # take profit at 100% gain on contract
+        target_pct: float = 1.50,         # take profit at 150% gain on contract (swing gives more room)
         min_rel_vol: float = 1.5,         # min relative volume to qualify as "high vol" signal
         gap_threshold: float = 0.005,     # min gap % to flag (0.5%)
         vrp_multiplier: float = 1.20,     # IV = HV20 × this (vol risk premium proxy)
         spread_sim: float = 0.05,         # simulate 5% bid/ask spread on mid
+        min_dte: int = 3,                 # minimum days-to-expiry for simulated contracts (1-5 DTE swing)
     ):
         self.tickers = tickers or list(UNIVERSE[:80])  # default: first 80 for speed
         self.lookback_days = lookback_days
@@ -90,6 +91,7 @@ class BacktestConfig:
         self.gap_threshold = gap_threshold
         self.vrp_multiplier = vrp_multiplier
         self.spread_sim = spread_sim
+        self.min_dte = min_dte
 
 
 # ── Math helpers ───────────────────────────────────────────────────────────────
@@ -149,9 +151,15 @@ def detect_signals(hist: pd.DataFrame, config: BacktestConfig) -> List[Dict]:
     Run signal detection on a historical OHLCV dataframe.
     Returns one record per day where a signal fired.
 
-    Each record contains:
-      date, signal_type, direction, price (open of signal day),
-      prior_close, rel_vol, gap_pct, setup_quality
+    Signals detected:
+      gap_up / gap_down   — momentum follow (data-confirmed)
+      inside / double_inside — compression setups
+      highvol             — unusual volume (relative to 20-day avg)
+      breakout            — close above prior high / below prior low with volume
+      trend               — strong-bodied directional day (tightened thresholds)
+      unfilled_gap        — price approaching an open gap zone (gap magnet)
+      vwap_reclaim        — price reclaims rolling MVWAP after closing below it
+      a_plus              — Dante's A+ confluence: inside + gap target + vol + EMA cloud + breakout
     """
     if len(hist) < 30:
         return []
@@ -164,9 +172,26 @@ def detect_signals(hist: pd.DataFrame, config: BacktestConfig) -> List[Dict]:
     volumes = hist["Volume"].values.astype(float)
     dates   = hist.index
 
+    close_pd = pd.Series(closes)
+    high_pd  = pd.Series(highs)
+    low_pd   = pd.Series(lows)
+    vol_pd   = pd.Series(volumes)
+
     # Rolling 20-day avg volume for relative volume
-    vol_series = pd.Series(volumes)
-    avg_vol_20 = vol_series.rolling(20).mean().values
+    avg_vol_20 = vol_pd.rolling(20).mean().values
+
+    # ── Ripster EMA Clouds (daily) ──────────────────────────────────────────
+    # Fast cloud: EMA(9)  — short-term momentum
+    # Medium cloud: EMA(34) — intermediate trend
+    # Trend filter: EMA(200) — macro direction
+    ema9_v   = close_pd.ewm(span=9,   adjust=False).mean().values
+    ema34_v  = close_pd.ewm(span=34,  adjust=False).mean().values
+    ema200_v = close_pd.ewm(span=200, adjust=False).mean().values
+
+    # Rolling MVWAP: volume-weighted average price, 20-bar window
+    # Proxy for daily VWAP drift — "above MVWAP" = institutional support
+    typical  = (high_pd + low_pd + close_pd) / 3
+    rvwap_v  = ((typical * vol_pd).rolling(20).sum() / vol_pd.rolling(20).sum()).values
 
     for i in range(20, len(hist) - 1):  # need at least 1 bar ahead for forward return
         price      = closes[i]
@@ -181,11 +206,31 @@ def detect_signals(hist: pd.DataFrame, config: BacktestConfig) -> List[Dict]:
         directions   = []
         setup_q      = 0.0
 
+        # ── EMA Cloud + VWAP state ──────────────────────────────────────────
+        e9   = float(ema9_v[i])
+        e34  = float(ema34_v[i])
+        e200 = float(ema200_v[i])
+        e34_prev3 = float(ema34_v[max(0, i - 3)])
+
+        vwap      = float(rvwap_v[i]) if not np.isnan(rvwap_v[i]) else None
+        vwap_prev = float(rvwap_v[i - 1]) if i > 0 and not np.isnan(rvwap_v[i - 1]) else None
+
+        # Ripster cloud bullish: price > EMA9 > EMA34, EMA34 sloping up
+        ema_bull = bool(price > e9 and e9 > e34 and e34 > e34_prev3)
+        ema_bear = bool(price < e9 and e9 < e34 and e34 < e34_prev3)
+        above_vwap = bool(price > vwap) if vwap is not None else None
+
+        # VWAP reclaim: yesterday's close was below MVWAP, today closed above
+        vwap_reclaim_flag = bool(
+            vwap is not None and vwap_prev is not None and
+            closes[i - 1] < vwap_prev and price >= vwap
+        )
+
         # ── Gap signal ──────────────────────────────────────────────────────
         if abs(gap_pct) >= config.gap_threshold:
             sig = "gap_up" if gap_pct > 0 else "gap_down"
-            # Gap fill bias: fade the gap → gap up = expect down fill, gap down = expect up fill
-            direction = "down" if gap_pct > 0 else "up"
+            # Momentum follow: 57.6% of gap_ups continue up, 50.6% of gap_downs continue down
+            direction = "up" if gap_pct > 0 else "down"
             signal_types.append(sig)
             directions.append(direction)
             setup_q = max(setup_q, min(1.0, abs(gap_pct) / 0.03))
@@ -195,7 +240,6 @@ def detect_signals(hist: pd.DataFrame, config: BacktestConfig) -> List[Dict]:
         prev_low  = lows[i - 1]
         is_inside = highs[i] <= prev_high and lows[i] >= prev_low
         if is_inside:
-            # Inside day: direction = whichever way today closed relative to midpoint
             mid = (prev_high + prev_low) / 2
             direction = "up" if closes[i] > mid else "down"
             signal_types.append("inside")
@@ -203,15 +247,17 @@ def detect_signals(hist: pd.DataFrame, config: BacktestConfig) -> List[Dict]:
             setup_q = max(setup_q, 0.6)
 
         # ── Double inside bar ───────────────────────────────────────────────
+        is_double_inside = False
         if i >= 2:
-            prev2_high = highs[i - 2]
-            prev2_low  = lows[i - 2]
-            prev_inside = highs[i-1] <= prev2_high and lows[i-1] >= prev2_low
+            prev2_high  = highs[i - 2]
+            prev2_low   = lows[i - 2]
+            prev_inside = highs[i - 1] <= prev2_high and lows[i - 1] >= prev2_low
             if is_inside and prev_inside:
+                is_double_inside = True
                 signal_types.append("double_inside")
                 direction = "up" if closes[i] > (prev2_high + prev2_low) / 2 else "down"
                 directions.append(direction)
-                setup_q = max(setup_q, 0.75)
+                setup_q = max(setup_q, 0.80)
 
         # ── High relative volume ────────────────────────────────────────────
         if rel_vol >= config.min_rel_vol:
@@ -220,7 +266,7 @@ def detect_signals(hist: pd.DataFrame, config: BacktestConfig) -> List[Dict]:
             directions.append(direction)
             setup_q = max(setup_q, min(1.0, (rel_vol - 1.5) / 3.0 + 0.4))
 
-        # ── Breakout: price closed above prior day high (bull) or below prior day low (bear) ──
+        # ── Breakout: close above prior high or below prior low with volume ─
         if not is_inside and rel_vol > 1.2:
             if closes[i] > prev_high:
                 signal_types.append("breakout")
@@ -231,19 +277,16 @@ def detect_signals(hist: pd.DataFrame, config: BacktestConfig) -> List[Dict]:
                 directions.append("down")
                 setup_q = max(setup_q, min(1.0, (rel_vol - 1.0) / 3.0 + 0.5))
 
-        # ── Trend day (strong directional close) ───────────────────────────
-        body_pct = abs(closes[i] - open_p) / open_p if open_p > 0 else 0
+        # ── Trend day (strong bodied close, tightened thresholds) ──────────
+        body_pct  = abs(closes[i] - open_p) / open_p if open_p > 0 else 0
         range_pct = (highs[i] - lows[i]) / lows[i] if lows[i] > 0 else 0
-        if body_pct > 0.015 and body_pct / max(range_pct, 0.001) > 0.65:
+        if body_pct > 0.025 and body_pct / max(range_pct, 0.001) > 0.70 and rel_vol >= 1.3:
             direction = "up" if closes[i] > open_p else "down"
             signal_types.append("trend")
             directions.append(direction)
             setup_q = max(setup_q, min(1.0, body_pct / 0.04))
 
-        # ── Unfilled gap approach (Dante's gap play model) ──────────────────
-        # Scan all prior gaps that have NOT been filled as of bar i.
-        # Signal fires when price is within 3% of an open gap zone — trade TOWARD it.
-        # This tests the "open gap as magnet/target" thesis directly.
+        # ── Unfilled gap approach (gap as magnet) ──────────────────────────
         gap_targets = []
         for j in range(1, i):
             pc  = closes[j - 1]
@@ -253,28 +296,83 @@ def detect_signals(hist: pd.DataFrame, config: BacktestConfig) -> List[Dict]:
             gpct = (op - pc) / pc * 100
             if abs(gpct) < 0.25 or abs(gpct) > 8.0:
                 continue
-            if gpct > 0:   # gap up zone: [pc, op]
+            if gpct > 0:
                 gap_top, gap_bot = float(op), float(pc)
                 filled = any(float(lows[k]) <= pc for k in range(j + 1, i + 1))
-            else:           # gap down zone: [op, pc]
+            else:
                 gap_top, gap_bot = float(pc), float(op)
                 filled = any(float(highs[k]) >= pc for k in range(j + 1, i + 1))
             if not filled:
                 gap_mid  = (gap_top + gap_bot) / 2
                 dist_pct = (gap_mid - price) / price * 100 if price > 0 else 999
-                if abs(dist_pct) <= 3.0:   # within 3% — active approach
+                if abs(dist_pct) <= 3.0:
                     dtf = "up" if gap_mid > price else "down"
                     gap_targets.append({"mid": gap_mid, "dist_pct": dist_pct, "dtf": dtf, "bars_ago": i - j})
 
         if gap_targets:
-            # Use nearest gap as the target
             nearest = min(gap_targets, key=lambda g: abs(g["dist_pct"]))
             signal_types.append("unfilled_gap")
             directions.append(nearest["dtf"])
-            # Setup quality: closer gap = stronger pull
             adist = abs(nearest["dist_pct"])
             sq_gap = 0.80 if adist <= 0.5 else 0.70 if adist <= 1.5 else 0.60
             setup_q = max(setup_q, sq_gap)
+
+        # ── VWAP reclaim signal ─────────────────────────────────────────────
+        if vwap_reclaim_flag and "vwap_reclaim" not in signal_types:
+            signal_types.append("vwap_reclaim")
+            directions.append("up")
+            setup_q = max(setup_q, 0.65)
+
+        # ── A+ Confluence Scorer ────────────────────────────────────────────
+        # Dante's setup: inside/double-inside (compression) + unfilled gap target above
+        # + volume/flow confirmation + EMA cloud aligned + breakout of key level
+        aplus_bull = 0
+        aplus_bear = 0
+
+        # 1. Compression — inside day or double inside (flag/pennant coiling)
+        if is_inside or is_double_inside:
+            aplus_bull += 1
+            aplus_bear += 1
+
+        # 2. Gap magnet target in direction (unfilled gap above = target for longs)
+        gap_above = [g for g in gap_targets if g["dtf"] == "up"]
+        gap_below = [g for g in gap_targets if g["dtf"] == "down"]
+        if gap_above:
+            aplus_bull += 1
+        if gap_below:
+            aplus_bear += 1
+
+        # 3. Volume / flow confirmation (institutional money coming in)
+        if rel_vol >= 1.5:
+            aplus_bull += 1
+            aplus_bear += 1
+
+        # 4. Ripster EMA cloud aligned in direction
+        if ema_bull:
+            aplus_bull += 1
+        if ema_bear:
+            aplus_bear += 1
+
+        # 5. Breakout of key level: prior day high/low OR VWAP cross
+        vwap_cross_up   = bool(vwap is not None and vwap_prev is not None
+                               and closes[i - 1] <= vwap_prev and price > vwap)
+        vwap_cross_down = bool(vwap is not None and vwap_prev is not None
+                               and closes[i - 1] >= vwap_prev and price < vwap)
+        if closes[i] > prev_high or vwap_cross_up:
+            aplus_bull += 1
+        if closes[i] < prev_low or vwap_cross_down:
+            aplus_bear += 1
+
+        aplus_score = max(aplus_bull, aplus_bear)
+
+        if aplus_bull >= 4 and "a_plus" not in signal_types:
+            signal_types.append("a_plus")
+            directions.append("up")
+            setup_q = max(setup_q, 0.80 + min(0.20, (aplus_bull - 4) * 0.10))
+        elif aplus_bear >= 4 and "a_plus" not in signal_types:
+            signal_types.append("a_plus")
+            directions.append("down")
+            setup_q = max(setup_q, 0.80 + min(0.20, (aplus_bear - 4) * 0.10))
 
         if not signal_types:
             continue
@@ -282,9 +380,11 @@ def detect_signals(hist: pd.DataFrame, config: BacktestConfig) -> List[Dict]:
         # Filter by signal type if requested
         if config.signal_filter != "all":
             mapped = config.signal_filter
-            # allow "gap" to match both today's gap AND unfilled gap approach
             if mapped == "gap":
                 if not any(s in ("gap_up", "gap_down", "unfilled_gap") for s in signal_types):
+                    continue
+            elif mapped == "a_plus":
+                if "a_plus" not in signal_types:
                     continue
             elif mapped not in signal_types:
                 continue
@@ -295,16 +395,18 @@ def detect_signals(hist: pd.DataFrame, config: BacktestConfig) -> List[Dict]:
         direction = "up" if up_votes >= dn_votes else "down"
 
         # Historical vol for IV proxy
-        hv = calc_hv(hist["Close"].iloc[:i+1])
+        hv = calc_hv(hist["Close"].iloc[:i + 1])
 
-        # Primary signal label for reporting
+        # Primary signal label: A+ > unfilled_gap > others
         primary_signal = signal_types[0]
-        if "unfilled_gap" in signal_types:
-            primary_signal = "unfilled_gap"  # prioritize Dante's gap model in output
+        if "a_plus" in signal_types:
+            primary_signal = "a_plus"
+        elif "unfilled_gap" in signal_types:
+            primary_signal = "unfilled_gap"
 
         signals.append({
             "date":         dates[i].strftime("%Y-%m-%d"),
-            "signal":       primary_signal,   # alias used by API
+            "signal":       primary_signal,
             "signal_types": signal_types,
             "direction":    direction,
             "price":        round(price, 4),
@@ -314,6 +416,10 @@ def detect_signals(hist: pd.DataFrame, config: BacktestConfig) -> List[Dict]:
             "gap_pct":      round(gap_pct * 100, 3),
             "hv20":         round(hv, 4),
             "setup_q":      round(setup_q, 3),
+            "ema_bull":     ema_bull,
+            "above_vwap":   above_vwap,
+            "aplus_score":  aplus_score,
+            "vwap":         round(vwap, 2) if vwap is not None else None,
             "bar_index":    i,
         })
 
@@ -379,8 +485,11 @@ def evaluate_forward_returns(
 
         if hv > 0 and price > 1.0:
             iv  = hv * config.vrp_multiplier   # IV = HV × VRP proxy
-            T0  = config.hold_candles / 365.0
-            T1  = max(0.0, T0 - 1 / 365.0)    # time remaining at exit
+            # Use min_dte so we simulate buying options with at least min_dte days left.
+            # This avoids the 1-DTE problem where any adverse intraday tick makes the
+            # option nearly worthless — 2-DTE options retain meaningful time value at exit.
+            T0  = max(config.hold_candles, config.min_dte) / 365.0
+            T1  = max(0.0, T0 - config.hold_candles / 365.0)  # time remaining at exit
 
             # Find strike near target delta
             K = find_strike(price, dirn, config.delta_target, iv, T0)
@@ -394,11 +503,10 @@ def evaluate_forward_returns(
                 entry_price = entry_mid * (1 + config.spread_sim)  # pay the ask
                 opt_entry   = round(entry_price, 4)
 
-                # Exit price at forward date
+                # Exit price at EOD (T1 = T0 - hold period; option retains time value)
                 if T1 > 0:
                     exit_mid = bs_price(next_close, K, T1, iv, opt_type)
                 else:
-                    # At expiry: intrinsic only
                     if opt_type == "call":
                         exit_mid = max(0.0, next_close - K)
                     else:
@@ -409,22 +517,14 @@ def evaluate_forward_returns(
 
                 raw_pnl_pct = (exit_price - entry_price) / entry_price if entry_price > 0 else 0.0
 
-                # Apply stop/target rules
-                # Check if stop would have been hit (intraday adverse move)
-                if dirn == "up":
-                    adverse_price = next_low  # worst intraday price for a long call
-                else:
-                    adverse_price = next_high  # worst intraday price for a long put
-
-                adverse_mid = bs_price(adverse_price, K, T0 * 0.5, iv, opt_type)
-                adverse_pnl = (adverse_mid - entry_price) / entry_price if entry_price > 0 else 0.0
-
-                if adverse_pnl <= -config.stop_pct:
-                    # Stopped out
+                # Apply EOD stop/target rules only — no intraday adverse check.
+                # The old T0*0.5 adverse check was firing on 79.7% of trades because
+                # any small intraday move against a 1-DTE OTM option made it ~worthless.
+                # EOD-only evaluation is honest and consistent with our price data.
+                if raw_pnl_pct <= -config.stop_pct:
                     raw_pnl_pct = -config.stop_pct
                     opt_exit    = round(entry_price * (1 - config.stop_pct), 4)
                 elif raw_pnl_pct >= config.target_pct:
-                    # Target hit
                     raw_pnl_pct = config.target_pct
 
                 opt_pnl_pct = round(raw_pnl_pct * 100, 2)
@@ -763,11 +863,58 @@ def print_report(all_records: List[Dict], config: BacktestConfig) -> None:
     if any(r.get("vix") for r in all_records):
         _print_vix_breakdown(all_records)
 
+    # ── Signal combo breakdown ─────────────────────────────────────────────
+    print(f"\n{sep}\n{Fore.CYAN}  SIGNAL COMBO BREAKDOWN (sorted by direction accuracy, n≥8){Style.RESET_ALL}\n")
+    from collections import defaultdict as _dd
+    combo_map: Dict = _dd(lambda: {"wins": 0, "total": 0, "pnl": 0.0})
+    for r in all_records:
+        stypes = r.get("signal_types", [])
+        combo  = "+".join(sorted(stypes)) if stypes else r.get("signal", "?")
+        dc     = r.get("direction_correct", 0)
+        pnl    = r.get("opt_pnl_pct") or 0.0
+        combo_map[combo]["total"] += 1
+        combo_map[combo]["pnl"]   += pnl
+        if dc: combo_map[combo]["wins"] += 1
+    combo_rows = []
+    for combo, s in sorted(combo_map.items(),
+                            key=lambda x: (x[1]["wins"] / x[1]["total"] if x[1]["total"] else 0),
+                            reverse=True):
+        if s["total"] < 8:
+            continue
+        wr  = s["wins"] / s["total"]
+        avg = s["pnl"] / s["total"]
+        wr_c  = Fore.GREEN if wr >= 0.70 else (Fore.YELLOW if wr >= 0.55 else Fore.RED)
+        avg_c = Fore.GREEN if avg > 0 else Fore.RED
+        combo_rows.append([
+            combo[:44],
+            s["total"],
+            f"{wr_c}{wr*100:.1f}%{Style.RESET_ALL}",
+            f"{avg_c}{avg:+.1f}%{Style.RESET_ALL}",
+        ])
+    print("  " + tabulate(combo_rows,
+                           headers=["Signal Combo", "N", "Dir WR%", "Avg Opt P&L"],
+                           tablefmt="simple").replace("\n", "\n  "))
+
     # ── Options simulation summary ─────────────────────────────────────────
     opt_records = [r for r in all_records if r.get("opt_pnl_pct") is not None]
     if opt_records:
         print(f"\n{sep}\n{Fore.YELLOW}  OPTIONS SIMULATION SUMMARY{Style.RESET_ALL}\n")
         m = calc_metrics(opt_records, "Options")
+
+        # Real-world adjusted P&L (add 20% to entry cost, 20% to exit spread)
+        rw_pnls = []
+        for r in opt_records:
+            entry = r.get("opt_entry", 0) or 0
+            pnl_pct = r.get("opt_pnl_pct", 0) or 0
+            if entry > 0:
+                exit_price  = entry * (1 + pnl_pct / 100)
+                real_entry  = entry * 1.20
+                real_exit   = exit_price * 0.80
+                rw_pnls.append((real_exit - real_entry) / real_entry * 100)
+        rw_avg   = sum(rw_pnls) / len(rw_pnls) if rw_pnls else 0.0
+        rw_wins  = sum(1 for p in rw_pnls if p > 0)
+        rw_wr    = rw_wins / len(rw_pnls) if rw_pnls else 0.0
+
         print(f"""
   Contracts simulated:  {m.get('opt_count', 0)}
   Options win rate:     {m.get('opt_win_rate', 0)*100:.1f}%
@@ -779,9 +926,14 @@ def print_report(all_records: List[Dict], config: BacktestConfig) -> None:
   Avg entry delta:      {m.get('opt_avg_delta', 0):.3f}
   Avg IV used:          {m.get('opt_avg_iv', 0)*100:.1f}%
 
-  REMINDER: These are BS model estimates using HV×1.2 as IV proxy.
-  Real IV, spreads, and slippage will differ. Add ~20% to entry cost
-  and ~20% to exit spread for a more conservative real-world estimate.
+  REAL-WORLD ADJUSTED (entry ×1.20, exit ×0.80 — simulates spread + slippage):
+  {Fore.YELLOW}  Adjusted win rate:    {rw_wr*100:.1f}%  (vs {m.get('opt_win_rate',0)*100:.1f}% raw){Style.RESET_ALL}
+  {Fore.RED}  Adjusted avg P&L:     {rw_avg:+.1f}%  (vs {m.get('opt_avg_pnl',0):+.1f}% raw){Style.RESET_ALL}
+
+  ⚠  These are BS model estimates using HV×1.2 as IV proxy.
+     Real IV, spreads, and slippage will differ.
+     Focus on DIRECTION ACCURACY (dir WR%) — that's the real edge.
+     Only trade S/A-tier combos (70%+ dir WR) to overcome spread costs.
         """)
 
     print(sep)
@@ -979,7 +1131,281 @@ def save_results(records: List[Dict], config: BacktestConfig) -> str:
         df["signal_types"] = df["signal_types"].apply(lambda x: "|".join(x) if isinstance(x, list) else x)
         df.to_csv(RESULTS_DIR / f"{stem}.csv", index=False)
 
+    # HTML dashboard
+    viz_path = generate_html_report(records, config)
+    print(f"  Viz: {viz_path}")
+
     return str(json_path)
+
+
+def generate_html_report(records: List[Dict], config: BacktestConfig) -> str:
+    """
+    Generate a live HTML dashboard from backtest results.
+    Overwrites backtest_viz.html with current run data.
+    """
+    SIG_ORDER = ["a_plus", "breakout", "highvol", "trend", "gap_up", "gap_down",
+                 "inside", "double_inside", "vwap_reclaim", "unfilled_gap"]
+
+    sig_data = []
+    for sig in SIG_ORDER:
+        recs = [r for r in records if sig in r.get("signal_types", [])]
+        if len(recs) < 3:
+            continue
+        m = calc_metrics(recs, sig)
+        sig_data.append({
+            "name":   sig,
+            "n":      m["count"],
+            "wr":     round(m.get("win_rate", 0) * 100, 1),
+            "sharpe": round(m.get("sharpe", 0), 2),
+            "pf":     round(m.get("profit_factor", 0), 2),
+            "ev":     round(m.get("expected_value", 0), 3),
+            "opt_wr": round(m.get("opt_win_rate", 0) * 100, 1) if m.get("opt_count") else None,
+            "opt_avg": round(m.get("opt_avg_pnl", 0), 1) if m.get("opt_count") else None,
+        })
+
+    # Equity curve
+    eq = [100.0]
+    for r in records:
+        eq.append(eq[-1] * (1 + r.get("signed_return_pct", 0) / 100))
+    # Downsample equity curve to max 200 points
+    step = max(1, len(eq) // 200)
+    eq_sampled = eq[::step]
+
+    # A+ vs non-A+ comparison
+    aplus   = [r for r in records if "a_plus" in r.get("signal_types", [])]
+    non_ap  = [r for r in records if "a_plus" not in r.get("signal_types", [])]
+    m_ap    = calc_metrics(aplus,  "A+")
+    m_nonap = calc_metrics(non_ap, "Non-A+")
+
+    run_at   = datetime.now().strftime("%Y-%m-%d %H:%M")
+    lookback = config.lookback_days
+    n_tickers = len(config.tickers)
+
+    sig_js   = json.dumps(sig_data)
+    eq_js    = json.dumps([round(v, 2) for v in eq_sampled])
+    aplus_js = json.dumps({
+        "aplus":  {"wr": round(m_ap.get("win_rate", 0) * 100, 1),
+                   "sharpe": round(m_ap.get("sharpe", 0), 2),
+                   "pf": round(m_ap.get("profit_factor", 0), 2),
+                   "n": m_ap.get("count", 0)},
+        "rest":   {"wr": round(m_nonap.get("win_rate", 0) * 100, 1),
+                   "sharpe": round(m_nonap.get("sharpe", 0), 2),
+                   "pf": round(m_nonap.get("profit_factor", 0), 2),
+                   "n": m_nonap.get("count", 0)},
+    })
+
+    # Top 10 setups
+    top10 = sorted(records, key=lambda r: r.get("signed_return_pct", 0), reverse=True)[:10]
+    top10_rows = "".join(f"""
+      <tr>
+        <td style="color:#22d3ee">{r['ticker']}</td>
+        <td style="color:#64748b">{r['date']}</td>
+        <td><span class="sig-badge">{', '.join(r.get('signal_types', []))}</span></td>
+        <td style="color:{'#22d3ee' if r['direction']=='up' else '#f43f5e'}">{r['direction']}</td>
+        <td style="color:{'#22d3ee' if r['direction_correct'] else '#f43f5e'}">{r['fwd_return_pct']:+.2f}%</td>
+        <td style="color:{'#22d3ee' if (r.get('opt_pnl_pct') or -1) > 0 else '#94a3b8'}">{f"{r['opt_pnl_pct']:+.1f}%" if r.get('opt_pnl_pct') is not None else "—"}</td>
+        <td style="color:#94a3b8">{r.get('rel_vol', 0):.1f}x</td>
+      </tr>""" for r in top10)
+
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>D — Quant Dashboard</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    :root {{
+      --bg: #0a0e1a; --surface: #111827; --surface2: #1a2235;
+      --border: #1e2d45; --text: #e2e8f0; --muted: #64748b;
+      --green: #22d3ee; --red: #f43f5e; --yellow: #fbbf24; --blue: #60a5fa; --purple: #a78bfa;
+    }}
+    * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+    body {{ background: var(--bg); color: var(--text); font-family: 'SF Mono', 'Fira Code', monospace; font-size: 13px; padding: 24px; }}
+    .header {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 28px; padding-bottom: 16px; border-bottom: 1px solid var(--border); }}
+    .header h1 {{ font-size: 20px; font-weight: 700; letter-spacing: 0.05em; }}
+    .header .meta {{ color: var(--muted); font-size: 11px; text-align: right; line-height: 1.8; }}
+    .grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; margin-bottom: 24px; }}
+    .grid-2 {{ display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 24px; }}
+    .card {{ background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 20px; }}
+    .card h3 {{ font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); margin-bottom: 14px; }}
+    .stat {{ font-size: 28px; font-weight: 700; }}
+    .stat-label {{ font-size: 11px; color: var(--muted); margin-top: 4px; }}
+    .green {{ color: var(--green); }} .red {{ color: var(--red); }} .yellow {{ color: var(--yellow); }}
+    .blue {{ color: var(--blue); }} .muted {{ color: var(--muted); }}
+    table {{ width: 100%; border-collapse: collapse; font-size: 12px; }}
+    th {{ color: var(--muted); text-align: left; padding: 8px 10px; font-weight: 400; font-size: 11px; border-bottom: 1px solid var(--border); }}
+    td {{ padding: 8px 10px; border-bottom: 1px solid rgba(30,45,69,0.5); }}
+    .sig-badge {{ background: var(--surface2); border: 1px solid var(--border); border-radius: 3px; padding: 2px 6px; font-size: 10px; color: var(--muted); }}
+    .aplus-badge {{ background: rgba(167,139,250,0.15); border: 1px solid rgba(167,139,250,0.4); border-radius: 3px; padding: 2px 6px; font-size: 10px; color: var(--purple); }}
+    .chart-wrap {{ position: relative; height: 220px; }}
+    .chart-wrap-lg {{ position: relative; height: 280px; }}
+    .section-title {{ font-size: 12px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin: 24px 0 12px; border-bottom: 1px solid var(--border); padding-bottom: 8px; }}
+    .aplus-compare {{ display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }}
+    .aplus-card {{ background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 18px; }}
+    .aplus-card.highlight {{ border-color: rgba(167,139,250,0.5); background: rgba(167,139,250,0.05); }}
+    .metric-row {{ display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid rgba(30,45,69,0.5); }}
+    .metric-row:last-child {{ border-bottom: none; }}
+    @media (max-width: 768px) {{ .grid-2 {{ grid-template-columns: 1fr; }} .aplus-compare {{ grid-template-columns: 1fr; }} }}
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div>
+      <h1>D — QUANT DASHBOARD</h1>
+      <div style="color:var(--muted);font-size:11px;margin-top:4px">{lookback}d lookback · {n_tickers} tickers · {len(records)} signals</div>
+    </div>
+    <div class="meta">
+      <div>Updated: {run_at}</div>
+      <div>delta={config.delta_target} · stop={int(config.stop_pct*100)}% · target={int(config.target_pct*100)}% · min_dte={config.min_dte}d</div>
+    </div>
+  </div>
+
+  <p class="section-title">A+ Setup Performance</p>
+  <div class="aplus-compare" id="apluscmp"></div>
+
+  <p class="section-title">Signal Comparison</p>
+  <div class="grid-2">
+    <div class="card">
+      <h3>Sharpe by Signal</h3>
+      <div class="chart-wrap-lg"><canvas id="sharpeChart"></canvas></div>
+    </div>
+    <div class="card">
+      <h3>Win Rate by Signal</h3>
+      <div class="chart-wrap-lg"><canvas id="wrChart"></canvas></div>
+    </div>
+  </div>
+
+  <p class="section-title">Equity Curve</p>
+  <div class="card" style="margin-bottom:24px">
+    <h3>Simulated $100 (directional returns, all signals)</h3>
+    <div class="chart-wrap-lg"><canvas id="eqChart"></canvas></div>
+  </div>
+
+  <p class="section-title">Top 10 Setups</p>
+  <div class="card" style="margin-bottom:24px">
+    <table>
+      <thead><tr><th>Ticker</th><th>Date</th><th>Signal</th><th>Dir</th><th>Fwd Ret</th><th>Opt P&L</th><th>RelVol</th></tr></thead>
+      <tbody>{top10_rows}</tbody>
+    </table>
+  </div>
+
+  <p class="section-title">Options P&L by Signal</p>
+  <div class="card">
+    <h3>Options Win Rate vs Directional Win Rate</h3>
+    <div class="chart-wrap-lg"><canvas id="optChart"></canvas></div>
+  </div>
+
+<script>
+  const SIGS = {sig_js};
+  const EQ   = {eq_js};
+  const AP   = {aplus_js};
+
+  const gridOpts = {{ color: 'rgba(30,45,69,0.8)', lineWidth: 0.5 }};
+  const tickOpts = {{ color: '#94a3b8', font: {{ size: 11, family: 'SF Mono, monospace' }} }};
+
+  // ── A+ compare cards
+  const cmp = document.getElementById('apluscmp');
+  [['A+ Setup', AP.aplus, true], ['All Other Signals', AP.rest, false]].forEach(([label, d, hl]) => {{
+    const wr_c  = d.wr  > 55 ? '#22d3ee' : d.wr  > 50 ? '#fbbf24' : '#f43f5e';
+    const sh_c  = d.sharpe > 1.5 ? '#22d3ee' : d.sharpe > 0 ? '#fbbf24' : '#f43f5e';
+    const pf_c  = d.pf > 1.5 ? '#22d3ee' : d.pf > 1.0 ? '#fbbf24' : '#f43f5e';
+    cmp.innerHTML += `
+      <div class="aplus-card ${{hl ? 'highlight' : ''}}">
+        <div style="font-size:14px;font-weight:700;margin-bottom:14px;color:${{hl ? '#a78bfa' : '#94a3b8'}}">${{label}} <span style="font-size:11px;font-weight:400;color:var(--muted)">N=${{d.n}}</span></div>
+        <div class="metric-row"><span style="color:var(--muted)">Win Rate</span><span style="color:${{wr_c}};font-weight:600">${{d.wr}}%</span></div>
+        <div class="metric-row"><span style="color:var(--muted)">Sharpe</span><span style="color:${{sh_c}};font-weight:600">${{d.sharpe}}</span></div>
+        <div class="metric-row"><span style="color:var(--muted)">Profit Factor</span><span style="color:${{pf_c}};font-weight:600">${{d.pf}}</span></div>
+      </div>`;
+  }});
+
+  // ── Sharpe bar chart
+  new Chart(document.getElementById('sharpeChart'), {{
+    type: 'bar',
+    data: {{
+      labels: SIGS.map(s => s.name),
+      datasets: [{{ label: 'Sharpe', data: SIGS.map(s => s.sharpe),
+        backgroundColor: SIGS.map(s => s.name === 'a_plus' ? 'rgba(167,139,250,0.45)' : s.sharpe >= 1.5 ? 'rgba(34,211,238,0.35)' : s.sharpe >= 0 ? 'rgba(34,211,238,0.15)' : 'rgba(244,63,94,0.25)'),
+        borderColor:     SIGS.map(s => s.name === 'a_plus' ? '#a78bfa' : s.sharpe >= 0 ? '#22d3ee' : '#f43f5e'),
+        borderWidth: 1.5, borderRadius: 4 }}]
+    }},
+    options: {{ indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+      plugins: {{ legend: {{ display: false }}, tooltip: {{ callbacks: {{ label: ctx => ` Sharpe ${{ctx.parsed.x.toFixed(2)}}` }} }} }},
+      scales: {{ x: {{ grid: gridOpts, ticks: tickOpts }}, y: {{ grid: {{ display: false }}, ticks: {{ ...tickOpts, color: '#94a3b8' }} }} }}
+    }}
+  }});
+
+  // ── Win Rate bar chart
+  new Chart(document.getElementById('wrChart'), {{
+    type: 'bar',
+    data: {{
+      labels: SIGS.map(s => s.name),
+      datasets: [{{ label: 'Win %', data: SIGS.map(s => s.wr),
+        backgroundColor: SIGS.map(s => s.name === 'a_plus' ? 'rgba(167,139,250,0.45)' : s.wr >= 55 ? 'rgba(34,211,238,0.35)' : s.wr >= 50 ? 'rgba(251,191,36,0.25)' : 'rgba(244,63,94,0.25)'),
+        borderColor:     SIGS.map(s => s.name === 'a_plus' ? '#a78bfa' : s.wr >= 55 ? '#22d3ee' : s.wr >= 50 ? '#fbbf24' : '#f43f5e'),
+        borderWidth: 1.5, borderRadius: 4 }}]
+    }},
+    options: {{ indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+      plugins: {{ legend: {{ display: false }}, tooltip: {{ callbacks: {{ label: ctx => ` ${{ctx.parsed.x.toFixed(1)}}%` }} }} }},
+      scales: {{
+        x: {{ min: 45, max: 75, grid: gridOpts, ticks: {{ ...tickOpts, callback: v => v + '%' }} }},
+        y: {{ grid: {{ display: false }}, ticks: {{ ...tickOpts, color: '#94a3b8' }} }}
+      }}
+    }}
+  }});
+
+  // ── Equity curve
+  new Chart(document.getElementById('eqChart'), {{
+    type: 'line',
+    data: {{
+      labels: EQ.map((_, i) => i),
+      datasets: [{{ label: 'Equity', data: EQ,
+        borderColor: EQ[EQ.length-1] > 100 ? '#22d3ee' : '#f43f5e',
+        backgroundColor: EQ[EQ.length-1] > 100 ? 'rgba(34,211,238,0.06)' : 'rgba(244,63,94,0.06)',
+        borderWidth: 2, pointRadius: 0, fill: true, tension: 0.2 }}]
+    }},
+    options: {{ responsive: true, maintainAspectRatio: false,
+      plugins: {{ legend: {{ display: false }},
+        tooltip: {{ callbacks: {{ label: ctx => ` $$${{ctx.parsed.y.toFixed(2)}}` }} }} }},
+      scales: {{
+        y: {{ grid: gridOpts, ticks: {{ ...tickOpts, callback: v => '$' + v.toFixed(0) }} }},
+        x: {{ display: false }}
+      }}
+    }}
+  }});
+
+  // ── Options: directional win% vs options win%
+  const hasopts = SIGS.filter(s => s.opt_wr !== null);
+  new Chart(document.getElementById('optChart'), {{
+    type: 'bar',
+    data: {{
+      labels: hasopts.map(s => s.name),
+      datasets: [
+        {{ label: 'Dir Win%', data: hasopts.map(s => s.wr),
+           backgroundColor: 'rgba(34,211,238,0.30)', borderColor: '#22d3ee', borderWidth: 1.5, borderRadius: 3 }},
+        {{ label: 'Opt Win%', data: hasopts.map(s => s.opt_wr),
+           backgroundColor: 'rgba(96,165,250,0.30)', borderColor: '#60a5fa', borderWidth: 1.5, borderRadius: 3 }},
+      ]
+    }},
+    options: {{ responsive: true, maintainAspectRatio: false,
+      plugins: {{
+        legend: {{ display: true, labels: {{ color: '#94a3b8', boxWidth: 12, font: {{ size: 11 }} }} }},
+        tooltip: {{ callbacks: {{ label: ctx => ` ${{ctx.parsed.y.toFixed(1)}}%` }} }}
+      }},
+      scales: {{
+        y: {{ min: 0, max: 80, grid: gridOpts, ticks: {{ ...tickOpts, callback: v => v + '%' }} }},
+        x: {{ grid: {{ display: false }}, ticks: tickOpts }}
+      }}
+    }}
+  }});
+</script>
+</body>
+</html>"""
+
+    viz_path = Path(__file__).parent / "backtest_viz.html"
+    with open(viz_path, "w") as f:
+        f.write(html)
+    return str(viz_path)
 
 
 def load_latest_results() -> Optional[Dict]:
@@ -1004,12 +1430,15 @@ def main():
                         help="Use full UNIVERSE (~230 tickers, slower)")
     parser.add_argument("--signal",   default="all",
                         choices=["all", "gap", "gap_up", "gap_down", "inside",
-                                 "double_inside", "highvol", "trend", "laggard"],
+                                 "double_inside", "highvol", "trend", "laggard",
+                                 "breakout", "unfilled_gap", "vwap_reclaim", "a_plus"],
                         help="Filter to one signal type")
     parser.add_argument("--hold",     type=int,  default=1,
                         help="Hold period in days (default: 1 = next close)")
-    parser.add_argument("--delta",    type=float, default=0.30,
-                        help="Target delta for simulated contracts (default: 0.30)")
+    parser.add_argument("--delta",    type=float, default=0.40,
+                        help="Target delta for simulated contracts (default: 0.40)")
+    parser.add_argument("--min-dte",  type=int,   default=2,
+                        help="Minimum days-to-expiry for simulated contracts (default: 2)")
     parser.add_argument("--stop",     type=float, default=0.50,
                         help="Contract stop loss %% (default: 0.50 = 50%%)")
     parser.add_argument("--target",   type=float, default=1.00,
@@ -1060,6 +1489,7 @@ def main():
         delta_target=args.delta,
         stop_pct=args.stop,
         target_pct=args.target,
+        min_dte=args.min_dte,
     )
 
     # Sector laggard mode
@@ -1238,7 +1668,7 @@ def main():
     if args.compare:
         print(f"\n{Fore.CYAN + Style.BRIGHT}  D — SIGNAL COMPARISON{Style.RESET_ALL}\n")
         all_records = run_backtest_cli(config)
-        signal_types = ["gap_up", "gap_down", "inside", "double_inside", "highvol", "trend", "breakout"]
+        signal_types = ["gap_up", "gap_down", "inside", "double_inside", "highvol", "trend", "breakout", "unfilled_gap", "vwap_reclaim", "a_plus"]
         rows = []
         for sig in signal_types:
             recs = [r for r in all_records if sig in r.get("signal_types", [])]

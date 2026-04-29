@@ -120,16 +120,30 @@ def trade_grade_plain(setup_q: float, opt_score: int, has_contract: bool) -> str
 def build_signal_badges(r: Dict) -> List[Dict]:
     """Return list of {text, cls, tooltip} for HTML badge rendering."""
     badges = []
-    combo  = r.get("signal_combo", "")
-    regime = r.get("hv_regime", "normal")
+    combo       = r.get("signal_combo", "")
+    combo_rank  = r.get("combo_rank", "C")
+    regime      = r.get("hv_regime", "normal")
+
+    # Tier badge — shown first for high-confidence setups
+    _tier_badge = {
+        "S": ("S★",  "badge-green-bright", "S-Tier: 85-90% directional accuracy (backtest validated)"),
+        "A": ("A",   "badge-green",        "A-Tier: 70-80% directional accuracy (backtest validated)"),
+        "B": ("B",   "badge-cyan",         "B-Tier: 55-69% directional accuracy"),
+    }
+    if combo_rank in _tier_badge:
+        t, c, tip = _tier_badge[combo_rank]
+        badges.append({"text": t, "cls": c, "tooltip": tip})
 
     combo_map = {
-        "HV_PURE":     ("HV★",        "badge-green-bright", "Pure HV volatile — Sharpe 4.94, best setup"),
-        "HV+ID":       ("HV+ID",       "badge-green",        "HV + Inside Day — Sharpe 3.07"),
-        "HV+GD":       ("HV+G↓",       "badge-green",        "HV + Gap Down fill — Sharpe 2.91"),
-        "HV+GU_FADE":  ("HV+G↑FADE",   "badge-red-bright",   "HV + Gap Up — FADE direction (Sharpe 2.42)"),
-        "HV+BK":       ("HV+BK",       "badge-cyan",         "HV + Breakout confirmation"),
-        "BK":          ("BK",          "badge-cyan",         "Breakout with vol confirmation"),
+        "BK+GU+HV+TR": ("BK+GU+HV+TR", "badge-green-bright", "Breakout+Gap Up+HighVol+Trend — 85% WR (S-tier)"),
+        "BK+GD+HV+TR": ("BK+GD+HV+TR", "badge-green-bright", "Breakout+Gap Down+HighVol+Trend — 90% WR (S-tier)"),
+        "BK+GU":       ("BK+GU",        "badge-green",        "Breakout+Gap Up — 75.9% WR, +24% avg opt (A-tier)"),
+        "HV_PURE":     ("HV★",          "badge-green-bright", "Pure HV volatile — Sharpe 4.94, best setup"),
+        "HV+ID":       ("HV+ID",        "badge-green",        "HV + Inside Day — Sharpe 3.07"),
+        "HV+GD":       ("HV+G↓",        "badge-green",        "HV + Gap Down fill — Sharpe 2.91"),
+        "HV+GU_FADE":  ("HV+G↑FADE",    "badge-red-bright",   "HV + Gap Up — FADE direction (Sharpe 2.42)"),
+        "HV+BK":       ("HV+BK",        "badge-cyan",         "HV + Breakout confirmation"),
+        "BK":          ("BK",           "badge-cyan",         "Breakout with vol confirmation"),
         "ID":          ("ID",          "badge-purple",       "Inside Day — coiling, wait for range break"),
         "GD":          ("G↓",          "badge-cyan",         "Gap Down — fill bias (bullish)"),
         "GU":          ("G↑",          "badge-yellow",       "Gap Up — continuation lean"),
@@ -247,6 +261,7 @@ def serialize_result(r: Dict, market_open: bool) -> Dict:
         "sparkline":      r.get("sparkline", []),
         "unfilled_gaps":  r.get("unfilled_gaps", []),
         "nearest_gap":    r.get("nearest_gap"),
+        "combo_rank":     r.get("combo_rank", "C"),
     }
 
 

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>FlowDigger — 0DTE Options Terminal</title>
+<title>FlowDigger — Options Swing Terminal</title>
 <style>
 /* ── Reset & Base ─────────────────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -366,6 +366,86 @@ html, body {
   background: var(--border);
   border-bottom: 1px solid var(--border);
 }
+
+.flow-bias-bar {
+  display: none;
+  background: var(--bg2);
+  padding: 8px 16px 10px;
+  border-bottom: 1px solid var(--border);
+}
+.flow-bias-bar.visible { display: block; }
+.fbb-labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  font-family: var(--mono);
+  font-weight: 700;
+  margin-bottom: 5px;
+}
+.fbb-labels .fbb-calls { color: var(--pos); }
+.fbb-labels .fbb-puts  { color: var(--neg); }
+.fbb-labels .fbb-dir   { color: var(--muted); font-weight: 600; }
+.fbb-track {
+  height: 6px;
+  border-radius: 4px;
+  background: var(--border);
+  overflow: hidden;
+  position: relative;
+}
+.fbb-fill {
+  height: 100%;
+  background: var(--pos);
+  border-radius: 4px 0 0 4px;
+  transition: width .4s ease;
+  float: left;
+}
+.fbb-fill-put {
+  height: 100%;
+  background: var(--neg);
+  border-radius: 0 4px 4px 0;
+  overflow: hidden;
+}
+.fbb-track { height: 8px; }
+
+/* ── Backtest Tier Reference Bar ──────────────────────────────────────────── */
+.bt-tier-bar {
+  padding: 6px 16px;
+  background: rgba(15,15,30,0.03);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-family: var(--mono);
+  font-size: 10px;
+  flex-wrap: wrap;
+}
+.bt-tier-bar .btt-label {
+  font-size: 9px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+.bt-tier-bar .btt-tiers {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.bt-tier-bar .btt-sep { color: var(--border); }
+.bt-tier-bar .btt-tier {
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 10px;
+  font-weight: 600;
+  cursor: help;
+  letter-spacing: 0.3px;
+}
+.bt-tier-bar .s-tier { background: rgba(10,140,80,0.15); color: var(--pos); border: 1px solid rgba(10,140,80,0.35); }
+.bt-tier-bar .a-tier { background: rgba(10,140,80,0.08); color: #087040; border: 1px solid rgba(10,140,80,0.2); }
+.bt-tier-bar .b-tier { background: rgba(15,15,30,0.07); color: var(--muted); border: 1px solid rgba(15,15,30,0.15); }
+.bt-tier-bar .c-tier { background: rgba(0,0,0,0.03); color: var(--dim); border: 1px solid var(--border); }
+.bt-tier-bar .btt-dte { margin-left: auto; color: var(--dim); font-size: 9px; letter-spacing: 0.5px; }
 
 .stat-card {
   background: var(--bg2);
@@ -1083,8 +1163,8 @@ tr.grade-D { background: rgba(200,32,62,0.03); }
     </label>
   </div>
   <div class="dte-tabs" id="dteTabs">
-    <button class="dte-tab active" data-dte="0dte"    onclick="setDTE(this)">0DTE</button>
-    <button class="dte-tab"        data-dte="weekly"   onclick="setDTE(this)">Weekly</button>
+    <button class="dte-tab"        data-dte="0dte"    onclick="setDTE(this)">0DTE</button>
+    <button class="dte-tab active" data-dte="weekly"   onclick="setDTE(this)">Weekly</button>
     <button class="dte-tab"        data-dte="monthly"  onclick="setDTE(this)">Monthly</button>
     <button class="dte-tab"        data-dte="all"      onclick="setDTE(this)">All</button>
   </div>
@@ -1113,6 +1193,36 @@ tr.grade-D { background: rgba(200,32,62,0.03); }
     <div class="s-label">Top Setup</div>
     <div class="s-val accent" id="statTopTicker">—</div>
   </div>
+</div>
+
+<!-- ── Flow Bias Bar ─────────────────────────────────────────────────────────── -->
+<div class="flow-bias-bar" id="flowBiasBar">
+  <div class="fbb-labels">
+    <span class="fbb-calls" id="fbbCalls">CALLS —</span>
+    <span class="fbb-dir"   id="fbbDir">—</span>
+    <span class="fbb-puts"  id="fbbPuts">PUTS —</span>
+  </div>
+  <div class="fbb-track">
+    <div class="fbb-fill"     id="fbbFill"    style="width:50%"></div>
+    <div class="fbb-fill-put" id="fbbFillPut"></div>
+  </div>
+</div>
+
+<!-- ── Backtest Tier Bar ──────────────────────────────────────────────────────── -->
+<div class="bt-tier-bar">
+  <span class="btt-label">Backtest WR</span>
+  <div class="btt-tiers">
+    <span class="btt-tier s-tier" title="BK+GU+HV+TR / BK+GD+HV+TR — 85-90% directional accuracy (n=54)">S★ 85-90%</span>
+    <span class="btt-sep">·</span>
+    <span class="btt-tier a-tier" title="BK+GU — 75.9% WR, +24% avg option return">A 76% / +24%</span>
+    <span class="btt-sep">·</span>
+    <span class="btt-tier a-tier" title="HV_PURE — Sharpe 4.94, best raw edge">HV★ Sharpe 4.9</span>
+    <span class="btt-sep">·</span>
+    <span class="btt-tier b-tier" title="HV+ID, HV+GD — 55-69% WR, Sharpe 2-3">B 55-69%</span>
+    <span class="btt-sep">·</span>
+    <span class="btt-tier c-tier" title="Unfilled gap alone — 42% WR, AVOID solo">GU/GD solo ≤55%</span>
+  </div>
+  <span class="btt-dte">Swing mode: 1-5 DTE</span>
 </div>
 
 <!-- ── Top Pick ─────────────────────────────────────────────────────────────── -->
@@ -1178,7 +1288,7 @@ tr.grade-D { background: rgba(200,32,62,0.03); }
   <div class="guide-box">
     <button class="guide-close" onclick="closeGuide()">×</button>
     <div class="guide-title">FLOW.DIGGER</div>
-    <div class="guide-sub">Scans ~55 stocks every morning. Finds the setup. Picks the contract. You trade.</div>
+    <div class="guide-sub">Scans ~55 stocks every morning. Finds the setup. Picks the contract. Swing mode (1-5 DTE) by default.</div>
 
     <!-- Steps -->
     <div class="guide-section">
@@ -1415,6 +1525,8 @@ async function runScan() {
   // Hide results while scanning
   document.getElementById('resultsTable').style.display = 'none';
   document.getElementById('emptyState').style.display   = 'none';
+  const _fbb = document.getElementById('flowBiasBar');
+  if (_fbb) _fbb.classList.remove('visible');
   expandedRow = null;
 
   const filterVal = document.getElementById('filterSel').value;
@@ -1504,6 +1616,7 @@ function handleScanMessage(msg, barEl, msgEl) {
     renderTable(scanResults);
     updateTickerHeatMapFromScan(scanResults);
     updateTopPick(scanResults);
+    updateFlowBiasBar(scanResults);
     const ts = msg.scan_time || new Date().toLocaleTimeString();
     document.getElementById('scanTime').textContent = 'Last scan: ' + ts;
   }
@@ -1719,8 +1832,12 @@ function buildExpandContent(r) {
       ? `<span style="color:var(--warn)">AFTER HOURS — Last: $${c.mid?.toFixed(2) ?? '—'}</span>`
       : `<span>${c.price_str}</span>`;
 
+    const tgtLine = c.target_price
+      ? `<div class="cline"><span class="ckey">Target:</span><span style="color:var(--warn);font-weight:700">$${c.target_price.toFixed(2)} ⟶</span></div>`
+      : '';
     contractHtml = `<div class="contract-detail">
       <div class="cline"><span class="ckey">Contract:</span>${escHtml(c.exp_short)} ${escHtml(c.strike_str)}${c.type_char}</div>
+      ${tgtLine}
       <div class="cline"><span class="ckey">Delta:</span>${escHtml(c.delta_str)}</div>
       <div class="cline"><span class="ckey">Price:</span>${priceDisplay}</div>
       <div class="cline"><span class="ckey">Vol/OI:</span>${escHtml(c.vol_oi_str ?? '—')}</div>
@@ -1764,8 +1881,24 @@ function buildExpandContent(r) {
   </div>`;
 
   // Signal detail
+  const BT_WR = {
+    "BK+GU+HV+TR": "90% WR (S★ — best combo)",
+    "BK+GD+HV+TR": "85% WR (S★)",
+    "BK+GU":       "76% WR, +24% avg (A)",
+    "HV_PURE":     "Sharpe 4.94 (best edge)",
+    "HV+ID":       "Sharpe 3.07",
+    "HV+GD":       "Sharpe 2.91 (gap fill)",
+    "HV+GU_FADE":  "Sharpe 2.42 — FADE dir",
+    "BK":          "~62% WR (B)",
+    "GD":          "57% WR (B)",
+    "GU":          "55% WR (B)",
+    "ID":          "53% WR (C)",
+  };
+  const btStat = BT_WR[r.signal_combo] || '';
   const sigHtml = `<div class="contract-detail">
     <div class="cline"><span class="ckey">Combo:</span>${r.signal_combo || '—'}</div>
+    ${btStat ? `<div class="cline"><span class="ckey">Backtest:</span><span style="color:var(--pos);font-weight:600">${btStat}</span></div>` : ''}
+    <div class="cline"><span class="ckey">Tier:</span><span style="font-weight:700">${r.combo_rank || 'C'}</span></div>
     <div class="cline"><span class="ckey">Setup Q:</span>${(r.setup_q * 100).toFixed(0)}/100</div>
     <div class="cline"><span class="ckey">RS vs SPY:</span><span class="${r.rs_vs_spy >= 0 ? 'pos-val' : 'neg-val'}">${r.rs_vs_spy >= 0 ? '+' : ''}${r.rs_vs_spy?.toFixed(2)}%</span></div>
     <div class="cline"><span class="ckey">Lag:</span>${r.is_laggard ? `${r.lag_pct >= 0 ? '+' : ''}${r.lag_pct?.toFixed(2)}% (${r.direction?.toUpperCase()})` : '—'}</div>
@@ -1785,8 +1918,6 @@ function buildExpandContent(r) {
     </div>`;
   }
 
-  return `<div class="expand-content">
-    <div class="expand-card"><div class="ec-label">Contract</div>${contractHtml}</div>
   // Unfilled gaps card
   let gapsHtml = '<div class="ec-val dim-val">No unfilled gaps nearby</div>';
   if (r.unfilled_gaps && r.unfilled_gaps.length) {
@@ -2007,7 +2138,7 @@ function updateTickerHeatMapFromScan(results) {
 window.addEventListener('resize', () => requestAnimationFrame(renderTreemap));
 
 // ── DTE Mode ───────────────────────────────────────────────────────────────────
-let currentDTE = '0dte';
+let currentDTE = 'weekly';
 
 function setDTE(btn) {
   currentDTE = btn.dataset.dte;
@@ -2078,6 +2209,30 @@ function buildSparkline(data, direction) {
   </svg>`;
 }
 
+// ── Flow Bias Bar ──────────────────────────────────────────────────────────────
+function updateFlowBiasBar(results) {
+  const bar = document.getElementById('flowBiasBar');
+  if (!bar || !results || !results.length) return;
+  let callScore = 0, putScore = 0, callCount = 0, putCount = 0;
+  results.forEach(r => {
+    const s = r.opt_score || 0;
+    if (r.direction === 'up')   { callScore += s; callCount++; }
+    else                         { putScore  += s; putCount++;  }
+  });
+  const total = callScore + putScore;
+  const callPct = total > 0 ? Math.round(callScore / total * 100) : 50;
+  const callPctStr = callPct + '%';
+  const putPctStr  = (100 - callPct) + '%';
+  document.getElementById('fbbCalls').textContent = `▲ CALLS  ${callCount} setups (${callPctStr})`;
+  document.getElementById('fbbPuts').textContent  = `▼ PUTS  ${putCount} setups (${putPctStr})`;
+  const dir = document.getElementById('fbbDir');
+  if (callPct >= 65)      { dir.textContent = '▲ BULL FLOW'; dir.style.color = 'var(--pos)'; }
+  else if (callPct <= 35) { dir.textContent = '▼ BEAR FLOW'; dir.style.color = 'var(--neg)'; }
+  else                    { dir.textContent = '⇄ MIXED';     dir.style.color = 'var(--muted)'; }
+  document.getElementById('fbbFill').style.width = callPct + '%';
+  bar.classList.add('visible');
+}
+
 // ── Top Pick ───────────────────────────────────────────────────────────────────
 function updateTopPick(results) {
   const el = document.getElementById('topPick');
@@ -2091,19 +2246,32 @@ function updateTopPick(results) {
   const dirTxt = best.direction === 'up' ? '↑ CALLS' : '↓ PUTS';
 
   const sigMap = {
-    "HV_PURE":"Pure vol edge","HV+ID":"Coiled + vol","HV+GD":"Gap fill setup",
-    "HV+GU_FADE":"Fade the gap","HV+BK":"Vol breakout","BK":"Breakout","ID":"Inside day",
-    "GD":"Gap fill","GU":"Gap up continue",
+    "HV_PURE":     "Pure vol edge (Sharpe 4.9)",
+    "HV+ID":       "Coiled + vol (Sharpe 3.1)",
+    "HV+GD":       "Gap fill setup (Sharpe 2.9)",
+    "HV+GU_FADE":  "Fade the gap (puts)",
+    "HV+BK":       "Vol breakout",
+    "BK+GU+HV+TR": "S★ 90% WR — best setup",
+    "BK+GD+HV+TR": "S★ 85% WR — strong",
+    "BK+GU":       "A-tier 76% WR +24% avg",
+    "BK":          "Breakout (62% WR)",
+    "ID":          "Inside day — wait for break",
+    "GD":          "Gap fill play (57% WR)",
+    "GU":          "Gap up continuation",
   };
   const why = sigMap[best.signal_combo] || (best.is_laggard ? 'Sector laggard' : 'Top scan signal');
 
-  el.innerHTML = `
-    <div class="tp-label">TOP PICK</div>
-    <div class="tp-ticker">${best.ticker}</div>
-    <div class="tp-dir ${dirCls}">${dirTxt}</div>
-    <div class="tp-contract">${c.label || '—'}</div>
-    <div class="tp-meta">OScore: ${best.opt_score||0} · IVR: ${best.ivr_score||'—'}</div>
-    <div class="tp-why">${why}</div>`;
+  const tickerEl   = document.getElementById('tpTicker');
+  const dirEl      = document.getElementById('tpDir');
+  const contractEl = document.getElementById('tpContract');
+  const metaEl     = document.getElementById('tpMeta');
+  const whyEl      = document.getElementById('tpWhy');
+
+  if (tickerEl)   tickerEl.textContent = best.ticker;
+  if (dirEl)    { dirEl.textContent = dirTxt; dirEl.className = `tp-dir ${dirCls}`; }
+  if (contractEl) contractEl.textContent = c.label || '—';
+  if (metaEl)     metaEl.textContent = `OScore: ${best.opt_score||0} · IVR: ${best.ivr_score||'—'} · ${best.combo_rank||'C'}-tier`;
+  if (whyEl)      whyEl.textContent = why;
   el.style.display = 'flex';
 }
 

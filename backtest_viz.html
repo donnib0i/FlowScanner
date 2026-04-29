@@ -7,727 +7,275 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <style>
     :root {
-      --bg: #0a0e1a;
-      --surface: #111827;
-      --surface2: #1a2235;
-      --border: #1e2d45;
-      --text: #e2e8f0;
-      --muted: #64748b;
-      --green: #22d3ee;
-      --red: #f43f5e;
-      --yellow: #fbbf24;
-      --blue: #3b82f6;
-      --purple: #a78bfa;
+      --bg: #0a0e1a; --surface: #111827; --surface2: #1a2235;
+      --border: #1e2d45; --text: #e2e8f0; --muted: #64748b;
+      --green: #22d3ee; --red: #f43f5e; --yellow: #fbbf24; --blue: #60a5fa; --purple: #a78bfa;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      background: var(--bg);
-      color: var(--text);
-      font-family: 'SF Mono', 'Fira Code', monospace;
-      font-size: 13px;
-      min-height: 100vh;
-      padding: 24px;
-    }
-    .header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 28px;
-      padding-bottom: 16px;
-      border-bottom: 1px solid var(--border);
-    }
-    .header h1 { font-size: 20px; font-weight: 700; letter-spacing: 0.05em; color: var(--text); }
-    .header .meta { color: var(--muted); font-size: 11px; text-align: right; line-height: 1.6; }
-    .tag {
-      display: inline-block;
-      background: var(--surface2);
-      border: 1px solid var(--border);
-      border-radius: 4px;
-      padding: 2px 8px;
-      font-size: 11px;
-      color: var(--muted);
-      margin-left: 8px;
-    }
-
-    /* KPI strip */
-    .kpi-row {
-      display: grid;
-      grid-template-columns: repeat(5, 1fr);
-      gap: 12px;
-      margin-bottom: 24px;
-    }
-    .kpi {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 16px;
-    }
-    .kpi .label { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 6px; }
-    .kpi .value { font-size: 22px; font-weight: 700; }
-    .kpi .sub { color: var(--muted); font-size: 10px; margin-top: 4px; }
-    .green  { color: var(--green); }
-    .red    { color: var(--red); }
-    .yellow { color: var(--yellow); }
-    .blue   { color: var(--blue); }
-    .purple { color: var(--purple); }
-
-    /* Grid layouts */
-    .grid-2    { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
-    .grid-3    { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; margin-bottom: 16px; }
-    .grid-full { margin-bottom: 16px; }
-    .section-label {
-      font-size: 10px;
-      text-transform: uppercase;
-      letter-spacing: 0.12em;
-      color: var(--muted);
-      margin: 28px 0 12px;
-      padding-bottom: 8px;
-      border-bottom: 1px solid var(--border);
-    }
-
-    .card {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 20px;
-    }
-    .card-title {
-      font-size: 11px;
-      text-transform: uppercase;
-      letter-spacing: 0.1em;
-      color: var(--muted);
-      margin-bottom: 16px;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-    }
-    .card-title span { color: var(--text); font-size: 10px; }
-    canvas { display: block; }
-
-    /* Tables */
-    table { width: 100%; border-collapse: collapse; }
-    th {
-      font-size: 10px;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      color: var(--muted);
-      text-align: left;
-      padding: 6px 10px;
-      border-bottom: 1px solid var(--border);
-    }
-    td {
-      padding: 8px 10px;
-      border-bottom: 1px solid rgba(30,45,69,0.5);
-      font-size: 12px;
-    }
-    tr:last-child td { border-bottom: none; }
-
-    /* Badges */
-    .sig-badge {
-      display: inline-block;
-      padding: 2px 8px;
-      border-radius: 4px;
-      font-size: 11px;
-      font-weight: 600;
-    }
-    .badge-hv    { background: rgba(34,211,238,0.15);  color: #22d3ee; }
-    .badge-bk    { background: rgba(59,130,246,0.15);  color: #60a5fa; }
-    .badge-in    { background: rgba(167,139,250,0.15); color: #a78bfa; }
-    .badge-gd    { background: rgba(251,191,36,0.15);  color: #fbbf24; }
-    .badge-gu    { background: rgba(244,63,94,0.15);   color: #f87171; }
-    .badge-tr    { background: rgba(100,116,139,0.15); color: #94a3b8; }
-    .badge-combo { background: rgba(34,211,238,0.08);  color: #67e8f9; border: 1px solid rgba(34,211,238,0.3); }
-
-    .verdict { font-size: 10px; padding: 2px 6px; border-radius: 3px; }
-    .verdict-buy  { background: rgba(34,211,238,0.12); color: var(--green); }
-    .verdict-fade { background: rgba(244,63,94,0.12);  color: var(--red); }
-    .verdict-edge { background: rgba(251,191,36,0.12); color: var(--yellow); }
-    .verdict-skip { background: rgba(100,116,139,0.12);color: #94a3b8; }
-
-    /* Regime heatmap */
-    .regime-grid {
-      display: grid;
-      grid-template-columns: 140px repeat(3, 1fr);
-      gap: 4px;
-    }
-    .rg-header {
-      font-size: 10px;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      color: var(--muted);
-      padding: 8px 10px;
-      text-align: center;
-    }
-    .rg-label {
-      font-size: 11px;
-      color: var(--text);
-      padding: 10px 10px;
-      display: flex;
-      align-items: center;
-    }
-    .rg-cell {
-      border-radius: 6px;
-      padding: 10px 8px;
-      text-align: center;
-      font-size: 12px;
-      font-weight: 600;
-    }
-    .rg-pos3  { background: rgba(34,211,238,0.30); color: #22d3ee; }
-    .rg-pos2  { background: rgba(34,211,238,0.18); color: #67e8f9; }
-    .rg-pos1  { background: rgba(34,211,238,0.09); color: #a5f3fc; }
-    .rg-neg1  { background: rgba(244,63,94,0.12);  color: #f87171; }
-    .rg-neg2  { background: rgba(244,63,94,0.25);  color: #f43f5e; }
-    .rg-neg3  { background: rgba(244,63,94,0.40);  color: #e11d48; }
-    .rg-sub   { font-size: 10px; font-weight: 400; color: inherit; opacity: 0.75; display: block; margin-top: 2px; }
-
-    .insight-box {
-      background: var(--surface2);
-      border: 1px solid var(--border);
-      border-left: 3px solid var(--blue);
-      border-radius: 6px;
-      padding: 14px 16px;
-      margin-top: 16px;
-    }
-    .insight-box .title { color: var(--blue); font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 8px; }
-    .insight-box ul { list-style: none; }
-    .insight-box li { color: var(--text); font-size: 12px; line-height: 1.8; padding-left: 12px; position: relative; }
-    .insight-box li::before { content: '›'; position: absolute; left: 0; color: var(--blue); }
-
-    .alert-box {
-      background: rgba(251,191,36,0.06);
-      border: 1px solid rgba(251,191,36,0.25);
-      border-left: 3px solid var(--yellow);
-      border-radius: 6px;
-      padding: 12px 16px;
-      margin-top: 12px;
-      font-size: 12px;
-      color: var(--text);
-      line-height: 1.7;
-    }
-    .alert-box strong { color: var(--yellow); }
-
-    @media (max-width: 900px) {
-      .kpi-row { grid-template-columns: repeat(3, 1fr); }
-      .grid-2, .grid-3 { grid-template-columns: 1fr; }
-      .regime-grid { grid-template-columns: 110px repeat(3, 1fr); }
-    }
-    @media (max-width: 600px) {
-      .kpi-row { grid-template-columns: repeat(2, 1fr); }
-      body { padding: 12px; }
-    }
+    body { background: var(--bg); color: var(--text); font-family: 'SF Mono', 'Fira Code', monospace; font-size: 13px; padding: 24px; }
+    .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 28px; padding-bottom: 16px; border-bottom: 1px solid var(--border); }
+    .header h1 { font-size: 20px; font-weight: 700; letter-spacing: 0.05em; }
+    .header .meta { color: var(--muted); font-size: 11px; text-align: right; line-height: 1.8; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; margin-bottom: 24px; }
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 24px; }
+    .card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 20px; }
+    .card h3 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); margin-bottom: 14px; }
+    .stat { font-size: 28px; font-weight: 700; }
+    .stat-label { font-size: 11px; color: var(--muted); margin-top: 4px; }
+    .green { color: var(--green); } .red { color: var(--red); } .yellow { color: var(--yellow); }
+    .blue { color: var(--blue); } .muted { color: var(--muted); }
+    table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    th { color: var(--muted); text-align: left; padding: 8px 10px; font-weight: 400; font-size: 11px; border-bottom: 1px solid var(--border); }
+    td { padding: 8px 10px; border-bottom: 1px solid rgba(30,45,69,0.5); }
+    .sig-badge { background: var(--surface2); border: 1px solid var(--border); border-radius: 3px; padding: 2px 6px; font-size: 10px; color: var(--muted); }
+    .aplus-badge { background: rgba(167,139,250,0.15); border: 1px solid rgba(167,139,250,0.4); border-radius: 3px; padding: 2px 6px; font-size: 10px; color: var(--purple); }
+    .chart-wrap { position: relative; height: 220px; }
+    .chart-wrap-lg { position: relative; height: 280px; }
+    .section-title { font-size: 12px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin: 24px 0 12px; border-bottom: 1px solid var(--border); padding-bottom: 8px; }
+    .aplus-compare { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .aplus-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 18px; }
+    .aplus-card.highlight { border-color: rgba(167,139,250,0.5); background: rgba(167,139,250,0.05); }
+    .metric-row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid rgba(30,45,69,0.5); }
+    .metric-row:last-child { border-bottom: none; }
+    @media (max-width: 768px) { .grid-2 { grid-template-columns: 1fr; } .aplus-compare { grid-template-columns: 1fr; } }
   </style>
 </head>
 <body>
-
-<div class="header">
-  <div>
-    <h1>D — QUANT DASHBOARD <span class="tag">BACKTEST v2</span></h1>
-  </div>
-  <div class="meta">
-    80 tickers &nbsp;|&nbsp; 60-day window &nbsp;|&nbsp; 2,800+ signals<br>
-    0DTE options sim &nbsp;|&nbsp; 1D hold &nbsp;|&nbsp; δ 0.30 target
-  </div>
-</div>
-
-<!-- KPI STRIP -->
-<div class="kpi-row">
-  <div class="kpi">
-    <div class="label">Best Combo</div>
-    <div class="value green">HV+GD</div>
-    <div class="sub">Sharpe 3.10 · WR 55%</div>
-  </div>
-  <div class="kpi">
-    <div class="label">Regime Gate</div>
-    <div class="value blue">HV20 ≥ 35%</div>
-    <div class="sub">below = no edge</div>
-  </div>
-  <div class="kpi">
-    <div class="label">Best Hold</div>
-    <div class="value green">Overnight</div>
-    <div class="sub">1D: Sharpe 2.48, 3D: -0.20</div>
-  </div>
-  <div class="kpi">
-    <div class="label">Signals Fired</div>
-    <div class="value">2,800+</div>
-    <div class="sub">80 tickers · 60 days</div>
-  </div>
-  <div class="kpi">
-    <div class="label">Skip Signal</div>
-    <div class="value red">Gap Up</div>
-    <div class="sub">Sharpe -0.32, PF 0.95</div>
-  </div>
-</div>
-
-
-<!-- ════════════════════════════════════════════════════════ -->
-<div class="section-label">01 — Signal Overview</div>
-
-<!-- Win Rate + Sharpe -->
-<div class="grid-2">
-  <div class="card">
-    <div class="card-title">Win Rate by Signal <span>% of trades in direction</span></div>
-    <canvas id="winRateChart" height="220"></canvas>
-  </div>
-  <div class="card">
-    <div class="card-title">Sharpe Ratio <span>risk-adjusted return, annualized</span></div>
-    <canvas id="sharpeChart" height="220"></canvas>
-  </div>
-</div>
-
-<!-- Signal Table + Equity Curve -->
-<div class="grid-2">
-  <div class="card">
-    <div class="card-title">Signal Leaderboard</div>
-    <table>
-      <thead>
-        <tr>
-          <th>Signal</th>
-          <th>N</th>
-          <th>Win%</th>
-          <th>Sharpe</th>
-          <th>PF</th>
-          <th>EV%</th>
-          <th>Verdict</th>
-        </tr>
-      </thead>
-      <tbody id="signalTable"></tbody>
-    </table>
-  </div>
-  <div class="card">
-    <div class="card-title">Simulated Equity Curve <span>$1,000 start · best vs worst</span></div>
-    <canvas id="equityChart" height="230"></canvas>
-  </div>
-</div>
-
-
-<!-- ════════════════════════════════════════════════════════ -->
-<div class="section-label">02 — HV20 Regime — The Critical Gate</div>
-
-<div class="alert-box">
-  <strong>KEY FINDING:</strong> Signals only have edge in volatile stocks (HV20 ≥ 35%). Below that threshold, highvol and breakout signals have <strong>negative Sharpe</strong>. The scanner now gates every signal against HV20 regime before scoring.
-</div>
-
-<div class="grid-full" style="margin-top:16px;">
-  <div class="card">
-    <div class="card-title">Sharpe by Signal × Regime <span>volatile / normal / calm</span></div>
-    <div class="regime-grid" style="margin-top: 8px;">
-      <div class="rg-header"></div>
-      <div class="rg-header">VOLATILE<br><span style="font-size:9px;color:#64748b">HV20 ≥ 35%</span></div>
-      <div class="rg-header">NORMAL<br><span style="font-size:9px;color:#64748b">20–35%</span></div>
-      <div class="rg-header">CALM<br><span style="font-size:9px;color:#64748b">&lt; 20%</span></div>
-
-      <div class="rg-label"><span class="sig-badge badge-hv" style="font-size:10px">HIGH VOL</span></div>
-      <div class="rg-cell rg-pos3">2.48<span class="rg-sub">WR 55%</span></div>
-      <div class="rg-cell rg-neg3">-3.58<span class="rg-sub">WR 41%</span></div>
-      <div class="rg-cell rg-neg2">-1.65<span class="rg-sub">WR 42%</span></div>
-
-      <div class="rg-label"><span class="sig-badge badge-bk" style="font-size:10px">BREAKOUT</span></div>
-      <div class="rg-cell rg-pos2">1.65<span class="rg-sub">WR 60%</span></div>
-      <div class="rg-cell rg-neg2">-2.72<span class="rg-sub">WR 36%</span></div>
-      <div class="rg-cell rg-neg3">-3.20<span class="rg-sub">WR 36%</span></div>
-
-      <div class="rg-label"><span class="sig-badge badge-in" style="font-size:10px">INSIDE DAY</span></div>
-      <div class="rg-cell rg-pos1">0.58<span class="rg-sub">WR 54%</span></div>
-      <div class="rg-cell rg-neg1">-0.40<span class="rg-sub">WR 49%</span></div>
-      <div class="rg-cell rg-pos3">5.44<span class="rg-sub">WR 50%</span></div>
-
-      <div class="rg-label"><span class="sig-badge badge-gd" style="font-size:10px">GAP DOWN</span></div>
-      <div class="rg-cell rg-pos1">0.33<span class="rg-sub">WR 50%</span></div>
-      <div class="rg-cell rg-pos1">0.15<span class="rg-sub">WR 50%</span></div>
-      <div class="rg-cell rg-pos1">0.12<span class="rg-sub">WR 50%</span></div>
-
-      <div class="rg-label"><span class="sig-badge badge-gu" style="font-size:10px">GAP UP</span></div>
-      <div class="rg-cell rg-neg1">-0.18<span class="rg-sub">WR 49%</span></div>
-      <div class="rg-cell rg-neg1">-0.32<span class="rg-sub">WR 49%</span></div>
-      <div class="rg-cell rg-neg1">-0.28<span class="rg-sub">WR 49%</span></div>
+  <div class="header">
+    <div>
+      <h1>D — QUANT DASHBOARD</h1>
+      <div style="color:var(--muted);font-size:11px;margin-top:4px">60d lookback · 80 tickers · 1991 signals</div>
+    </div>
+    <div class="meta">
+      <div>Updated: 2026-04-25 19:36</div>
+      <div>delta=0.4 · stop=50% · target=100% · min_dte=2d</div>
     </div>
   </div>
-</div>
 
-<div class="grid-full">
-  <div class="card">
-    <div class="card-title">Regime Sharpe Comparison <span>volatile vs normal vs calm</span></div>
-    <canvas id="regimeChart" height="200"></canvas>
-  </div>
-</div>
+  <p class="section-title">A+ Setup Performance</p>
+  <div class="aplus-compare" id="apluscmp"></div>
 
-
-<!-- ════════════════════════════════════════════════════════ -->
-<div class="section-label">03 — Signal Combos</div>
-
-<div class="grid-2">
-  <div class="card">
-    <div class="card-title">Combo Sharpe Ranking <span>volatile stocks only</span></div>
-    <canvas id="comboChart" height="260"></canvas>
-  </div>
-  <div class="card">
-    <div class="card-title">Combo Leaderboard</div>
-    <table>
-      <thead>
-        <tr>
-          <th>Combo</th>
-          <th>Win%</th>
-          <th>Sharpe</th>
-          <th>Direction</th>
-          <th>Verdict</th>
-        </tr>
-      </thead>
-      <tbody id="comboTable"></tbody>
-    </table>
-    <div class="insight-box" style="margin-top:14px;">
-      <div class="title">Combo Notes</div>
-      <ul>
-        <li><strong>HV+GD</strong> = gap down on volatile stock. Gap fill = calls. Best risk-adjusted setup in dataset.</li>
-        <li><strong>ID (calm)</strong> = counterintuitive. Calm stock coiling. Compression → expansion. Sharpe 5.44.</li>
-        <li><strong>HV+GU FADE</strong> = gap up on volatile stock → direction is DOWN (puts), not continuation.</li>
-        <li><strong>HV PURE</strong> = no additional confluence, just regime-gated vol signal. Still Sharpe 2.48.</li>
-      </ul>
+  <p class="section-title">Signal Comparison</p>
+  <div class="grid-2">
+    <div class="card">
+      <h3>Sharpe by Signal</h3>
+      <div class="chart-wrap-lg"><canvas id="sharpeChart"></canvas></div>
+    </div>
+    <div class="card">
+      <h3>Win Rate by Signal</h3>
+      <div class="chart-wrap-lg"><canvas id="wrChart"></canvas></div>
     </div>
   </div>
-</div>
 
-
-<!-- ════════════════════════════════════════════════════════ -->
-<div class="section-label">04 — Hold Period Decay</div>
-
-<div class="grid-2">
-  <div class="card">
-    <div class="card-title">Sharpe by Hold Period <span>1D overnight is peak</span></div>
-    <canvas id="holdChart" height="220"></canvas>
+  <p class="section-title">Equity Curve</p>
+  <div class="card" style="margin-bottom:24px">
+    <h3>Simulated $100 (directional returns, all signals)</h3>
+    <div class="chart-wrap-lg"><canvas id="eqChart"></canvas></div>
   </div>
-  <div class="card">
-    <div class="card-title">Win Rate by Hold Period <span>volatile stocks, highvol + breakout</span></div>
-    <canvas id="holdWrChart" height="220"></canvas>
+
+  <p class="section-title">Top 10 Setups</p>
+  <div class="card" style="margin-bottom:24px">
+    <table>
+      <thead><tr><th>Ticker</th><th>Date</th><th>Signal</th><th>Dir</th><th>Fwd Ret</th><th>Opt P&L</th><th>RelVol</th></tr></thead>
+      <tbody>
+      <tr>
+        <td style="color:#22d3ee">LABU</td>
+        <td style="color:#64748b">2026-03-30</td>
+        <td><span class="sig-badge">gap_up</span></td>
+        <td style="color:#22d3ee">up</td>
+        <td style="color:#22d3ee">+22.31%</td>
+        <td style="color:#22d3ee">+100.0%</td>
+        <td style="color:#94a3b8">0.7x</td>
+      </tr>
+      <tr>
+        <td style="color:#22d3ee">TXN</td>
+        <td style="color:#64748b">2026-04-22</td>
+        <td><span class="sig-badge">gap_up, highvol, breakout, unfilled_gap</span></td>
+        <td style="color:#22d3ee">up</td>
+        <td style="color:#22d3ee">+19.43%</td>
+        <td style="color:#22d3ee">+100.0%</td>
+        <td style="color:#94a3b8">2.0x</td>
+      </tr>
+      <tr>
+        <td style="color:#22d3ee">WOLF</td>
+        <td style="color:#64748b">2026-04-08</td>
+        <td><span class="sig-badge">gap_up, highvol, breakout</span></td>
+        <td style="color:#22d3ee">up</td>
+        <td style="color:#22d3ee">+18.82%</td>
+        <td style="color:#22d3ee">+100.0%</td>
+        <td style="color:#94a3b8">1.9x</td>
+      </tr>
+      <tr>
+        <td style="color:#22d3ee">SOXL</td>
+        <td style="color:#64748b">2026-03-30</td>
+        <td><span class="sig-badge">gap_up, breakout</span></td>
+        <td style="color:#22d3ee">up</td>
+        <td style="color:#22d3ee">+17.95%</td>
+        <td style="color:#22d3ee">+100.0%</td>
+        <td style="color:#94a3b8">1.4x</td>
+      </tr>
+      <tr>
+        <td style="color:#22d3ee">HUT</td>
+        <td style="color:#64748b">2026-04-07</td>
+        <td><span class="sig-badge">vwap_reclaim</span></td>
+        <td style="color:#22d3ee">up</td>
+        <td style="color:#22d3ee">+16.65%</td>
+        <td style="color:#22d3ee">+100.0%</td>
+        <td style="color:#94a3b8">1.1x</td>
+      </tr>
+      <tr>
+        <td style="color:#22d3ee">ARM</td>
+        <td style="color:#64748b">2026-04-23</td>
+        <td><span class="sig-badge">gap_down, highvol, breakout</span></td>
+        <td style="color:#22d3ee">up</td>
+        <td style="color:#22d3ee">+14.76%</td>
+        <td style="color:#22d3ee">+100.0%</td>
+        <td style="color:#94a3b8">1.9x</td>
+      </tr>
+      <tr>
+        <td style="color:#22d3ee">FNGD</td>
+        <td style="color:#64748b">2026-03-30</td>
+        <td><span class="sig-badge">gap_down</span></td>
+        <td style="color:#f43f5e">down</td>
+        <td style="color:#22d3ee">-13.84%</td>
+        <td style="color:#22d3ee">+100.0%</td>
+        <td style="color:#94a3b8">0.8x</td>
+      </tr>
+      <tr>
+        <td style="color:#22d3ee">FNGU</td>
+        <td style="color:#64748b">2026-03-30</td>
+        <td><span class="sig-badge">gap_up</span></td>
+        <td style="color:#22d3ee">up</td>
+        <td style="color:#22d3ee">+13.84%</td>
+        <td style="color:#22d3ee">+100.0%</td>
+        <td style="color:#94a3b8">1.0x</td>
+      </tr>
+      <tr>
+        <td style="color:#22d3ee">SOXL</td>
+        <td style="color:#64748b">2026-04-23</td>
+        <td><span class="sig-badge">gap_up</span></td>
+        <td style="color:#22d3ee">up</td>
+        <td style="color:#22d3ee">+13.79%</td>
+        <td style="color:#22d3ee">+100.0%</td>
+        <td style="color:#94a3b8">1.1x</td>
+      </tr>
+      <tr>
+        <td style="color:#22d3ee">NFLX</td>
+        <td style="color:#64748b">2026-02-26</td>
+        <td><span class="sig-badge">gap_up, highvol, breakout, unfilled_gap</span></td>
+        <td style="color:#22d3ee">up</td>
+        <td style="color:#22d3ee">+13.77%</td>
+        <td style="color:#22d3ee">+100.0%</td>
+        <td style="color:#94a3b8">1.9x</td>
+      </tr></tbody>
+    </table>
   </div>
-</div>
 
-<div class="alert-box">
-  <strong>HOLD OVERNIGHT, NOT 3 DAYS.</strong> Edge peaks at 1D (close→next close). highvol Sharpe drops from 2.48 → 1.85 → -0.20 over 1D / 2D / 3D. After day 1, you're giving back edge. Close the trade.
-</div>
-
-
-<!-- ════════════════════════════════════════════════════════ -->
-<div class="section-label">05 — Top Tickers (HV + Breakout)</div>
-
-<div class="grid-full">
+  <p class="section-title">Options P&L by Signal</p>
   <div class="card">
-    <div class="card-title">Best Tickers by Sharpe — HV + Breakout Signals (60 days)</div>
-    <canvas id="tickerChart" height="160"></canvas>
+    <h3>Options Win Rate vs Directional Win Rate</h3>
+    <div class="chart-wrap-lg"><canvas id="optChart"></canvas></div>
   </div>
-</div>
-
-
-<!-- ════════════════════════════════════════════════════════ -->
-<div class="insight-box" style="border-left-color: var(--green);">
-  <div class="title" style="color: var(--green);">Summary — What Changed in v2</div>
-  <ul>
-    <li><strong>Regime gating</strong> is the single biggest discovery. HV20 below 35% = signals are statistical losers. Scanner now warns on [calm] setups.</li>
-    <li><strong>Inside day is inverted</strong> — it works in calm stocks (Sharpe 5.44), not volatile ones. Scanner weights accordingly.</li>
-    <li><strong>Gap-up = fade</strong>. Not continuation. Gap-up + HV = puts, not calls (Sharpe 1.76 on the fade, -0.32 on continuation).</li>
-    <li><strong>Hold period matters</strong>. Overnight is peak. 3D hold turns highvol from Sharpe 2.48 → -0.20. Don't hold past day 1.</li>
-    <li><strong>HV+GD</strong> is the best single setup: gap fills on volatile stocks, Sharpe 3.10, WR 55%.</li>
-    <li><strong>Options sim</strong> is a floor estimate — real intraday entries outperform EOD model. Stock direction signal is the reliable metric.</li>
-  </ul>
-</div>
 
 <script>
-  Chart.defaults.color = '#64748b';
-  Chart.defaults.font.family = "'SF Mono', 'Fira Code', monospace";
-  Chart.defaults.font.size = 11;
-  const gridOpts = { color: 'rgba(30,45,69,0.7)', drawBorder: false };
-  const tickOpts = { color: '#475569' };
+  const SIGS = [{"name": "a_plus", "n": 15, "wr": 40.0, "sharpe": -4.39, "pf": 0.47, "ev": -1.642, "opt_wr": 23.1, "opt_avg": -18.5}, {"name": "breakout", "n": 310, "wr": 57.7, "sharpe": 2.1, "pf": 1.48, "ev": 0.598, "opt_wr": 35.7, "opt_avg": -3.6}, {"name": "highvol", "n": 196, "wr": 54.6, "sharpe": 1.36, "pf": 1.28, "ev": 0.432, "opt_wr": 38.3, "opt_avg": -2.1}, {"name": "trend", "n": 76, "wr": 73.7, "sharpe": 6.14, "pf": 2.86, "ev": 1.451, "opt_wr": 43.8, "opt_avg": 7.6}, {"name": "gap_up", "n": 845, "wr": 58.3, "sharpe": 2.1, "pf": 1.45, "ev": 0.561, "opt_wr": 35.5, "opt_avg": -3.2}, {"name": "gap_down", "n": 808, "wr": 53.3, "sharpe": 1.08, "pf": 1.21, "ev": 0.281, "opt_wr": 33.1, "opt_avg": -7.0}, {"name": "inside", "n": 191, "wr": 57.1, "sharpe": 1.04, "pf": 1.19, "ev": 0.24, "opt_wr": 33.3, "opt_avg": -5.5}, {"name": "double_inside", "n": 3, "wr": 66.7, "sharpe": 13.78, "pf": 15.66, "ev": 2.307, "opt_wr": 33.3, "opt_avg": 10.0}, {"name": "vwap_reclaim", "n": 145, "wr": 53.8, "sharpe": 0.04, "pf": 1.01, "ev": 0.012, "opt_wr": 27.7, "opt_avg": -14.2}, {"name": "unfilled_gap", "n": 987, "wr": 51.2, "sharpe": -0.22, "pf": 0.96, "ev": -0.038, "opt_wr": 28.8, "opt_avg": -11.5}];
+  const EQ   = [100.0, 99.99, 98.69, 106.04, 104.49, 109.4, 107.0, 106.73, 112.63, 113.32, 108.31, 106.98, 116.16, 116.14, 136.57, 130.13, 135.69, 132.01, 139.99, 130.23, 130.1, 138.5, 136.24, 99.36, 109.2, 115.14, 121.84, 165.52, 177.85, 194.3, 219.12, 196.27, 217.78, 189.08, 286.23, 244.43, 243.09, 217.84, 338.65, 310.96, 281.94, 273.64, 342.69, 333.62, 295.99, 321.41, 349.94, 360.14, 347.15, 405.02, 378.47, 411.59, 437.57, 389.46, 426.07, 348.98, 359.89, 431.96, 385.45, 432.74, 445.31, 409.46, 404.12, 424.78, 605.52, 555.49, 605.58, 638.09, 632.5, 659.69, 676.57, 659.14, 683.16, 688.03, 710.03, 645.03, 616.98, 611.22, 618.68, 626.91, 636.77, 664.64, 750.8, 799.26, 732.75, 718.09, 862.87, 800.76, 808.06, 761.23, 910.17, 863.77, 870.75, 828.91, 953.28, 1038.64, 1027.67, 1065.92, 1067.15, 1215.44, 1228.88, 1187.54, 1272.64, 1435.84, 1436.14, 1444.11, 1506.49, 1337.19, 1385.49, 1472.96, 1229.52, 1171.62, 1476.16, 1482.28, 1409.79, 1394.18, 1248.4, 1134.53, 1153.25, 1293.8, 1508.47, 1704.08, 1798.44, 1989.58, 1957.06, 1714.8, 1516.92, 1807.83, 2157.68, 2003.58, 2168.75, 1911.08, 2087.19, 2040.8, 2210.15, 2912.17, 3769.64, 2468.14, 2444.9, 2531.8, 2592.85, 2651.4, 2535.57, 2289.3, 2105.78, 2299.11, 1611.08, 1612.07, 1836.91, 1570.75, 1681.63, 1694.54, 1555.57, 1447.6, 1765.35, 1535.49, 1623.04, 2009.38, 2549.02, 2033.92, 2342.3, 2390.8, 3038.86, 3005.87, 2937.38, 3117.89, 4985.51, 5885.66, 6456.44, 6391.73, 5909.49, 5557.23, 5854.44, 5660.95, 5667.28, 5974.72, 6601.02, 7200.52, 7261.3, 7572.03, 7131.35, 6612.62, 5553.35, 4914.62, 6141.27, 5993.94, 5963.43, 6618.62, 8674.4, 8363.74, 8772.1, 10758.57, 12742.72, 14010.27, 14496.37, 16409.59, 18735.03, 23137.56, 22714.56, 22420.74, 20596.41, 23442.04, 22249.13, 24983.78, 25655.36, 23594.84, 23717.9, 23769.28, 24706.26, 20445.78, 22830.2, 23160.38, 21939.07, 22720.63, 21425.55, 20166.69, 18434.95, 18259.49, 15674.81, 13183.57, 12323.95, 13805.71];
+  const AP   = {"aplus": {"wr": 40.0, "sharpe": -4.39, "pf": 0.47, "n": 15}, "rest": {"wr": 54.7, "sharpe": 1.36, "pf": 1.27, "n": 1976}};
 
-  // ─── BASE SIGNAL DATA ─────────────────────────────────────────────────────
-  const SIGNALS = ['highvol', 'breakout', 'inside', 'gap_down', 'gap_up', 'trend'];
-  const LABELS  = ['High Vol', 'Breakout', 'Inside Day', 'Gap Down', 'Gap Up', 'Trend'];
-  const DATA = {
-    highvol:  { n: 273,  wr: 55.0, pf: 1.45, sharpe: 2.48,  ev:  0.625 },
-    breakout: { n: 443,  wr: 55.5, pf: 1.25, sharpe: 1.65,  ev:  0.362 },
-    inside:   { n: 283,  wr: 51.6, pf: 1.09, sharpe: 0.51,  ev:  0.125 },
-    gap_down: { n: 1252, wr: 50.1, pf: 1.06, sharpe: 0.33,  ev:  0.092 },
-    gap_up:   { n: 1222, wr: 49.1, pf: 0.95, sharpe: -0.32, ev: -0.085 },
-    trend:    { n: 825,  wr: 50.9, pf: 0.89, sharpe: -0.64, ev: -0.170 },
-  };
-  const COLORS = {
-    highvol: '#22d3ee', breakout: '#60a5fa', inside: '#a78bfa',
-    gap_down: '#fbbf24', gap_up: '#f87171', trend: '#94a3b8',
-  };
+  const gridOpts = { color: 'rgba(30,45,69,0.8)', lineWidth: 0.5 };
+  const tickOpts = { color: '#94a3b8', font: { size: 11, family: 'SF Mono, monospace' } };
 
-  // ─── WIN RATE ─────────────────────────────────────────────────────────────
-  new Chart(document.getElementById('winRateChart'), {
-    type: 'bar',
-    data: {
-      labels: LABELS,
-      datasets: [{
-        data: SIGNALS.map(s => DATA[s].wr),
-        backgroundColor: SIGNALS.map(s => COLORS[s] + '55'),
-        borderColor:     SIGNALS.map(s => COLORS[s]),
-        borderWidth: 1.5, borderRadius: 4,
-      }]
-    },
-    options: {
-      responsive: true,
-      plugins: {
-        legend: { display: false },
-        tooltip: { callbacks: { label: ctx => ` ${ctx.parsed.y.toFixed(1)}%` } }
-      },
-      scales: {
-        y: { min: 45, max: 60, grid: gridOpts, ticks: { ...tickOpts, callback: v => v + '%' } },
-        x: { grid: { display: false }, ticks: tickOpts }
-      }
-    }
+  // ── A+ compare cards
+  const cmp = document.getElementById('apluscmp');
+  [['A+ Setup', AP.aplus, true], ['All Other Signals', AP.rest, false]].forEach(([label, d, hl]) => {
+    const wr_c  = d.wr  > 55 ? '#22d3ee' : d.wr  > 50 ? '#fbbf24' : '#f43f5e';
+    const sh_c  = d.sharpe > 1.5 ? '#22d3ee' : d.sharpe > 0 ? '#fbbf24' : '#f43f5e';
+    const pf_c  = d.pf > 1.5 ? '#22d3ee' : d.pf > 1.0 ? '#fbbf24' : '#f43f5e';
+    cmp.innerHTML += `
+      <div class="aplus-card ${hl ? 'highlight' : ''}">
+        <div style="font-size:14px;font-weight:700;margin-bottom:14px;color:${hl ? '#a78bfa' : '#94a3b8'}">${label} <span style="font-size:11px;font-weight:400;color:var(--muted)">N=${d.n}</span></div>
+        <div class="metric-row"><span style="color:var(--muted)">Win Rate</span><span style="color:${wr_c};font-weight:600">${d.wr}%</span></div>
+        <div class="metric-row"><span style="color:var(--muted)">Sharpe</span><span style="color:${sh_c};font-weight:600">${d.sharpe}</span></div>
+        <div class="metric-row"><span style="color:var(--muted)">Profit Factor</span><span style="color:${pf_c};font-weight:600">${d.pf}</span></div>
+      </div>`;
   });
 
-  // ─── SHARPE ───────────────────────────────────────────────────────────────
+  // ── Sharpe bar chart
   new Chart(document.getElementById('sharpeChart'), {
     type: 'bar',
     data: {
-      labels: LABELS,
-      datasets: [{
-        data: SIGNALS.map(s => DATA[s].sharpe),
-        backgroundColor: SIGNALS.map(s => DATA[s].sharpe >= 0 ? 'rgba(34,211,238,0.25)' : 'rgba(244,63,94,0.25)'),
-        borderColor:     SIGNALS.map(s => DATA[s].sharpe >= 0 ? '#22d3ee' : '#f43f5e'),
-        borderWidth: 1.5, borderRadius: 4,
-      }]
+      labels: SIGS.map(s => s.name),
+      datasets: [{ label: 'Sharpe', data: SIGS.map(s => s.sharpe),
+        backgroundColor: SIGS.map(s => s.name === 'a_plus' ? 'rgba(167,139,250,0.45)' : s.sharpe >= 1.5 ? 'rgba(34,211,238,0.35)' : s.sharpe >= 0 ? 'rgba(34,211,238,0.15)' : 'rgba(244,63,94,0.25)'),
+        borderColor:     SIGS.map(s => s.name === 'a_plus' ? '#a78bfa' : s.sharpe >= 0 ? '#22d3ee' : '#f43f5e'),
+        borderWidth: 1.5, borderRadius: 4 }]
     },
-    options: {
-      responsive: true,
-      plugins: {
-        legend: { display: false },
-        tooltip: { callbacks: { label: ctx => ` Sharpe ${ctx.parsed.y.toFixed(2)}` } }
-      },
-      scales: {
-        y: { grid: gridOpts, ticks: tickOpts },
-        x: { grid: { display: false }, ticks: tickOpts }
-      }
+    options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => ` Sharpe ${ctx.parsed.x.toFixed(2)}` } } },
+      scales: { x: { grid: gridOpts, ticks: tickOpts }, y: { grid: { display: false }, ticks: { ...tickOpts, color: '#94a3b8' } } }
     }
   });
 
-  // ─── SIGNAL TABLE ─────────────────────────────────────────────────────────
-  const BADGE_CLASS  = { highvol:'badge-hv', breakout:'badge-bk', inside:'badge-in', gap_down:'badge-gd', gap_up:'badge-gu', trend:'badge-tr' };
-  const BADGE_LABEL  = { highvol:'HV★', breakout:'BK', inside:'ID', gap_down:'G-', gap_up:'G+', trend:'TREND' };
-  const VERDICTS     = { highvol:['buy','TRADE'], breakout:['buy','TRADE'], inside:['edge','EDGE'], gap_down:['edge','SLIGHT'], gap_up:['fade','FADE'], trend:['fade','SKIP'] };
-
-  const tbody = document.getElementById('signalTable');
-  SIGNALS.forEach(sig => {
-    const d = DATA[sig];
-    const [vc, vl] = VERDICTS[sig];
-    const row = document.createElement('tr');
-    row.innerHTML = `
-      <td><span class="sig-badge ${BADGE_CLASS[sig]}">${BADGE_LABEL[sig]}</span></td>
-      <td style="color:#94a3b8">${d.n}</td>
-      <td style="color:${d.wr > 52 ? '#22d3ee' : d.wr < 50 ? '#f87171' : '#94a3b8'}">${d.wr.toFixed(1)}%</td>
-      <td style="color:${d.sharpe > 1 ? '#22d3ee' : d.sharpe > 0 ? '#fbbf24' : '#f87171'}">${d.sharpe.toFixed(2)}</td>
-      <td style="color:${d.pf > 1.2 ? '#22d3ee' : d.pf > 1.0 ? '#fbbf24' : '#f87171'}">${d.pf.toFixed(2)}</td>
-      <td style="color:${d.ev > 0 ? '#22d3ee' : '#f87171'}">${d.ev > 0 ? '+' : ''}${d.ev.toFixed(3)}%</td>
-      <td><span class="verdict verdict-${vc === 'buy' ? 'buy' : vc === 'fade' ? 'fade' : 'edge'}">${vl}</span></td>
-    `;
-    tbody.appendChild(row);
-  });
-
-  // ─── EQUITY CURVE ─────────────────────────────────────────────────────────
-  function buildCurve(wr, winRet, lossRet, n) {
-    const pts = [1000]; let eq = 1000;
-    for (let i = 0; i < n; i++) {
-      const w = Math.random() < wr;
-      eq *= 1 + (w ? winRet : -lossRet) / 100;
-      if (i % 8 === 0) pts.push(+eq.toFixed(2));
-    }
-    return pts;
-  }
-  const hv_eq = buildCurve(0.55, 0.9, 0.65, 240);
-  const bk_eq = buildCurve(0.555, 0.7, 0.55, 240);
-  const tr_eq = buildCurve(0.49, 0.65, 0.72, 240);
-  const N = Math.max(hv_eq.length, bk_eq.length, tr_eq.length);
-
-  new Chart(document.getElementById('equityChart'), {
-    type: 'line',
-    data: {
-      labels: Array.from({length: N}, (_, i) => i),
-      datasets: [
-        { label: 'HV★ (volatile)', data: hv_eq, borderColor: '#22d3ee', borderWidth: 2, pointRadius: 0, tension: 0.3, fill: false },
-        { label: 'Breakout (volatile)', data: bk_eq, borderColor: '#60a5fa', borderWidth: 2, pointRadius: 0, tension: 0.3, fill: false },
-        { label: 'Trend (skip)', data: tr_eq, borderColor: '#f43f5e', borderWidth: 1.5, borderDash: [4,4], pointRadius: 0, tension: 0.3, fill: false },
-      ]
-    },
-    options: {
-      responsive: true,
-      plugins: {
-        legend: { display: true, labels: { color: '#94a3b8', boxWidth: 12, font: { size: 11 } } },
-        tooltip: { callbacks: { label: ctx => ` $${ctx.parsed.y.toFixed(0)}` } }
-      },
-      scales: {
-        y: { grid: gridOpts, ticks: { ...tickOpts, callback: v => '$' + v.toFixed(0) } },
-        x: { grid: { display: false }, ticks: { ...tickOpts, callback: (v, i) => i % 8 === 0 ? 'T+' + v * 8 : '' } }
-      }
-    }
-  });
-
-  // ─── REGIME CHART ─────────────────────────────────────────────────────────
-  const regimeLabels = ['HV (volatile)', 'HV (normal)', 'HV (calm)', 'BK (volatile)', 'BK (normal)', 'BK (calm)', 'ID (calm)', 'ID (volatile)'];
-  const regimeSharpe = [2.48, -3.58, -1.65, 1.65, -2.72, -3.20, 5.44, 0.58];
-  const regimeColors = regimeSharpe.map(v => v >= 0 ? 'rgba(34,211,238,0.30)' : 'rgba(244,63,94,0.30)');
-  const regimeBorders = regimeSharpe.map(v => v >= 0 ? '#22d3ee' : '#f43f5e');
-
-  new Chart(document.getElementById('regimeChart'), {
+  // ── Win Rate bar chart
+  new Chart(document.getElementById('wrChart'), {
     type: 'bar',
     data: {
-      labels: regimeLabels,
-      datasets: [{
-        data: regimeSharpe,
-        backgroundColor: regimeColors,
-        borderColor: regimeBorders,
-        borderWidth: 1.5, borderRadius: 4,
-      }]
+      labels: SIGS.map(s => s.name),
+      datasets: [{ label: 'Win %', data: SIGS.map(s => s.wr),
+        backgroundColor: SIGS.map(s => s.name === 'a_plus' ? 'rgba(167,139,250,0.45)' : s.wr >= 55 ? 'rgba(34,211,238,0.35)' : s.wr >= 50 ? 'rgba(251,191,36,0.25)' : 'rgba(244,63,94,0.25)'),
+        borderColor:     SIGS.map(s => s.name === 'a_plus' ? '#a78bfa' : s.wr >= 55 ? '#22d3ee' : s.wr >= 50 ? '#fbbf24' : '#f43f5e'),
+        borderWidth: 1.5, borderRadius: 4 }]
     },
-    options: {
-      responsive: true,
-      plugins: {
-        legend: { display: false },
-        tooltip: { callbacks: { label: ctx => ` Sharpe ${ctx.parsed.y.toFixed(2)}` } }
-      },
+    options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => ` ${ctx.parsed.x.toFixed(1)}%` } } },
       scales: {
-        y: { grid: gridOpts, ticks: tickOpts },
-        x: { grid: { display: false }, ticks: tickOpts }
-      }
-    }
-  });
-
-  // ─── COMBO DATA ───────────────────────────────────────────────────────────
-  const COMBOS = [
-    { name: 'HV+G↓',      wr: 55, sharpe: 3.10, dir: 'calls ↑',  vc: 'buy',  vl: 'TRADE' },
-    { name: 'ID (calm)',   wr: 50, sharpe: 5.44, dir: 'both',     vc: 'buy',  vl: 'TRADE' },
-    { name: 'HV+ID',      wr: 54, sharpe: 2.70, dir: 'calls ↑',  vc: 'buy',  vl: 'TRADE' },
-    { name: 'HV★ PURE',   wr: 55, sharpe: 2.48, dir: 'calls ↑',  vc: 'buy',  vl: 'TRADE' },
-    { name: 'HV+G↑ FADE', wr: 55, sharpe: 1.76, dir: 'puts ↓',   vc: 'buy',  vl: 'FADE' },
-    { name: 'BK (vol)',    wr: 60, sharpe: 1.65, dir: 'with BK',  vc: 'buy',  vl: 'TRADE' },
-    { name: 'HV+BK',      wr: 58, sharpe: 0.89, dir: 'with BK',  vc: 'edge', vl: 'EDGE' },
-    { name: 'GD only',    wr: 50, sharpe: 0.15, dir: 'calls ↑',  vc: 'edge', vl: 'WEAK' },
-    { name: 'GU only',    wr: 49, sharpe:-0.32,  dir: 'skip',     vc: 'fade', vl: 'SKIP' },
-  ];
-
-  new Chart(document.getElementById('comboChart'), {
-    type: 'bar',
-    data: {
-      labels: COMBOS.map(c => c.name),
-      datasets: [{
-        label: 'Sharpe',
-        data: COMBOS.map(c => c.sharpe),
-        backgroundColor: COMBOS.map(c => c.sharpe >= 1.5 ? 'rgba(34,211,238,0.35)' : c.sharpe >= 0 ? 'rgba(34,211,238,0.15)' : 'rgba(244,63,94,0.25)'),
-        borderColor:     COMBOS.map(c => c.sharpe >= 0 ? '#22d3ee' : '#f43f5e'),
-        borderWidth: 1.5, borderRadius: 4,
-      }]
-    },
-    options: {
-      indexAxis: 'y',
-      responsive: true,
-      plugins: {
-        legend: { display: false },
-        tooltip: { callbacks: { label: ctx => ` Sharpe ${ctx.parsed.x.toFixed(2)}` } }
-      },
-      scales: {
-        x: { grid: gridOpts, ticks: tickOpts },
+        x: { min: 45, max: 75, grid: gridOpts, ticks: { ...tickOpts, callback: v => v + '%' } },
         y: { grid: { display: false }, ticks: { ...tickOpts, color: '#94a3b8' } }
       }
     }
   });
 
-  const ctBody = document.getElementById('comboTable');
-  COMBOS.forEach(c => {
-    const row = document.createElement('tr');
-    row.innerHTML = `
-      <td><span class="sig-badge badge-combo">${c.name}</span></td>
-      <td style="color:${c.wr > 52 ? '#22d3ee' : '#94a3b8'}">${c.wr}%</td>
-      <td style="color:${c.sharpe > 1.5 ? '#22d3ee' : c.sharpe > 0 ? '#fbbf24' : '#f87171'}">${c.sharpe.toFixed(2)}</td>
-      <td style="color:#94a3b8;font-size:11px">${c.dir}</td>
-      <td><span class="verdict verdict-${c.vc === 'buy' ? 'buy' : c.vc === 'fade' ? 'fade' : 'edge'}">${c.vl}</span></td>
-    `;
-    ctBody.appendChild(row);
-  });
-
-  // ─── HOLD PERIOD ──────────────────────────────────────────────────────────
-  const holdLabels = ['Intraday', 'Overnight (1D)', '2D', '3D'];
-  const hvSharpe   = [1.98, 2.48, 1.85, -0.20];
-  const bkSharpe   = [1.30, 1.65, 0.63,  0.32];
-
-  new Chart(document.getElementById('holdChart'), {
+  // ── Equity curve
+  new Chart(document.getElementById('eqChart'), {
     type: 'line',
     data: {
-      labels: holdLabels,
-      datasets: [
-        {
-          label: 'highvol', data: hvSharpe,
-          borderColor: '#22d3ee', backgroundColor: 'rgba(34,211,238,0.08)',
-          borderWidth: 2.5, pointRadius: 5, pointBackgroundColor: '#22d3ee', tension: 0.3, fill: true,
-        },
-        {
-          label: 'breakout', data: bkSharpe,
-          borderColor: '#60a5fa', backgroundColor: 'rgba(59,130,246,0.05)',
-          borderWidth: 2, pointRadius: 5, pointBackgroundColor: '#60a5fa', tension: 0.3, fill: true,
-        },
-      ]
+      labels: EQ.map((_, i) => i),
+      datasets: [{ label: 'Equity', data: EQ,
+        borderColor: EQ[EQ.length-1] > 100 ? '#22d3ee' : '#f43f5e',
+        backgroundColor: EQ[EQ.length-1] > 100 ? 'rgba(34,211,238,0.06)' : 'rgba(244,63,94,0.06)',
+        borderWidth: 2, pointRadius: 0, fill: true, tension: 0.2 }]
     },
-    options: {
-      responsive: true,
-      plugins: {
-        legend: { display: true, labels: { color: '#94a3b8', boxWidth: 12, font: { size: 11 } } },
-        tooltip: { callbacks: { label: ctx => ` Sharpe ${ctx.parsed.y.toFixed(2)}` } }
-      },
+    options: { responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false },
+        tooltip: { callbacks: { label: ctx => ` $$${ctx.parsed.y.toFixed(2)}` } } },
       scales: {
-        y: { grid: gridOpts, ticks: tickOpts },
-        x: { grid: { display: false }, ticks: tickOpts }
+        y: { grid: gridOpts, ticks: { ...tickOpts, callback: v => '$' + v.toFixed(0) } },
+        x: { display: false }
       }
     }
   });
 
-  const hvWr = [56, 55, 49, 49];
-  const bkWr = [56, 60, 53, 53];
-  new Chart(document.getElementById('holdWrChart'), {
+  // ── Options: directional win% vs options win%
+  const hasopts = SIGS.filter(s => s.opt_wr !== null);
+  new Chart(document.getElementById('optChart'), {
     type: 'bar',
     data: {
-      labels: holdLabels,
+      labels: hasopts.map(s => s.name),
       datasets: [
-        { label: 'highvol WR%', data: hvWr, backgroundColor: 'rgba(34,211,238,0.30)', borderColor: '#22d3ee', borderWidth: 1.5, borderRadius: 3 },
-        { label: 'breakout WR%', data: bkWr, backgroundColor: 'rgba(59,130,246,0.30)', borderColor: '#60a5fa', borderWidth: 1.5, borderRadius: 3 },
+        { label: 'Dir Win%', data: hasopts.map(s => s.wr),
+           backgroundColor: 'rgba(34,211,238,0.30)', borderColor: '#22d3ee', borderWidth: 1.5, borderRadius: 3 },
+        { label: 'Opt Win%', data: hasopts.map(s => s.opt_wr),
+           backgroundColor: 'rgba(96,165,250,0.30)', borderColor: '#60a5fa', borderWidth: 1.5, borderRadius: 3 },
       ]
     },
-    options: {
-      responsive: true,
+    options: { responsive: true, maintainAspectRatio: false,
       plugins: {
         legend: { display: true, labels: { color: '#94a3b8', boxWidth: 12, font: { size: 11 } } },
-        tooltip: { callbacks: { label: ctx => ` ${ctx.parsed.y.toFixed(0)}%` } }
+        tooltip: { callbacks: { label: ctx => ` ${ctx.parsed.y.toFixed(1)}%` } }
       },
       scales: {
-        y: { min: 45, max: 65, grid: gridOpts, ticks: { ...tickOpts, callback: v => v + '%' } },
+        y: { min: 0, max: 80, grid: gridOpts, ticks: { ...tickOpts, callback: v => v + '%' } },
         x: { grid: { display: false }, ticks: tickOpts }
-      }
-    }
-  });
-
-  // ─── TOP TICKERS ──────────────────────────────────────────────────────────
-  const tickerNames   = ['INTC', 'BULL', 'FNGU', 'SNAP', 'AMC', 'ARM', 'SOXS', 'PANW', 'PLTR', 'HOOD'];
-  const tickerSharpes = [15, 12, 12, 10, 9, 9, 8, 8, 7, 6];
-
-  new Chart(document.getElementById('tickerChart'), {
-    type: 'bar',
-    data: {
-      labels: tickerNames,
-      datasets: [{
-        data: tickerSharpes,
-        backgroundColor: tickerSharpes.map(v => v >= 10 ? 'rgba(34,211,238,0.40)' : v >= 7 ? 'rgba(34,211,238,0.22)' : 'rgba(34,211,238,0.12)'),
-        borderColor: '#22d3ee',
-        borderWidth: 1.5, borderRadius: 4,
-      }]
-    },
-    options: {
-      responsive: true,
-      plugins: {
-        legend: { display: false },
-        tooltip: { callbacks: { label: ctx => ` Sharpe ${ctx.parsed.y}` } }
-      },
-      scales: {
-        y: { grid: gridOpts, ticks: tickOpts },
-        x: { grid: { display: false }, ticks: { ...tickOpts, color: '#94a3b8' } }
       }
     }
   });

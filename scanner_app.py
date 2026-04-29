@@ -274,23 +274,27 @@ async def api_vix(req: Request):
 
 @app.get("/api/contract")
 async def api_contract(req: Request, ticker: str = "SPY", direction: str = "up",
-                       price: float = 0, dte_type: str = "weekly"):
+                       price: float = 0, dte_type: str = "weekly",
+                       target: float = 0):
     _check_pin(req)
     _check_rate(req, "contract", limit=10, window=60)
     ticker    = _validate_ticker(ticker)
     direction = _validate_enum(direction, _VALID_DIRECTION, "direction")
     dte_type  = _validate_enum(dte_type,  _VALID_DTE_TYPE,  "dte_type")
-    # Guard NaN/Inf (comparisons with NaN always return False, bypassing range check)
     import math
     if not math.isfinite(price) or not (0 <= price < 1_000_000):
         raise HTTPException(400, "Invalid price")
+    if not math.isfinite(target) or not (0 <= target < 1_000_000):
+        target = 0
     loop = asyncio.get_event_loop()
     vix  = await loop.run_in_executor(None, fetch_vix)
+    _dte_mode = {"0dte": "0dte", "weekly": "weekly", "swing": "monthly"}.get(dte_type, "weekly")
     try:
         contracts = await asyncio.wait_for(
             loop.run_in_executor(
                 None, lambda: get_best_contract(ticker, direction, price, vix,
-                                                top_n=3, dte_type=dte_type)
+                                                top_n=3, dte_mode=_dte_mode,
+                                                target_price=target)
             ), timeout=30.0
         )
     except asyncio.TimeoutError:
@@ -635,14 +639,18 @@ body::before{
 .vix-chip.fear{color:var(--red);border-color:rgba(255,59,48,.2);background:rgba(255,59,48,.07)}
 .vix-chip.calm{color:#248a3d;border-color:rgba(52,199,89,.2);background:rgba(52,199,89,.07)}
 .vix-chip.elevated{color:#c93400;border-color:rgba(255,159,10,.2);background:rgba(255,159,10,.07)}
-.bias-row{display:flex;align-items:center;gap:8px;font-size:12px}
-.bias-c{color:#248a3d;font-weight:700}
-.bias-p{color:var(--red);font-weight:700}
+.bias-row{display:flex;align-items:center;gap:8px;font-size:13px}
+.bias-c{color:#248a3d;font-weight:800;font-size:13px}
+.bias-p{color:var(--red);font-weight:800;font-size:13px}
 .bias-sep{color:var(--border2)}
 .bias-dir{font-weight:800;font-size:13px}
 .bias-dir.bull{color:#248a3d}
 .bias-dir.bear{color:var(--red)}
 .bias-dir.neut{color:var(--sub)}
+.flow-split-bar{display:none;height:5px;border-radius:3px;overflow:hidden;background:var(--border2);margin:3px 0 1px}
+.flow-split-bar.visible{display:block}
+.flow-split-fill{height:100%;float:left;background:#248a3d;transition:width .4s ease}
+.flow-split-put{height:100%;overflow:hidden;background:var(--red)}
 
 /* ── Tab bar ─────────────────────────────────────────────────── */
 .tab-btn{
@@ -1011,6 +1019,10 @@ body::before{
     <span class="bias-p" id="bp">PUTS —</span>
     <span class="bias-sep">·</span>
     <span class="bias-dir neut" id="bd">—</span>
+  </div>
+  <div class="flow-split-bar" id="flow-split-bar">
+    <div class="flow-split-fill" id="flow-split-fill" style="width:50%"></div>
+    <div class="flow-split-put"></div>
   </div>
 </div>
 
@@ -1400,8 +1412,13 @@ function doScan(retryCount){
     S.scanning=true;S.callFlow=0;S.putFlow=0;S.signals=[];S.hotContracts=[];
     setView('signals');
     document.getElementById('view-toggle').style.display='none';
-    document.getElementById('flow-feed').innerHTML='';
-    document.getElementById('hot-feed').innerHTML='';
+    document.getElementById('flow-feed').textContent='';
+    document.getElementById('hot-feed').textContent='';
+    document.getElementById('flow-split-bar').classList.remove('visible');
+    document.getElementById('flow-split-fill').style.width='50%';
+    document.getElementById('bc').textContent='CALLS —';
+    document.getElementById('bp').textContent='PUTS —';
+    const _bd=document.getElementById('bd');_bd.textContent='—';_bd.className='bias-dir neut';
     document.getElementById('pw').style.display='block';
     document.getElementById('pl').style.display='block';
   }
@@ -1469,6 +1486,15 @@ function updateBias(){
   if(cf>pf*1.2){bd.textContent='▲ BULL';bd.className='bias-dir bull'}
   else if(pf>cf*1.2){bd.textContent='▼ BEAR';bd.className='bias-dir bear'}
   else{bd.textContent='~ EVEN';bd.className='bias-dir neut'}
+  // split bar
+  const bar=document.getElementById('flow-split-bar');
+  const fill=document.getElementById('flow-split-fill');
+  const total=cf+pf;
+  if(total>0){
+    const callPct=Math.round(cf/total*100);
+    fill.style.width=callPct+'%';
+    bar.classList.add('visible');
+  }
 }
 
 // ── Render HOT contracts ───────────────────────────────────────────────────

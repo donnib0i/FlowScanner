@@ -500,10 +500,11 @@ def get_contract_display(c: Optional[Dict], market_open: bool = True) -> Dict:
         "vol":        c["vol"],
         "oi":         c["oi"],
         "vol_oi_str": vol_oi_str,
-        "iv":         round(c.get("iv", 0), 3),
-        "roi":        c.get("roi", 0),
-        "score":      c.get("score", 0),
-        "empty":      False,
+        "iv":           round(c.get("iv", 0), 3),
+        "roi":          c.get("roi", 0),
+        "score":        c.get("score", 0),
+        "target_price": c.get("target_price"),
+        "empty":        False,
     }
 
 
@@ -727,7 +728,11 @@ def _nan0(v):
 
 
 def _score_contract(row: pd.Series, S: float, T: float, direction: str,
-                    target_delta: float = 0.45, dte_mode: str = "0dte") -> float:
+                    target_delta: float = 0.45, dte_mode: str = "0dte",
+                    target_price: float = 0.0) -> float:
+    """Score a contract row. When target_price is set, strike proximity to that
+    target and OI/volume at that strike become the dominant ranking factors —
+    matching how a trader picks the strike at their gap/level/ATH target."""
     try:
         K     = float(row["strike"])
         iv    = _nan0(row.get("impliedVolatility", 0.3)) or 0.3
@@ -772,8 +777,7 @@ def _score_contract(row: pd.Series, S: float, T: float, direction: str,
         # ROI at 1-sigma target, capped to prevent micro-priced outliers distorting rank
         roi_score = min(1.0, max(0.0, (ev_1sigma - mid) / (mid + 0.01)) / 5.0)
 
-        # Target delta (VIX-adjusted, target range 0.25–0.40)
-        # Fixed ±0.15 tolerance band — symmetric, no asymmetric penalty for low strikes
+        # Liquidity: OI + volume (log-scaled). Heavy OI at a level = institutional agreement.
         vol_oi_ratio = cvol / max(oi, 1)
         voi_score    = min(1.0, math.log10(max(vol_oi_ratio, 1.0)) / math.log10(50))
         delta_score  = max(0.0, 1.0 - abs(delta - target_delta) / 0.15)
@@ -789,7 +793,6 @@ def _score_contract(row: pd.Series, S: float, T: float, direction: str,
         price_penalty = 1.0 if mid <= 10.0 else max(0.6, 1.0 - (mid - 10.0) / 40.0)
 
         # Strike gravity — round number strikes attract institutional OI (gamma levels)
-        # Strikes at $5 increments are the market's focal points for 0DTE hedging
         if K % 50 == 0:
             strike_gravity = 1.08
         elif K % 25 == 0:
@@ -801,6 +804,20 @@ def _score_contract(row: pd.Series, S: float, T: float, direction: str,
         else:
             strike_gravity = 1.0
 
+        # ── Target-price mode ─────────────────────────────────────────────────
+        # When caller provides a target (unfilled gap, heavy level, ATH), the
+        # strike closest to that target with the most OI/volume wins.
+        # Target score decays with distance as a % of the underlying price.
+        if target_price > 0:
+            dist_pct   = abs(K - target_price) / max(target_price, 1.0)
+            # Full score within 1% of target; drops to 0 at 8% away
+            target_score = max(0.0, 1.0 - dist_pct / 0.08)
+            # Heavy OI at the target strike = market sees the same level
+            heavy_oi_score = min(1.0, math.log10(max(oi + 1, 1)) / 4.5)
+            # Weights: target proximity 40%, OI at target 30%, spread 15%, liq 15%
+            return (target_score * 40 + heavy_oi_score * 30 +
+                    spread_score * 15 + liq_score * 15) * stale_penalty * price_penalty * strike_gravity
+
         return (roi_score * 26 + delta_score * 20 + liq_score * 34 + spread_score * 10 + voi_score * 10) * stale_penalty * price_penalty * strike_gravity
     except Exception:
         return -1.0
@@ -808,7 +825,8 @@ def _score_contract(row: pd.Series, S: float, T: float, direction: str,
 
 def get_best_contract(ticker: str, direction: str, price: float,
                       vix: float = -1.0, top_n: int = 1,
-                      dte_mode: str = "0dte") -> Optional[Dict]:
+                      dte_mode: str = "0dte",
+                      target_price: float = 0.0) -> Optional[Dict]:
     """
     direction: "up" → calls, "down" → puts.
     dte_mode: "0dte" (same-day only), "weekly" (2–7 DTE), "monthly" (8–45 DTE), "all" (no constraint)
@@ -914,7 +932,7 @@ def get_best_contract(ticker: str, direction: str, price: float,
                 continue
 
             for _, row in df.iterrows():
-                sc = _score_contract(row, price, T, direction, target_delta, dte_mode)
+                sc = _score_contract(row, price, T, direction, target_delta, dte_mode, target_price)
                 if sc <= 0:
                     continue
                 K     = float(row["strike"])
@@ -936,20 +954,21 @@ def get_best_contract(ticker: str, direction: str, price: float,
                 roi_pct = round((ev_raw - mid) / (mid + 0.01) * 100, 1) if mid > 0 else 0.0
 
                 scored.append((sc, {
-                    "exp":    exp,
-                    "dte":    d,
-                    "strike": K,
-                    "type":   otype,
-                    "delta":  delta,
-                    "iv":     iv,
-                    "oi":     oi,
-                    "vol":    cvol,
-                    "bid":    bid,
-                    "ask":    ask,
-                    "mid":    mid,
-                    "stale":  stale,
-                    "score":  round(sc, 1),
-                    "roi":    roi_pct,    # expected % ROI at 1-sigma move
+                    "exp":          exp,
+                    "dte":          d,
+                    "strike":       K,
+                    "type":         otype,
+                    "delta":        delta,
+                    "iv":           iv,
+                    "oi":           oi,
+                    "vol":          cvol,
+                    "bid":          bid,
+                    "ask":          ask,
+                    "mid":          mid,
+                    "stale":        stale,
+                    "score":        round(sc, 1),
+                    "roi":          roi_pct,
+                    "target_price": round(target_price, 2) if target_price else None,
                 }))
 
         # Sort by score descending; tiebreak by OI descending (contracts within 3 pts prefer higher OI)
@@ -1749,10 +1768,17 @@ def _process_ticker(ticker: str, hist: pd.DataFrame, live_price: float = 0.0, sp
         rel_vol    = today_vol / avg_vol if avg_vol > 0 else 0.0
         high_vol   = rel_vol > 1.4
 
+        # Double inside day check
+        double_inside_day = False
+        if inside_day and len(hist60) >= 3:
+            day2 = hist60.iloc[-3]
+            double_inside_day = (float(yesterday["High"]) < float(day2["High"]) and
+                                 float(yesterday["Low"])  > float(day2["Low"]))
+
         # Breakout signal: price closed above prior day high (bull) or below prior day low (bear)
         # Requires vol confirmation (>1.2x avg) to filter noise
         breakout: Optional[str] = None
-        if not inside_day:  # inside day can't be a breakout by definition
+        if not inside_day:
             if price > yest_high and rel_vol > 1.2:
                 breakout = "bull"
             elif price < yest_low and rel_vol > 1.2:
@@ -1766,7 +1792,6 @@ def _process_ticker(ticker: str, hist: pd.DataFrame, live_price: float = 0.0, sp
         price_loc = (price - today_low) / day_range if day_range > 0 else 0.5
 
         # HV20: annualized 20-day historical volatility of log returns
-        # Backtest finding: highvol signal only has edge when HV20 >= 0.35 (volatile stock)
         try:
             closes_20 = hist60["Close"].dropna().tail(21)
             if len(closes_20) >= 10:
@@ -1781,6 +1806,38 @@ def _process_ticker(ticker: str, hist: pd.DataFrame, live_price: float = 0.0, sp
             hv20 = 0.0
 
         hv_regime = "volatile" if hv20 >= 0.35 else ("normal" if hv20 >= 0.20 else "calm")
+
+        # ── Ripster EMA Clouds ──────────────────────────────────────────────────
+        # EMA9 = short momentum, EMA34 = trend spine, EMA200 = macro direction
+        try:
+            c_series = hist60["Close"].dropna()
+            ema9_val   = float(c_series.ewm(span=9,   adjust=False).mean().iloc[-1])
+            ema34_val  = float(c_series.ewm(span=34,  adjust=False).mean().iloc[-1])
+            ema200_val = float(c_series.ewm(span=200, adjust=False).mean().iloc[-1])
+            # EMA34 slope: compare to 3 bars ago
+            ema34_prev = float(c_series.ewm(span=34, adjust=False).mean().iloc[-4]) if len(c_series) >= 4 else ema34_val
+            ema_cloud_bull = (price > ema9_val and ema9_val > ema34_val and ema34_val > ema34_prev)
+            ema_cloud_bear = (price < ema9_val and ema9_val < ema34_val and ema34_val < ema34_prev)
+            above_ema200   = price > ema200_val
+        except Exception:
+            ema9_val = ema34_val = ema200_val = 0.0
+            ema_cloud_bull = ema_cloud_bear = False
+            above_ema200 = True
+
+        # ── Rolling MVWAP (20-bar volume-weighted avg price) ─────────────────
+        try:
+            h60 = hist60.dropna(subset=["Close", "High", "Low", "Volume"])
+            typical_60  = (h60["High"] + h60["Low"] + h60["Close"]) / 3
+            mvwap_series = (typical_60 * h60["Volume"]).rolling(20).sum() / h60["Volume"].rolling(20).sum()
+            mvwap        = float(mvwap_series.iloc[-1]) if not pd.isna(mvwap_series.iloc[-1]) else None
+            mvwap_prev   = float(mvwap_series.iloc[-2]) if len(mvwap_series) >= 2 and not pd.isna(mvwap_series.iloc[-2]) else mvwap
+            above_vwap   = bool(price > mvwap) if mvwap else None
+            vwap_reclaim = bool(mvwap is not None and mvwap_prev is not None
+                                and float(yesterday["Close"]) < mvwap_prev and price >= mvwap)
+        except Exception:
+            mvwap = mvwap_prev = None
+            above_vwap = None
+            vwap_reclaim = False
 
         # IVR proxy: 52-week high/low from downloaded history — no fast_info needed
         try:
@@ -1810,20 +1867,41 @@ def _process_ticker(ticker: str, hist: pd.DataFrame, live_price: float = 0.0, sp
         nearest_gap     = unfilled_gaps[0] if unfilled_gaps else None
 
         # ── Signal combo classification (backtest-derived) ──────────────────────
-        # Key combos from 60-day backtest on 80 tickers, 2800+ signals:
-        #   hv_only (no gap/bk/inside) + volatile:  Sharpe 4.94, PF 2.38  ← BEST
-        #   hv + inside + volatile:                  Sharpe 3.07
-        #   gap_down + hv + volatile:                Sharpe 2.91
-        #   gap_up + hv (FADE direction):            Sharpe 2.42  ← note: fade, not continuation
-        #   breakout only:                           Sharpe 1.33
-        #   highvol in calm market (HV20 < 0.30):   PF 0.75  ← LOSING, suppress
+        # Key combos from 60-day backtest on 80 tickers, 2134 signals:
+        #   BK+GU+HV+TR (breakout+gap_up+highvol+trend):  85.0% dir WR, +18.3% avg opt P&L ← S TIER
+        #   BK+GD+HV+TR (breakout+gap_dn+highvol+trend):  90.0% dir WR  ← S TIER (n=10)
+        #   BK+GU (breakout+gap_up):                       75.9% dir WR, +24.0% avg opt P&L ← A TIER
+        #   hv_only (no gap/bk/inside) + volatile:         Sharpe 4.94, PF 2.38 ← A TIER
+        #   hv + inside + volatile:                        Sharpe 3.07
+        #   gap_down + hv + volatile:                      Sharpe 2.91
+        #   gap_up + hv (FADE direction):                  Sharpe 2.42  ← note: fade, not continuation
+        #   gap_up alone:                                  62.1% dir WR ← B TIER
+        #   unfilled_gap alone:                            41.9% dir WR ← AVOID
+        #   highvol in calm market (HV20 < 0.30):          PF 0.75 ← LOSING, suppress
         is_hv_only   = high_vol and not gap_flag and not inside_day and not breakout
         is_hv_inside = high_vol and inside_day
         is_hv_gapdn  = high_vol and gap_flag == "gap_down"
         is_hv_gapup  = high_vol and gap_flag == "gap_up"   # fade signal, direction is DOWN
         is_calm_hv   = high_vol and hv_regime == "calm"    # losing in backtest
 
-        if is_hv_only:
+        # Trend-strong: strong bodied candle (body > 70% of range), meaningful vol
+        # Same definition as backtest.py detect_signals() — 85-90% WR when combined with BK+GU/GD
+        _body_pct  = abs(price - open_p) / open_p if open_p > 0 else 0.0
+        _range_pct = (today_high - today_low) / today_low if today_low > 0 else 0.0
+        trend_strong = (_body_pct > 0.025 and
+                        _body_pct / max(_range_pct, 0.001) > 0.70 and
+                        rel_vol >= 1.3)
+
+        is_bk_gu    = bool(breakout == "bull" and gap_flag == "gap_up")
+        is_bk_gd    = bool(breakout == "bear" and gap_flag == "gap_down")
+
+        if is_bk_gu and high_vol and trend_strong:
+            signal_combo = "BK+GU+HV+TR"     # 85.0% dir WR — S tier
+        elif is_bk_gd and high_vol and trend_strong:
+            signal_combo = "BK+GD+HV+TR"     # 90.0% dir WR — S tier
+        elif is_bk_gu:
+            signal_combo = "BK+GU"            # 75.9% dir WR — A tier
+        elif is_hv_only:
             signal_combo = "HV_PURE"
         elif is_hv_inside:
             signal_combo = "HV+ID"
@@ -1843,6 +1921,24 @@ def _process_ticker(ticker: str, hist: pd.DataFrame, live_price: float = 0.0, sp
             signal_combo = "GU"
         else:
             signal_combo = ""
+
+        # Combo rank — tiered by backtest-validated direction accuracy
+        # S: 80%+ dir WR  A: 70-79%  B: 55-69%  C: <55%  AVOID: <50% avg
+        _combo_tier = {
+            "BK+GU+HV+TR": "S",   # 85.0% WR
+            "BK+GD+HV+TR": "S",   # 90.0% WR
+            "BK+GU":        "A",   # 75.9% WR
+            "HV_PURE":      "A",   # Sharpe 4.94, volatile only
+            "HV+ID":        "A",   # Sharpe 3.07
+            "HV+GD":        "B",   # Sharpe 2.91
+            "HV+GU_FADE":   "B",   # Sharpe 2.42 (fade)
+            "HV+BK":        "B",   # validated but mixed
+            "BK":           "B",   # 66.7% WR
+            "GU":           "B",   # 62.1% WR
+            "GD":           "C",   # 53.4% WR
+            "ID":           "C",   # 50.0% WR
+        }
+        combo_rank = _combo_tier.get(signal_combo, "C")
 
         # ── Setup quality 0.0–1.0 ────────────────────────────────────────────
         # Weights from backtest. Volatile regime (HV20 >= 0.35) required for full HV credit.
@@ -1883,6 +1979,10 @@ def _process_ticker(ticker: str, hist: pd.DataFrame, live_price: float = 0.0, sp
         if is_hv_gapdn and hv_regime == "volatile":   sq = min(1.0, sq + 0.12)  # Sharpe 3.1
         if is_hv_inside and hv_regime == "volatile":  sq = min(1.0, sq + 0.10)  # Sharpe 2.7
         if is_hv_gapup:                               sq = min(1.0, sq + 0.08)  # Sharpe 1.76 (fade)
+        # New backtest-validated bonuses (60d, 2134 signals):
+        if is_bk_gu:                                  sq = min(1.0, sq + 0.25)  # BK+GU 75.9% WR
+        if is_bk_gu and high_vol and trend_strong:    sq = min(1.0, sq + 0.10)  # S-tier boost
+        if is_bk_gd and high_vol and trend_strong:    sq = min(1.0, sq + 0.35)  # BK+GD+HV+TR 90% WR
 
         # Level bonuses
         if near_level and near_level["strength"] >= 5:           sq = min(1.0, sq + 0.25)
@@ -1914,6 +2014,7 @@ def _process_ticker(ticker: str, hist: pd.DataFrame, live_price: float = 0.0, sp
             "hv20":          hv20,
             "hv_regime":     hv_regime,
             "signal_combo":  signal_combo,
+            "combo_rank":    combo_rank,
             "rs_vs_spy":     rs_vs_spy,
             "today_vol":     today_vol,
             "avg_vol":       avg_vol,
@@ -2024,8 +2125,19 @@ def enrich_contracts(results: List[Dict], top_n: int = 20, vix: float = -1.0,
     for i, r in enumerate(ranked, 1):
         sys.stdout.write(f"\r  Options [{i}/{len(ranked)}] {Fore.CYAN}{r['ticker']:<6}{Style.RESET_ALL}  ")
         sys.stdout.flush()
+        # Derive target price: unfilled gap → heavy level → ATH proxy (none)
+        # Unfilled gap: use mid if the gap is in the direction of the trade
+        _tgt = 0.0
+        ng = r.get("nearest_gap")
+        nl = r.get("near_level")
+        if ng:
+            dtf = ng.get("direction_to_fill", "")
+            if (r["direction"] == "up" and dtf == "up") or (r["direction"] == "down" and dtf == "down"):
+                _tgt = float(ng.get("mid", 0) or 0)
+        if not _tgt and nl and nl.get("strength", 0) >= 3:
+            _tgt = float(nl.get("price", 0) or 0)
         r["contract"] = get_best_contract(r["ticker"], r["direction"], r["price"], vix=vix,
-                                          dte_mode=dte_mode)
+                                          dte_mode=dte_mode, target_price=_tgt)
         time.sleep(0.15)
     sys.stdout.write("\r" + " " * 55 + "\r")
     sys.stdout.flush()
