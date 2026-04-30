@@ -15,7 +15,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, Request
+import collections
+import hmac
+from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -41,8 +43,53 @@ from scanner import (
     fmt_flow,
 )
 
+# ── Rate limiter ───────────────────────────────────────────────────────────────
+_MAX_RL_KEYS = 2048
+
+class _RateLimiter:
+    def __init__(self):
+        self._windows: dict = {}
+
+    def allow(self, key: str, limit: int, window_secs: int) -> bool:
+        now = time.time()
+        if len(self._windows) >= _MAX_RL_KEYS and key not in self._windows:
+            oldest = min(self._windows, key=lambda k: self._windows[k][0] if self._windows[k] else now)
+            del self._windows[oldest]
+        dq = self._windows.setdefault(key, collections.deque())
+        while dq and now - dq[0] > window_secs:
+            dq.popleft()
+        if len(dq) >= limit:
+            return False
+        dq.append(now)
+        return True
+
+_rl = _RateLimiter()
+
+def _client_ip(req: Request) -> str:
+    fwd = req.headers.get("x-forwarded-for")
+    return fwd.split(",")[0].strip() if fwd else (req.client.host if req.client else "unknown")
+
+def _rate_check(req: Request, endpoint: str, limit: int = 10, window: int = 60):
+    key = f"{_client_ip(req)}:{endpoint}"
+    if not _rl.allow(key, limit, window):
+        raise HTTPException(429, "Too many requests — slow down")
+
+# ── Optional PIN auth ──────────────────────────────────────────────────────────
+_PIN = os.environ.get("FLOWDIGGER_PIN", "").strip()
+
+def _check_pin(req: Request):
+    if not _PIN:
+        return
+    provided = req.query_params.get("pin", "") or req.headers.get("x-pin", "")
+    ip = _client_ip(req)
+    if hmac.compare_digest(provided.encode(), _PIN.encode()):
+        return
+    if not _rl.allow(f"{ip}:auth_fail", limit=10, window=300):
+        raise HTTPException(429, "Too many failed attempts")
+    raise HTTPException(401, "Unauthorized")
+
 # ── App setup ──────────────────────────────────────────────────────────────────
-app = FastAPI(title="FlowScanner", version="2.0")
+app = FastAPI(title="FlowDigger", version="3.0")
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 
@@ -340,7 +387,8 @@ async def health():
 
 
 @app.get("/api/flow")
-async def flow_heatmap():
+async def flow_heatmap(request: Request):
+    _rate_check(request, "flow", limit=20, window=60)
     """Batch-fetch change% and relVol for all FAST_UNIVERSE tickers. Used by ticker heat map."""
     loop = asyncio.get_event_loop()
 
@@ -397,7 +445,8 @@ async def flow_heatmap():
 
 
 @app.get("/api/market")
-async def market_context():
+async def market_context(request: Request):
+    _rate_check(request, "market", limit=20, window=60)
     """Returns SPY/QQQ change%, VIX, market status, and sector heat strip."""
     loop = asyncio.get_event_loop()
 
@@ -461,6 +510,7 @@ async def scan_endpoint(request: Request):
       dynamic: bool
     Streams JSON lines: {"type": "progress"|"result"|"sector"|"done"|"error", ...}
     """
+    _rate_check(request, "scan", limit=5, window=60)
     try:
         body = await request.json()
     except Exception:
@@ -613,7 +663,8 @@ async def scan_endpoint(request: Request):
 
 
 @app.get("/api/breadth")
-async def market_breadth():
+async def market_breadth(request: Request):
+    _rate_check(request, "breadth", limit=10, window=60)
     loop = asyncio.get_event_loop()
     def _fetch():
         import yfinance as yf, warnings
@@ -664,7 +715,8 @@ async def market_breadth():
 
 
 @app.get("/api/events")
-async def economic_events():
+async def economic_events(request: Request):
+    _rate_check(request, "events", limit=10, window=60)
     from datetime import date, timedelta
     today = date.today()
     window_end = today + timedelta(days=7)
@@ -752,6 +804,7 @@ async def run_backtest_api(request: Request):
       stop_pct: float             — stop loss % on option (default 0.50)
       target_pct: float           — profit target % on option (default 1.00)
     """
+    _rate_check(request, "backtest", limit=3, window=60)
     try:
         from backtest import BacktestConfig, run_backtest_cli, calc_metrics
         body = await request.json()
