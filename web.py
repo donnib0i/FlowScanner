@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import collections
+import gc
 import hmac
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
@@ -95,26 +96,12 @@ TEMPLATES_DIR = Path(__file__).parent / "templates"
 
 # ── Fast default universe ──────────────────────────────────────────────────────
 FAST_UNIVERSE = [
-    # Indices / broad market — deepest option chains
-    "SPX", "SPY", "QQQ", "IWM", "DIA",
-    # Mega-cap tech — highest OI, most liquid options
-    "NVDA", "AAPL", "MSFT", "META", "AMZN", "GOOGL", "TSLA",
-    # Semis
-    "AMD", "AVGO", "MU", "ARM", "INTC", "SMCI",
-    # High-beta / meme / crypto-adjacent — real options volume
-    "COIN", "PLTR", "MSTR", "HOOD", "MARA",
-    # Growth tech with active chains
-    "NFLX", "CRWD", "PANW", "NET", "APP", "RDDT",
-    # Financials — large OI, active options
-    "GS", "JPM", "BAC", "MS",
-    # Consumer / retail / misc high-OI names
-    "AMGN", "LLY", "MRNA",
-    # Energy — legit options volume
-    "XOM", "CVX",
-    # Mobility / EV with real US options chains
-    "UBER",
-    # Smaller active names (keep if chain is real, drop if thin)
-    "GME", "AMC", "SOFI", "AFRM",
+    "SPY", "QQQ", "IWM",
+    "NVDA", "AAPL", "MSFT", "META", "AMZN", "TSLA",
+    "AMD", "AVGO", "COIN", "PLTR",
+    "NFLX", "CRWD", "NET", "APP",
+    "GS", "JPM",
+    "XOM", "UBER",
 ]
 
 
@@ -402,7 +389,7 @@ async def flow_heatmap(request: Request):
         syms = [t for t in FAST_UNIVERSE if t != "SPX"]
 
         try:
-            raw = yf.download(syms, period="5d", interval="1d", progress=False, auto_adjust=True)
+            raw = yf.download(syms, period="2d", interval="1d", progress=False, auto_adjust=True)
         except Exception:
             return []
 
@@ -438,6 +425,8 @@ async def flow_heatmap(request: Request):
 
         # Sort by rel_vol descending so hottest tickers are first
         results.sort(key=lambda x: x["rel_vol"], reverse=True)
+        del raw
+        gc.collect()
         return results
 
     data = await loop.run_in_executor(None, _fetch)
@@ -811,8 +800,8 @@ async def run_backtest_api(request: Request):
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=400)
 
-    tickers   = body.get("tickers") or FAST_UNIVERSE
-    days      = min(int(body.get("days", 60)), 180)
+    tickers   = (body.get("tickers") or FAST_UNIVERSE)[:20]
+    days      = min(int(body.get("days", 60)), 90)
     signal    = body.get("signal", "all")
     hold      = int(body.get("hold", 1))
     stop_pct  = float(body.get("stop_pct", 0.50))
@@ -870,3 +859,4 @@ async def run_backtest_api(request: Request):
             "hold": hold,
         },
     })
+    gc.collect()
