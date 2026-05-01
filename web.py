@@ -66,6 +66,22 @@ class _RateLimiter:
 
 _rl = _RateLimiter()
 
+# ── TTL cache — avoids hammering yfinance on every request ────────────────────
+class _TTLCache:
+    def __init__(self):
+        self._store: dict = {}
+
+    def get(self, key: str):
+        entry = self._store.get(key)
+        if entry and time.time() < entry[0]:
+            return entry[1]
+        return None
+
+    def set(self, key: str, value, ttl_secs: int):
+        self._store[key] = (time.time() + ttl_secs, value)
+
+_cache = _TTLCache()
+
 def _client_ip(req: Request) -> str:
     fwd = req.headers.get("x-forwarded-for")
     return fwd.split(",")[0].strip() if fwd else (req.client.host if req.client else "unknown")
@@ -377,6 +393,9 @@ async def health():
 async def flow_heatmap(request: Request):
     _rate_check(request, "flow", limit=20, window=60)
     """Batch-fetch change% and relVol for all FAST_UNIVERSE tickers. Used by ticker heat map."""
+    cached = _cache.get("flow")
+    if cached:
+        return JSONResponse(content=cached)
     loop = asyncio.get_event_loop()
 
     def _fetch():
@@ -430,13 +449,18 @@ async def flow_heatmap(request: Request):
         return results
 
     data = await loop.run_in_executor(None, _fetch)
-    return JSONResponse(content={"tickers": data})
+    result = {"tickers": data}
+    _cache.set("flow", result, ttl_secs=120)
+    return JSONResponse(content=result)
 
 
 @app.get("/api/market")
 async def market_context(request: Request):
     _rate_check(request, "market", limit=20, window=60)
     """Returns SPY/QQQ change%, VIX, market status, and sector heat strip."""
+    cached = _cache.get("market")
+    if cached:
+        return JSONResponse(content=cached)
     loop = asyncio.get_event_loop()
 
     def _fetch():
@@ -485,6 +509,7 @@ async def market_context(request: Request):
         return result
 
     data = await loop.run_in_executor(None, _fetch)
+    _cache.set("market", data, ttl_secs=60)
     return JSONResponse(content=data)
 
 
@@ -654,6 +679,9 @@ async def scan_endpoint(request: Request):
 @app.get("/api/breadth")
 async def market_breadth(request: Request):
     _rate_check(request, "breadth", limit=10, window=60)
+    cached = _cache.get("breadth")
+    if cached:
+        return JSONResponse(content=cached)
     loop = asyncio.get_event_loop()
     def _fetch():
         import yfinance as yf, warnings
@@ -700,12 +728,16 @@ async def market_breadth(request: Request):
             "details": details,
         }
     data = await loop.run_in_executor(None, _fetch)
+    _cache.set("breadth", data, ttl_secs=120)
     return JSONResponse(content=data)
 
 
 @app.get("/api/events")
 async def economic_events(request: Request):
     _rate_check(request, "events", limit=10, window=60)
+    cached = _cache.get("events")
+    if cached:
+        return JSONResponse(content=cached)
     from datetime import date, timedelta
     today = date.today()
     window_end = today + timedelta(days=7)
@@ -768,7 +800,9 @@ async def economic_events(request: Request):
             pass
 
     upcoming.sort(key=lambda e: e["date"])
-    return JSONResponse(content={"events": upcoming})
+    result = {"events": upcoming}
+    _cache.set("events", result, ttl_secs=3600)
+    return JSONResponse(content=result)
 
 
 # ── Backtest ───────────────────────────────────────────────────────────────────
