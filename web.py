@@ -19,7 +19,7 @@ import collections
 import hmac
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
-from fastapi.staticfiles import StaticFiles
+
 
 # ── Scanner imports ────────────────────────────────────────────────────────────
 from scanner import (
