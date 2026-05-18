@@ -40,17 +40,25 @@ def _sleep():
     time.sleep(0.12)
 
 
-def _get(url: str, timeout: int = 15) -> Optional[requests.Response]:
-    """GET with EDGAR-required headers. Returns None on any error."""
-    try:
-        resp = requests.get(url, headers=HEADERS, timeout=timeout)
-        if resp.status_code == 200:
-            return resp
-        logger.debug("EDGAR %s → HTTP %s", url, resp.status_code)
-        return None
-    except Exception as exc:
-        logger.debug("EDGAR request failed: %s — %s", url, exc)
-        return None
+def _get(url: str, timeout: int = 15, _retries: int = 3) -> Optional[requests.Response]:
+    """GET with EDGAR-required headers. Retries with backoff on 429."""
+    for attempt in range(_retries):
+        try:
+            resp = requests.get(url, headers=HEADERS, timeout=timeout)
+            if resp.status_code == 200:
+                return resp
+            if resp.status_code == 429:
+                wait = 2 ** attempt + 1  # 2s, 3s, 5s
+                logger.debug("EDGAR 429 on %s — waiting %ds (attempt %d)", url, wait, attempt + 1)
+                time.sleep(wait)
+                continue
+            logger.debug("EDGAR %s → HTTP %s", url, resp.status_code)
+            return None
+        except Exception as exc:
+            logger.debug("EDGAR request failed: %s — %s", url, exc)
+            if attempt < _retries - 1:
+                time.sleep(1)
+    return None
 
 
 def _parse_form4_xml(xml_text: str) -> List[Dict]:
@@ -378,9 +386,9 @@ def get_insider_signals(tickers: List[str], days_back: int = 30) -> List[Dict]:
                 "latest_buy": "", "recent_filings": [],
             }
 
-    # SEC rate limit: 10 req/sec — 5 workers × ~0.12s sleep ≈ safe
+    # SEC rate limit: 10 req/sec — 3 workers on shared IPs (Railway), 5 locally
     signals: List[Dict] = []
-    with ThreadPoolExecutor(max_workers=5) as pool:
+    with ThreadPoolExecutor(max_workers=3) as pool:
         futures = {pool.submit(_process_ticker, t): t for t in tickers}
         for future in as_completed(futures):
             signals.append(future.result())
