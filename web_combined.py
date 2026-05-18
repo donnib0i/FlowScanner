@@ -9,7 +9,9 @@ Open:  http://localhost:8765
 """
 
 from __future__ import annotations
-import asyncio, collections, contextlib, hmac, io, json, os, re, sys, threading, time
+import asyncio, collections, contextlib, hmac, io, json, logging, os, re, sys, threading, time
+
+logger = logging.getLogger(__name__)
 from datetime import datetime
 from typing import Dict, List, Optional
 
@@ -165,6 +167,12 @@ DEFAULT_FLOW_TICKERS = [
 
 # App setup
 app = FastAPI(title="Scanner Pro", docs_url=None, redoc_url=None)
+
+@app.exception_handler(Exception)
+async def _generic_error(request: Request, exc: Exception):
+    # Never expose internal errors to public
+    logger.error("Unhandled error on %s: %s", request.url.path, exc, exc_info=True)
+    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
 app.add_middleware(
     CORSMiddleware,
@@ -626,6 +634,7 @@ async def api_find(
 @app.get("/api/darkpool")
 async def api_darkpool(req: Request, tickers: str = Query("")):
     _check_pin(req)
+    _check_rate(req, "darkpool", limit=5, window=60)
     if not _DARKPOOL_OK:
         raise HTTPException(503, "finra_darkpool module not available")
     raw = tickers.strip().upper()
@@ -647,6 +656,7 @@ async def api_darkpool(req: Request, tickers: str = Query("")):
 @app.get("/api/insider")
 async def api_insider(req: Request, tickers: str = Query(""), days: int = Query(30)):
     _check_pin(req)
+    _check_rate(req, "insider", limit=3, window=120)
     if not _INSIDER_OK:
         raise HTTPException(503, "sec_insider module not available")
     raw = tickers.strip().upper()
@@ -669,6 +679,7 @@ async def api_insider(req: Request, tickers: str = Query(""), days: int = Query(
 @app.get("/api/macro")
 async def api_macro(req: Request):
     _check_pin(req)
+    _check_rate(req, "macro", limit=10, window=60)
     if not _FRED_OK:
         raise HTTPException(503, "fred_macro module not available")
     try:
@@ -711,7 +722,7 @@ async def apple_touch_icon():
 
 @app.get("/", response_class=HTMLResponse)
 async def root():
-    return HTML.replace("__SCANNER_PIN__", _PIN or "")
+    return HTML
 
 # HTML is stored in a separate variable below
 HTML = ""  # assigned after class definition
@@ -1166,8 +1177,28 @@ body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
 
 _HTML_PARTS.append("""
 <script>
-const PIN = '__SCANNER_PIN__';
-const _pa = p => PIN ? (p.includes('?') ? p+'&pin='+PIN : p+'?pin='+PIN) : p;
+// PIN never injected into HTML — stored in localStorage only
+let PIN = localStorage.getItem('scanner_pin') || '';
+const _pa = p => PIN ? (p.includes('?') ? p+'&pin='+encodeURIComponent(PIN) : p+'?pin='+encodeURIComponent(PIN)) : p;
+
+function _promptPin(msg){
+  const p = prompt(msg || 'Enter access PIN:');
+  if(p !== null){
+    PIN = p.trim();
+    localStorage.setItem('scanner_pin', PIN);
+  }
+}
+
+// On 401, prompt for PIN and reload
+function _handleAuth(resp){
+  if(resp.status === 401){
+    localStorage.removeItem('scanner_pin');
+    PIN = '';
+    _promptPin('PIN required. Enter access PIN:');
+    return true;
+  }
+  return false;
+}
 
 function _isMarketOpen(){
   try{
@@ -1200,7 +1231,7 @@ const S={
 
 function _loadVix(attempt){
   attempt=attempt||0;
-  fetch(_pa('/api/vix')).then(r=>r.ok?r.json():Promise.reject()).then(d=>{
+  fetch(_pa('/api/vix')).then(r=>{if(_handleAuth(r))return Promise.reject('auth');return r.ok?r.json():Promise.reject()}).then(d=>{
     renderVix(d);
     if(d.vix<=0&&attempt<6) setTimeout(()=>_loadVix(attempt+1),15000);
     else setTimeout(()=>_loadVix(0),90000);
@@ -1589,6 +1620,7 @@ async function runFullScan(){
   const dteMode=document.getElementById('scan-dte').value;
   try{
     const r=await fetch(_pa('/api/scan?filter='+filter+'&sort='+sort+'&dte_mode='+dteMode));
+    if(_handleAuth(r))return;
     if(!r.ok){const e=await r.json();throw new Error(e.detail||'Scan failed');}
     const d=await r.json();
     S.scanData=d.results||[];
@@ -1901,6 +1933,7 @@ async function loadIntel(){
       fetch(_pa('/api/darkpool'+qs)),
       fetch(_pa('/api/insider'+qs))
     ]);
+    if(_handleAuth(macroRes)||_handleAuth(dpRes)||_handleAuth(insRes))return;
     const macro=macroRes.ok?await macroRes.json():{error:'unavailable'};
     const dp=dpRes.ok?await dpRes.json():{error:'unavailable'};
     const ins=insRes.ok?await insRes.json():{error:'unavailable'};
