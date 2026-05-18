@@ -1,1 +1,1 @@
-web: python3 scanner_app.py
+web: python3 web_combined.py

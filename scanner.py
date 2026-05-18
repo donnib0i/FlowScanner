@@ -14,6 +14,20 @@ import pandas as pd
 warnings.filterwarnings("ignore")
 colorama.init(autoreset=True)
 
+# ─── TastyTrade real flow (drop-in replacement for yfinance scan) ─────────────
+try:
+    # same dir (deployed) or ../flowdigger (local dev)
+    _tt_paths = [os.path.dirname(__file__), os.path.join(os.path.dirname(__file__), "..", "flowdigger")]
+    for _p in _tt_paths:
+        if _p not in sys.path:
+            sys.path.insert(0, _p)
+    from tt_flow import scan_options_flow_tt, load_credentials as _tt_load_creds
+    _TT_USER, _TT_PASS = _tt_load_creds()
+    _TT_AVAILABLE = bool(_TT_USER and _TT_PASS)
+except Exception:
+    _TT_AVAILABLE = False
+    scan_options_flow_tt = None
+
 # ─── yfinance session (curl_cffi if available, else None) ─────────────────────
 try:
     from curl_cffi import requests as _cffi_requests
@@ -89,8 +103,8 @@ TICKER_SECTOR: Dict[str, str] = {
 
 # ─── Universe ─────────────────────────────────────────────────────────────────
 UNIVERSE = [
-    # Index ETFs + cash-settled index
-    "SPX","SPY","QQQ","IWM","DIA","MDY",
+    # Index ETFs
+    "SPY","QQQ","IWM","DIA","MDY",
     # Volatility
     "VXX","UVXY","SVXY",
     # Leveraged bull
@@ -108,35 +122,35 @@ UNIVERSE = [
     "BULL","CORZ","IREN","CIFR",
     # Growth tech / software
     "NFLX","CRWD","PANW","DDOG","NET","ZS","SNOW","TWLO",
-    "SHOP","SQ","PYPL","ABNB","BKNG","EBAY","ETSY",
+    "SHOP","PYPL","ABNB","BKNG","EBAY","ETSY",
     "APP","RDDT","GTLB","MDB","TTD","HUBS","BILL","DOCN","U",
-    "SMAR","BOX","ESTC","CFLT","IOT","GTLB","PATH","DT","AI","BBAI",
+    "BOX","ESTC","CFLT","IOT","GTLB","PATH","DT","AI","BBAI",
     # AI / cloud
     "ORCL","CRM","NOW","WDAY","INTU","ADBE","IBM",
     # EV / transport
-    "RIVN","LCID","NIO","LI","XPEV","F","GM","BLNK","CHPT","LEV",
+    "RIVN","LCID","NIO","LI","XPEV","F","GM","BLNK","CHPT",
     # Financials / fintech
     "GS","MS","JPM","BAC","C","WFC","V","MA","SCHW","IBKR",
-    "NU","AFRM","OPEN","LMND","ROOT","INSU",
+    "NU","AFRM","OPEN","LMND","ROOT",
     # Energy / commodities
     "XOM","CVX","GLD","SLV","CPER","USO","OXY","SLB","HAL","DVN",
-    "FCX","CLF","MP","VALE","AA","X",
+    "FCX","CLF","MP","VALE","AA",
     # Healthcare / biotech / GLP-1
     "HIMS","MRNA","PFE","BNTX","ONDS","NVO","LLY","RXRX","APLS",
-    "NVAX","SAVA","ACMR","RARE","FOLD","TGTX","KROS","RCUS",
+    "NVAX","ACMR","RARE","FOLD","TGTX","KROS","RCUS",
     # Defense / aerospace
     "RTX","LMT","NOC","BA","GD","HII","LDOS","CACI","KTOS","AVAV",
     # Consumer / retail
     "AMZN","WMT","TGT","COST","HD","LOW","NKE","LULU","PTON","BYND",
     # Media / streaming
-    "DIS","PARA","WBD","SPOT","TTWO","EA","ATVI",
+    "DIS","WBD","SPOT","TTWO","EA",
     # China
     "BABA","JD","PDD","KWEB","FXI","BIDU","TME",
     # Small/mid cap sleepers (high vol, unusual flow candidates)
     "PINS","OKTA","GOOG","IONQ","QUBT","RGTI","QBTS","ARQQ",
     "SOUN","BBAI","GFAI","AITX","AGEN","IOVA","FATE","EDIT","BEAM",
-    "ACHR","JOBY","LILM","WKHS","NKLA","ZEV",
-    "ASTS","LUNR","RDW","RKLB","ASTR","MNTS",
+    "ACHR","JOBY","WKHS",
+    "ASTS","LUNR","RDW","RKLB","MNTS",
 ]
 UNIVERSE = list(dict.fromkeys(UNIVERSE))  # dedupe
 
@@ -190,7 +204,20 @@ def fetch_dynamic_universe(top_n: int = 50) -> List[str]:
             except Exception:
                 continue
         movers.sort(key=lambda x: x[1], reverse=True)
-        return [t for t, _ in movers[:top_n]]
+
+        # FIX 10: filter out penny stocks and invalid tickers before returning
+        def _is_valid_ticker(sym: str, min_price: float = 2.0) -> bool:
+            try:
+                _ti = _yf(sym)
+                _info = _ti.fast_info
+                _price = getattr(_info, 'last_price', 0) or 0
+                return float(_price) >= min_price
+            except Exception:
+                return False
+
+        top_movers = [t for t, _ in movers[:top_n * 2]]  # oversample to account for filtered-out tickers
+        filtered = [s for s in top_movers if len(s) <= 5 and s.isalpha() and _is_valid_ticker(s)]
+        return filtered[:top_n]
     except Exception:
         return []
 
@@ -334,34 +361,21 @@ def calc_iv_skew(calls_df: pd.DataFrame, puts_df: pd.DataFrame, price: float) ->
 
 def calc_whale_score(signal: Dict) -> int:
     """
-    Composite 0–100 institutional signal score. Factors (with weights):
-      Trade at ask:      +25  (buyer aggression)
-      Dollar flow tier:  0–30 ($100K=10, $500K=20, $1M+=30)
-      Golden sweep:      +20  (vol>OI×10, at ask, flow>$100K)
-      Stacked flow:      +15  (3+ unique unusual strikes)
-      Vol/OI ratio:      0–10 (top contract, capped at x10)
+    Composite 0–100 institutional signal score. Log-scaled dollar flow base
+    prevents a $1M print from being treated the same as $10M.
+      Base (log-scaled flow): 0–60
+      Side multiplier:        ask=1.0x, bid/mid=0.75x
+      Expiry bonus:           0DTE-7DTE +15, <=30DTE +5
+      Unusual vol/OI:         vol_oi >= 10 → +10
     """
-    score = 0
-
-    if signal.get("trade_side") == "ask":
-        score += 25
-
     flow = signal.get("total_flow", 0)
-    if flow >= 1_000_000:   score += 30
-    elif flow >= 500_000:   score += 20
-    elif flow >= 100_000:   score += 10
-
-    if signal.get("golden_sweep"):
-        score += 20
-
-    if signal.get("stacked_flow"):
-        score += 15
-
-    tc = signal.get("top_contract")
-    if tc:
-        score += min(10, int(tc.get("vol_oi", 0)))
-
-    return min(100, max(0, score))
+    if flow <= 0:
+        return 0
+    base = min(60, max(0, int(math.log10(max(flow, 1000) / 1000) / 3 * 60)))
+    side_mult = 1.0 if signal.get("trade_side") == "ask" else 0.75
+    expiry_bonus = 15 if signal.get("dte", 99) <= 7 else 5 if signal.get("dte", 99) <= 30 else 0
+    unusual_bonus = 10 if signal.get("vol_oi_ratio", 0) >= 10 else 0
+    return min(100, int(base * side_mult) + expiry_bonus + unusual_bonus)
 
 
 def fmt_whale_score(score: int) -> str:
@@ -433,7 +447,7 @@ def calc_iv_rank_proxy(hist: pd.DataFrame) -> Dict:
             ivr_score = int(40 + (ratio - 1.0) * 33)
             label = "NORMAL"
         elif ratio < 0.8:
-            ivr_score = max(0, int(30 * ratio / 0.8))
+            ivr_score = min(100, max(0, int(30 * ratio / 0.8)))
             label = "COMPRESSED"
         else:
             ivr_score = int(30 + (ratio - 0.8) * 50)
@@ -728,7 +742,7 @@ def _nan0(v):
 
 
 def _score_contract(row: pd.Series, S: float, T: float, direction: str,
-                    target_delta: float = 0.45, dte_mode: str = "0dte",
+                    target_delta: float = 0.45, dte_mode: str = "all",
                     target_price: float = 0.0) -> float:
     """Score a contract row. When target_price is set, strike proximity to that
     target and OI/volume at that strike become the dominant ranking factors —
@@ -818,14 +832,14 @@ def _score_contract(row: pd.Series, S: float, T: float, direction: str,
             return (target_score * 40 + heavy_oi_score * 30 +
                     spread_score * 15 + liq_score * 15) * stale_penalty * price_penalty * strike_gravity
 
-        return (roi_score * 26 + delta_score * 20 + liq_score * 34 + spread_score * 10 + voi_score * 10) * stale_penalty * price_penalty * strike_gravity
+        return (roi_score * 20 + delta_score * 15 + liq_score * 35 + spread_score * 15 + voi_score * 15) * stale_penalty * price_penalty * strike_gravity
     except Exception:
         return -1.0
 
 
 def get_best_contract(ticker: str, direction: str, price: float,
                       vix: float = -1.0, top_n: int = 1,
-                      dte_mode: str = "0dte",
+                      dte_mode: str = "all",
                       target_price: float = 0.0) -> Optional[Dict]:
     """
     direction: "up" → calls, "down" → puts.
@@ -1129,6 +1143,7 @@ def scan_options_flow(tickers: List[str], show_progress: bool = True,
                       on_signal=None, on_progress=None) -> List[Dict]:
     """
     Detect unusual options activity per ticker.
+    Uses TastyTrade real flow if credentials are available, falls back to yfinance.
     Enhanced vs CheddarFlow/Unusual Whales:
       - Trade side classification (bid/ask aggression)
       - Premium tiers: retail / institutional ($100K+) / block ($500K+) / whale ($1M+)
@@ -1139,6 +1154,25 @@ def scan_options_flow(tickers: List[str], show_progress: bool = True,
       - Whale score: composite 0-100 signal strength
     Sorted by whale_score descending.
     """
+    # TastyTrade real flow — actual trade prints from OPRA feed
+    if _TT_AVAILABLE and scan_options_flow_tt is not None:
+        try:
+            if show_progress:
+                sys.stdout.write(f"\r  {Fore.GREEN}[TT LIVE]{Style.RESET_ALL} Streaming real options flow...\n")
+                sys.stdout.flush()
+            tt_signals = scan_options_flow_tt(
+                tickers, _TT_USER, _TT_PASS,
+                window_secs=90, max_dte=14,
+                show_progress=show_progress,
+            )
+            if tt_signals:
+                return tt_signals
+            if show_progress:
+                sys.stdout.write("  [TT] No prints collected — falling back to yfinance\n")
+        except Exception as e:
+            if show_progress:
+                sys.stdout.write(f"  [TT] Error ({e}) — falling back to yfinance\n")
+
     flow_signals: List[Dict] = []
     today = datetime.now().date()
 
@@ -1328,6 +1362,18 @@ def scan_options_flow(tickers: List[str], show_progress: bool = True,
                 "whale_score":    0,  # computed below
             }
             signal["whale_score"] = calc_whale_score(signal)
+
+            # FIX 6: IV skew adjustment — apply to flow-level options confidence
+            # iv_skew = avg_call_IV - avg_put_IV (from calc_iv_skew)
+            # Negative skew = puts pricier = fear/hedging → reduce call edge
+            # Positive skew = calls pricier = bullish positioning → boost call edge
+            _skew_adj = 0.0
+            if iv_skew < -0.05 and signal["flow_bias"] == "call":
+                _skew_adj = -0.10   # bearish fear positioning — penalize call recommendations
+            elif iv_skew > 0.05 and signal["flow_bias"] == "call":
+                _skew_adj = 0.05    # bullish skew — slight call edge boost
+            signal["iv_skew_options_adj"] = round(_skew_adj, 2)
+
             flow_signals.append(signal)
             if on_signal:
                 on_signal(signal)
@@ -1814,15 +1860,29 @@ def _process_ticker(ticker: str, hist: pd.DataFrame, live_price: float = 0.0, sp
             ema9_val   = float(c_series.ewm(span=9,   adjust=False).mean().iloc[-1])
             ema34_val  = float(c_series.ewm(span=34,  adjust=False).mean().iloc[-1])
             ema200_val = float(c_series.ewm(span=200, adjust=False).mean().iloc[-1])
+            # BUG 2: EWM NaN guard — use current price as fallback if EWM returns NaN
+            if pd.isna(ema9_val):   ema9_val   = price
+            if pd.isna(ema34_val):  ema34_val  = price
+            if pd.isna(ema200_val): ema200_val = price
             # EMA34 slope: compare to 3 bars ago
             ema34_prev = float(c_series.ewm(span=34, adjust=False).mean().iloc[-4]) if len(c_series) >= 4 else ema34_val
+            if pd.isna(ema34_prev): ema34_prev = ema34_val
             ema_cloud_bull = (price > ema9_val and ema9_val > ema34_val and ema34_val > ema34_prev)
             ema_cloud_bear = (price < ema9_val and ema9_val < ema34_val and ema34_val < ema34_prev)
             above_ema200   = price > ema200_val
+
+            # FIX 8: RSI-14 — computed here alongside EMAs using the same c_series
+            delta_close = c_series.diff()
+            gain  = delta_close.clip(lower=0).rolling(14).mean()
+            loss  = (-delta_close.clip(upper=0)).rolling(14).mean()
+            rs    = gain / loss.replace(0, float('nan'))
+            rsi14 = float(100 - 100 / (1 + rs.iloc[-1]))
+            if pd.isna(rsi14): rsi14 = 50.0
         except Exception:
             ema9_val = ema34_val = ema200_val = 0.0
             ema_cloud_bull = ema_cloud_bear = False
             above_ema200 = True
+            rsi14 = 50.0
 
         # ── Rolling MVWAP (20-bar volume-weighted avg price) ─────────────────
         try:
@@ -1840,6 +1900,7 @@ def _process_ticker(ticker: str, hist: pd.DataFrame, live_price: float = 0.0, sp
             vwap_reclaim = False
 
         # IVR proxy: 52-week high/low from downloaded history — no fast_info needed
+        # Kept for backward-compat (stored in result dict) but NOT used for options scoring.
         try:
             yr_high   = float(hist["High"].max())
             yr_low    = float(hist["Low"].min())
@@ -1848,11 +1909,13 @@ def _process_ticker(ticker: str, hist: pd.DataFrame, live_price: float = 0.0, sp
         except Exception:
             ivr_proxy = 0.5
 
-        spread_label, _, _ = get_spread_tier(avg_vol)
-        opt_score          = calc_options_score(avg_vol, ivr_proxy)
-
-        # Full IV rank proxy (HV20/HV60 ratio) — richer than the scalar ivr_proxy
+        # Full IV rank proxy (HV20/HV60 ratio) — authoritative IVR (BUG 3 fix: computed first)
         iv_rank_data = calc_iv_rank_proxy(hist)
+
+        spread_label, _, _ = get_spread_tier(avg_vol)
+        # BUG 3: use iv_rank_data["ivr_score"] / 100.0 as the authoritative IVR (0–1 scale)
+        # instead of the 52-week scalar ivr_proxy — eliminates duplicate conflicting IVR signals
+        opt_score = calc_options_score(avg_vol, iv_rank_data["ivr_score"] / 100.0)
 
         # Expected move (1-sigma, annualized HV20): ±% of current price
         expected_move_pct = round(hv20 / math.sqrt(252) * 100, 2) if hv20 > 0 else 0.0
@@ -1998,6 +2061,16 @@ def _process_ticker(ticker: str, hist: pd.DataFrame, live_price: float = 0.0, sp
             elif adist <= 2.5: sq = min(1.0, sq + 0.14)
             elif adist <= 5.0: sq = min(1.0, sq + 0.07)
 
+        # FIX 7: VWAP reclaim → setup quality boost (price reclaimed MVWAP = bullish shift)
+        if vwap_reclaim:
+            sq = min(1.0, sq + 0.10)
+
+        # FIX 8: RSI-based momentum boost to setup quality
+        if rsi14 < 30:
+            sq = min(1.0, sq + 0.12)   # oversold — call edge
+        elif rsi14 > 70:
+            sq = min(1.0, sq + 0.08)   # overbought — put edge (general momentum)
+
         # Provisional direction — overwritten by apply_forward_directions()
         direction = "up" if change_pct >= 0 else "down"
 
@@ -2041,6 +2114,10 @@ def _process_ticker(ticker: str, hist: pd.DataFrame, live_price: float = 0.0, sp
             "yest_low":      yest_low,
             "iv_rank_data":  iv_rank_data,
             "expected_move_pct": expected_move_pct,
+            "rsi14":         rsi14,
+            "vwap_reclaim":  vwap_reclaim,
+            "above_vwap":    above_vwap,
+            "mvwap":         mvwap,
         }
     except Exception:
         return None
@@ -2105,7 +2182,7 @@ def scan_tickers(tickers: List[str], show_progress: bool = True) -> List[Dict]:
 
 
 def enrich_contracts(results: List[Dict], top_n: int = 20, vix: float = -1.0,
-                     dte_mode: str = "0dte") -> None:
+                     dte_mode: str = "all") -> None:
     """
     Fetch options chains for the top-N tickers by setup quality.
     Populates result['contract'] in place. VIX adjusts delta target.
@@ -2138,6 +2215,45 @@ def enrich_contracts(results: List[Dict], top_n: int = 20, vix: float = -1.0,
             _tgt = float(nl.get("price", 0) or 0)
         r["contract"] = get_best_contract(r["ticker"], r["direction"], r["price"], vix=vix,
                                           dte_mode=dte_mode, target_price=_tgt)
+
+        # FIX 9: IV vs HV comparison — fetch near-ATM call IVs to compute mean_iv
+        # and compare against realized HV20. Adjusts opt_score in place.
+        try:
+            _t = _yf(r["ticker"])
+            _exps = _t.options
+            if _exps:
+                _today = datetime.now().date()
+                _near_exp = None
+                for _e in _exps:
+                    _d = (datetime.strptime(_e, "%Y-%m-%d").date() - _today).days
+                    if _d >= 0:
+                        _near_exp = _e
+                        break
+                if _near_exp:
+                    _chain = _t.option_chain(_near_exp)
+                    _calls = _chain.calls
+                    _px = r["price"]
+                    _atm = _calls[
+                        (_calls["strike"] >= _px * 0.97) & (_calls["strike"] <= _px * 1.03)
+                    ]
+                    if not _atm.empty:
+                        _ivs = pd.to_numeric(_atm["impliedVolatility"], errors="coerce").dropna()
+                        if not _ivs.empty:
+                            mean_iv = float(_ivs.mean())
+                            hv20 = r.get("hv20", 0)
+                            if hv20 > 0 and mean_iv > 0:
+                                iv_vs_hv = mean_iv / hv20
+                                _opt = r["opt_score"] / 100.0
+                                if iv_vs_hv < 0.8:
+                                    _opt = min(1.0, _opt + 0.15)   # options cheap vs realized vol
+                                elif iv_vs_hv > 1.3:
+                                    _opt = max(0.0, _opt - 0.10)   # options expensive
+                                r["opt_score"] = int(round(_opt * 100))
+                                r["iv_vs_hv"]  = round(iv_vs_hv, 3)
+                                r["mean_iv"]   = round(mean_iv, 4)
+        except Exception:
+            pass
+
         time.sleep(0.15)
     sys.stdout.write("\r" + " " * 55 + "\r")
     sys.stdout.flush()
@@ -2480,107 +2596,95 @@ def print_inline_laggards(results: List[Dict], sector_data: Dict[str, Dict], top
                    tablefmt="simple"))
 
 
-def print_inline_flow(flow_signals: List[Dict], top_n: int = 7) -> None:
-    """Compact flow section with net bias bar, VOI, and golden/sweep flags."""
+def merge_whale_scores(results: List[Dict], flow_signals: List[Dict]) -> None:
+    """Inject whale scores from flow scan back into main results so whaled tickers rank higher."""
+    whale_map = {f["ticker"]: f.get("whale_score", 0) for f in flow_signals}
+    for r in results:
+        ws = whale_map.get(r["ticker"], 0)
+        if ws >= 60:
+            r["opt_score"] = min(100, r.get("opt_score", 0) + 15)
+            r["setup_q"]   = min(1.0, r.get("setup_q",   0) + 0.12)
+        elif ws >= 40:
+            r["opt_score"] = min(100, r.get("opt_score", 0) + 8)
+            r["setup_q"]   = min(1.0, r.get("setup_q",   0) + 0.06)
+
+
+def print_unusual_flow(flow_signals: List[Dict], top_n: int = 10) -> None:
+    """Unified unusual flow — non-retail only, sorted by whale score. 0DTE/weekly odd flow surfaces automatically."""
     if not flow_signals:
         return
-    sep = Fore.WHITE + Style.BRIGHT + "─" * 88 + Style.RESET_ALL
+
+    # Only show signals with real institutional conviction — filter retail noise
+    unusual = [f for f in flow_signals if f.get("whale_score", 0) >= 40 or
+               f.get("premium_tier", "retail") in ("block", "whale")]
+    if not unusual:
+        return
+
+    unusual.sort(key=lambda f: (f.get("whale_score", 0), f.get("total_flow", 0)), reverse=True)
+
+    sep = Fore.WHITE + Style.BRIGHT + "─" * 100 + Style.RESET_ALL
     print(sep)
 
-    # Net session summary line
     net_calls = sum(f["call_flow"] for f in flow_signals)
     net_puts  = sum(f["put_flow"]  for f in flow_signals)
     net_total = net_calls + net_puts
     call_pct  = net_calls / net_total * 100 if net_total > 0 else 50
-    net_bar   = fmt_bias_bar(net_calls, net_puts, width=14)
+    net_bar   = fmt_bias_bar(net_calls, net_puts, width=12)
     net_c     = Fore.CYAN if net_calls >= net_puts else Fore.YELLOW
-    net_dir   = net_c + ("CALL HEAVY" if net_calls >= net_puts else " PUT HEAVY") + Style.RESET_ALL
+    net_dir   = net_c + ("CALL HEAVY" if net_calls >= net_puts else "PUT HEAVY") + Style.RESET_ALL
     print(
-        Fore.WHITE + Style.BRIGHT + "  OPTIONS FLOW  " + Style.RESET_ALL
-        + f"[{net_bar}]  {call_pct:.0f}% calls  {net_dir}"
-        + f"  |  total: {fmt_flow(net_total)}  signals: {len(flow_signals)}"
+        Fore.WHITE + Style.BRIGHT + "  UNUSUAL FLOW  " + Style.RESET_ALL
+        + f"[{net_bar}] {call_pct:.0f}% calls  {net_dir}"
+        + f"  |  {fmt_flow(net_total)} total  {len(unusual)} unusual signals"
     )
 
     rows = []
-    for f in flow_signals[:top_n]:
+    for f in unusual[:top_n]:
         tc     = f.get("top_contract")
         voi    = tc.get("vol_oi", 0) if tc else 0
-        voi_s  = fmt_voi(voi) if voi > 0 else "—"
-        bar    = fmt_bias_bar(f["call_flow"], f["put_flow"], width=8)
-        cpct   = f["call_flow"] / f["total_flow"] * 100 if f["total_flow"] > 0 else 50
+        dte    = tc.get("dte", 0) if tc else 0
+        ws     = f.get("whale_score", 0)
+
+        # DTE label — highlight short-dated unusual flow
+        if dte == 0:    dte_s = Fore.RED + Style.BRIGHT + "0DTE" + Style.RESET_ALL
+        elif dte <= 7:  dte_s = Fore.RED + f"{dte}DTE" + Style.RESET_ALL
+        elif dte <= 30: dte_s = Fore.YELLOW + f"{dte}DTE" + Style.RESET_ALL
+        else:           dte_s = Fore.WHITE + f"{dte}DTE" + Style.RESET_ALL
+
         bias_c = Fore.CYAN if f["flow_bias"] == "call" else Fore.YELLOW
         bias_s = bias_c + f["flow_bias"].upper() + Style.RESET_ALL
         tier_c = _TIER_COLORS.get(f.get("premium_tier", "retail"), Fore.WHITE)
-        golden = (Fore.RED + Style.BRIGHT + "★GOLDEN" + Style.RESET_ALL) if f.get("golden_sweep") else (
-                  Fore.YELLOW + "SWEEP" + Style.RESET_ALL if (tc and tc.get("sweep")) else "—")
+
+        flag = ""
+        if f.get("golden_sweep"):         flag = Fore.RED + Style.BRIGHT + "★GOLDEN" + Style.RESET_ALL
+        elif tc and tc.get("sweep"):      flag = Fore.YELLOW + "SWEEP" + Style.RESET_ALL
+        elif voi >= 20:                   flag = Fore.RED + f"x{voi:.0f}VOI" + Style.RESET_ALL
+        elif voi >= 10:                   flag = Fore.YELLOW + f"x{voi:.0f}VOI" + Style.RESET_ALL
+
         contract_s = fmt_flow_contract(tc) if tc else "—"
         rows.append([
+            fmt_whale_score(ws),
             Fore.WHITE + Style.BRIGHT + f["ticker"] + Style.RESET_ALL,
             fmt_flow(f["total_flow"]),
-            f"[{bar}] {cpct:.0f}%",
             bias_s,
-            voi_s,
+            dte_s,
             tier_c + f.get("premium_tier", "retail").upper() + Style.RESET_ALL,
-            golden,
+            flag or "—",
             contract_s,
         ])
     print(tabulate(rows,
-                   headers=["TICKER", "$TOTAL", "C/P", "BIAS", "VOI", "TIER", "FLAG", "TOP CONTRACT"],
+                   headers=["WHALE", "TICKER", "$FLOW", "BIAS", "DTE", "TIER", "FLAG", "CONTRACT"],
                    tablefmt="simple"))
+    print(sep)
+
+
+# keep these for backward compat / direct calls
+def print_inline_flow(flow_signals: List[Dict], top_n: int = 7) -> None:
+    print_unusual_flow(flow_signals, top_n=top_n)
 
 
 def print_hot_contracts(flow_signals: List[Dict], top_n: int = 14) -> None:
-    """
-    CheddarFlow-style hot contract list — all unusual contracts from every flow signal,
-    sorted by vol/OI ratio (the key conviction signal).
-    """
-    all_contracts: List[Dict] = []
-    for sig in flow_signals:
-        for c in sig.get("call_contracts", []) + sig.get("put_contracts", []):
-            all_contracts.append({**c, "ticker": sig["ticker"]})
-
-    if not all_contracts:
-        print(f"  {Fore.YELLOW}No unusual contract activity detected.{Style.RESET_ALL}")
-        return
-
-    all_contracts.sort(key=lambda c: c.get("vol_oi", 0), reverse=True)
-
-    sep = Fore.WHITE + Style.BRIGHT + "─" * 110 + Style.RESET_ALL
-    print(sep)
-    print(Fore.WHITE + Style.BRIGHT
-          + "  HOT CONTRACTS  (all unusual prints, sorted by vol/OI conviction)"
-          + Style.RESET_ALL)
-    rows = []
-    for c in all_contracts[:top_n]:
-        voi    = c.get("vol_oi", 0)
-        ctype  = c["type"]
-        cc     = Fore.CYAN if ctype == "call" else Fore.YELLOW
-        exp_s  = c["exp"][5:]
-        side_c = (Fore.GREEN if c.get("trade_side") == "ask" else
-                  Fore.RED   if c.get("trade_side") == "bid" else Fore.WHITE)
-        side_s = side_c + (c.get("trade_side", "mid")).upper() + Style.RESET_ALL
-        tier_c = _TIER_COLORS.get(c.get("premium_tier", "retail"), Fore.WHITE)
-        flags  = []
-        if c.get("golden_sweep"): flags.append(Fore.RED + Style.BRIGHT + "★GOLDEN" + Style.RESET_ALL)
-        elif c.get("sweep"):      flags.append(Fore.YELLOW + "SWEEP" + Style.RESET_ALL)
-        rows.append([
-            fmt_voi(voi),
-            Fore.WHITE + Style.BRIGHT + c["ticker"] + Style.RESET_ALL,
-            f"{cc}{exp_s} ${c['strike']:.0f}{'C' if ctype == 'call' else 'P'}{Style.RESET_ALL}",
-            f"{c['dte']}DTE",
-            fmt_num(c["vol"]),
-            fmt_num(c["oi"]),
-            f"${c['mid']:.2f}",
-            fmt_flow(c["flow"]),
-            side_s,
-            tier_c + c.get("premium_tier", "retail").upper() + Style.RESET_ALL,
-            " ".join(flags) or "—",
-        ])
-    print(tabulate(rows,
-                   headers=["VOI", "TICKER", "CONTRACT", "DTE", "VOL", "OI",
-                             "MID", "$FLOW", "SIDE", "TIER", "FLAG"],
-                   tablefmt="simple"))
-    print(sep)
+    print_unusual_flow(flow_signals, top_n=top_n)
 
 
 # ─── Interactive Menu ─────────────────────────────────────────────────────────
@@ -2625,7 +2729,7 @@ def interactive_loop(results: List[Dict], args: argparse.Namespace,
                      f"  {Fore.YELLOW}[e] to load flow{Style.RESET_ALL}")
         print(Fore.WHITE
               + "  [r]Rescan  [rs]Sectors  [e]Enrich+Flow"
-                "  [l]Laggards  [f]Flow  [w]Whales  [h]Hot Contracts  [c]CSV  [q]Quit"
+                "  [l]Laggards  [f]Flow  [c]CSV  [q]Quit"
               + Style.RESET_ALL + flow_note)
 
         try:
@@ -2668,26 +2772,8 @@ def interactive_loop(results: List[Dict], args: argparse.Namespace,
                             sorted(results, key=lambda x: x["opt_score"], reverse=True)[:20]]
             print(f"\n  Scanning options flow for {len(flow_tickers)} tickers...")
             flow_cache = scan_options_flow(flow_tickers, show_progress=True)
-            print_options_flow(flow_cache)
-            print_whale_alerts(flow_cache)
-            input("\n  (press enter to continue)")
-        elif cmd == "w":
-            os.system("clear" if os.name == "posix" else "cls")
-            if not flow_cache:
-                flow_tickers = [r["ticker"] for r in
-                                sorted(results, key=lambda x: x["opt_score"], reverse=True)[:20]]
-                print(f"\n  Scanning options flow for {len(flow_tickers)} tickers...")
-                flow_cache = scan_options_flow(flow_tickers, show_progress=True)
-            print_whale_alerts(flow_cache)
-            input("\n  (press enter to continue)")
-        elif cmd == "h":
-            os.system("clear" if os.name == "posix" else "cls")
-            if not flow_cache:
-                flow_tickers = [r["ticker"] for r in
-                                sorted(results, key=lambda x: x["opt_score"], reverse=True)[:20]]
-                print(f"\n  Scanning options flow for {len(flow_tickers)} tickers...")
-                flow_cache = scan_options_flow(flow_tickers, show_progress=True)
-            print_hot_contracts(flow_cache, top_n=14)
+            merge_whale_scores(results, flow_cache)
+            print_unusual_flow(flow_cache, top_n=10)
             input("\n  (press enter to continue)")
         elif cmd == "c":
             export_csv(results)
@@ -2771,6 +2857,7 @@ def main() -> None:
                         sorted(results, key=lambda x: x["opt_score"], reverse=True)[:15]]
         print(f"  {Fore.CYAN}Scanning options flow ({len(flow_tickers)} tickers)...{Style.RESET_ALL}")
         flow_results = scan_options_flow(flow_tickers, show_progress=True)
+        merge_whale_scores(results, flow_results)
 
     if args.csv:
         print_sector_heatmap(sector_data)
