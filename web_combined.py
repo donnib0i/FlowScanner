@@ -631,6 +631,163 @@ async def api_find(
     return {"contracts": contracts, "ticker": ticker, "direction": direction,
             "dte_mode": dte_mode, "last_updated": datetime.now().strftime("%H:%M:%S")}
 
+@app.get("/api/find/both")
+async def api_find_both(
+    req:      Request,
+    ticker:   str = Query("SPY"),
+    dte_mode: str = Query("all"),
+):
+    """
+    Returns call vs put ladder comparison:
+    dollar flow, volume, OI, DDOI (delta × OI) for top strikes on each side.
+    """
+    _check_pin(req)
+    _check_rate(req, "find_both", limit=10, window=60)
+    ticker   = _validate_ticker(ticker)
+    dte_mode = _validate_enum(dte_mode, _VALID_DTE_MODE, "dte_mode")
+
+    def _fetch():
+        import yfinance as yf
+        from scanner import _yf, vix_delta_target, fetch_vix
+        import pandas as pd
+        from datetime import datetime
+
+        t = _yf(ticker)
+        exps = t.options
+        if not exps:
+            return None
+
+        try:
+            price = float(t.fast_info.last_price or 0)
+        except Exception:
+            price = 0.0
+
+        today = datetime.now().date()
+        def dte(e):
+            return (datetime.strptime(e, "%Y-%m-%d").date() - today).days
+
+        try:
+            import zoneinfo
+            _now_et = datetime.now(zoneinfo.ZoneInfo("America/New_York"))
+        except ImportError:
+            import pytz
+            _now_et = datetime.now(pytz.timezone("America/New_York"))
+        _market_open = _now_et.weekday() < 5 and (9*60+30) <= (_now_et.hour*60+_now_et.minute) <= 960
+        min_dte = 0 if _market_open else 1
+        future = [e for e in exps if dte(e) >= min_dte]
+
+        if dte_mode == "0dte":
+            cands = [e for e in future if dte(e) == 0] or [e for e in future if dte(e) <= 1]
+        elif dte_mode == "weekly":
+            cands = [e for e in future if 2 <= dte(e) <= 7] or [e for e in future if dte(e) <= 14]
+        else:
+            cands = future
+        if not cands:
+            cands = list(exps[:2])
+
+        exp = cands[0]
+        d = dte(exp)
+        chain = t.option_chain(exp)
+        calls_df = chain.calls.copy()
+        puts_df  = chain.puts.copy()
+
+        def _safe_int(v):
+            try:
+                f = float(v)
+                return 0 if (f != f) else int(f)  # NaN check
+            except Exception:
+                return 0
+
+        def _safe_float(v):
+            try:
+                f = float(v)
+                return 0.0 if (f != f) else f
+            except Exception:
+                return 0.0
+
+        def enrich(df, opt_type):
+            rows = []
+            for _, r in df.iterrows():
+                vol  = _safe_int(r.get("volume", 0))
+                oi   = _safe_int(r.get("openInterest", 0))
+                bid  = _safe_float(r.get("bid", 0))
+                ask  = _safe_float(r.get("ask", 0))
+                mid  = (bid + ask) / 2 if bid + ask > 0 else _safe_float(r.get("lastPrice", 0))
+                iv   = _safe_float(r.get("impliedVolatility", 0))
+                strike = _safe_float(r.get("strike", 0))
+                dollar_flow = vol * mid * 100
+                # Simple delta proxy from moneyness
+                if price > 0 and d > 0:
+                    import math
+                    moneyness = math.log(price / strike) if strike > 0 else 0
+                    delta_proxy = max(0.01, min(0.99, 0.5 + moneyness * 5))
+                    if opt_type == "put":
+                        delta_proxy = -(1 - delta_proxy)
+                else:
+                    delta_proxy = 0.5 if opt_type == "call" else -0.5
+                ddoi = abs(delta_proxy) * oi
+                rows.append({
+                    "strike": strike,
+                    "type": opt_type,
+                    "vol": vol,
+                    "oi": oi,
+                    "mid": round(mid, 2),
+                    "iv": round(iv * 100, 1),
+                    "dollar_flow": round(dollar_flow, 0),
+                    "ddoi": round(ddoi, 0),
+                    "delta": round(abs(delta_proxy), 3),
+                })
+            # Filter near-the-money strikes (±15% of price)
+            if price > 0:
+                rows = [r for r in rows if price*0.85 <= r["strike"] <= price*1.15]
+            rows.sort(key=lambda x: x["dollar_flow"], reverse=True)
+            return rows[:8]
+
+        calls = enrich(calls_df, "call")
+        puts  = enrich(puts_df,  "put")
+
+        def side_totals(rows):
+            return {
+                "dollar_flow": sum(r["dollar_flow"] for r in rows),
+                "volume":      sum(r["vol"] for r in rows),
+                "oi":          sum(r["oi"] for r in rows),
+                "ddoi":        sum(r["ddoi"] for r in rows),
+            }
+
+        call_totals = side_totals(calls)
+        put_totals  = side_totals(puts)
+
+        # Determine winner per metric
+        def winner(c, p, key):
+            return "call" if c[key] >= p[key] else "put"
+
+        return {
+            "ticker": ticker,
+            "price": round(price, 2),
+            "exp": exp,
+            "dte": d,
+            "dte_mode": dte_mode,
+            "calls": calls,
+            "puts": puts,
+            "call_totals": call_totals,
+            "put_totals": put_totals,
+            "flow_winner":   winner(call_totals, put_totals, "dollar_flow"),
+            "vol_winner":    winner(call_totals, put_totals, "volume"),
+            "oi_winner":     winner(call_totals, put_totals, "oi"),
+            "ddoi_winner":   winner(call_totals, put_totals, "ddoi"),
+            "last_updated": datetime.now().strftime("%H:%M:%S"),
+        }
+
+    loop = asyncio.get_event_loop()
+    try:
+        result = await asyncio.wait_for(loop.run_in_executor(None, _fetch), timeout=30.0)
+    except asyncio.TimeoutError:
+        raise HTTPException(504, "Timed out")
+    if not result:
+        raise HTTPException(404, f"No chain data for {ticker}")
+    return result
+
+
 @app.get("/api/darkpool")
 async def api_darkpool(req: Request, tickers: str = Query("")):
     _check_pin(req)
@@ -1150,7 +1307,9 @@ body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
         </button>
       </div>
       <button class="find-go" id="find-btn" onclick="doFind()">FIND TOP 3 CONTRACTS</button>
+      <button class="find-go" id="both-btn" onclick="doFindBoth()" style="margin-top:6px;color:var(--amber)">&#9654; CALLS vs PUTS LADDER</button>
       <div id="find-result"></div>
+      <div id="both-result"></div>
     </div>
   </div>
 </div>
@@ -1845,6 +2004,121 @@ async function doFind(retry){
       btn.textContent='FIND TOP 3 CONTRACTS';btn.classList.remove('loading');
     }
   }
+}
+
+async function doFindBoth(){
+  const ticker=(document.getElementById('ft').value.trim()||'SPY').toUpperCase();
+  const btn=document.getElementById('both-btn');
+  const res=document.getElementById('both-result');
+  btn.textContent='Loading...';btn.classList.add('loading');
+  res.textContent='';
+  try{
+    const r=await fetch(_pa('/api/find/both?ticker='+ticker+'&dte_mode='+S.dteMode));
+    if(_handleAuth(r))return;
+    if(!r.ok){const e=await r.json();throw new Error(e.detail||'Failed');}
+    const d=await r.json();
+    renderBothLadder(d);
+  }catch(e){
+    res.textContent='Error: '+e.message;
+  }finally{
+    btn.textContent='▶ CALLS vs PUTS LADDER';btn.classList.remove('loading');
+  }
+}
+
+function renderBothLadder(d){
+  const res=document.getElementById('both-result');
+  res.textContent='';
+
+  const fmtM=v=>v>=1e6?(v/1e6).toFixed(1)+'M':v>=1e3?(v/1e3).toFixed(0)+'K':v.toFixed(0);
+  const fmtN=v=>v>=1e6?(v/1e6).toFixed(1)+'M':v>=1e3?(v/1e3).toFixed(0)+'K':String(v);
+
+  const ct=d.call_totals, pt=d.put_totals;
+  const cw='#00ff88', pw='#ff3355', neu='#888';
+
+  // ── summary scoreboard ──────────────────────────────────────────────────
+  const scoreEl=document.createElement('div');
+  scoreEl.style.cssText='background:#0d0d16;border:1px solid #1a1a2e;border-radius:10px;padding:14px 16px;margin-bottom:12px';
+
+  const hdr=document.createElement('div');
+  hdr.style.cssText='display:flex;justify-content:space-between;align-items:center;margin-bottom:12px';
+  hdr.innerHTML=`<span style="font-size:11px;color:#555;letter-spacing:.8px">CALLS vs PUTS — ${d.ticker} ${d.exp} (${d.dte}DTE)</span><span style="font-size:10px;color:#444">${d.last_updated}</span>`;
+  scoreEl.appendChild(hdr);
+
+  const metrics=[
+    {key:'dollar_flow', label:'$ FLOW',   fmt:v=>'$'+fmtM(v), winner:d.flow_winner},
+    {key:'volume',      label:'VOLUME',   fmt:fmtN,            winner:d.vol_winner},
+    {key:'oi',          label:'OI',       fmt:fmtN,            winner:d.oi_winner},
+    {key:'ddoi',        label:'Δ OI',     fmt:fmtN,            winner:d.ddoi_winner},
+  ];
+
+  const grid=document.createElement('div');
+  grid.style.cssText='display:grid;grid-template-columns:1fr 1fr;gap:8px';
+
+  metrics.forEach(m=>{
+    const cWin=m.winner==='call', pWin=m.winner==='put';
+    const cell=document.createElement('div');
+    cell.style.cssText='background:#111;border-radius:8px;padding:10px 12px';
+    cell.innerHTML=`
+      <div style="font-size:9px;color:#555;letter-spacing:.8px;margin-bottom:6px">${m.label}</div>
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div>
+          <span style="font-size:11px;color:#555">C </span>
+          <span style="font-size:13px;font-weight:700;color:${cWin?cw:neu}">${m.fmt(ct[m.key])}</span>
+          ${cWin?'<span style="font-size:9px;color:'+cw+';margin-left:4px">▲</span>':''}
+        </div>
+        <div>
+          <span style="font-size:11px;color:#555">P </span>
+          <span style="font-size:13px;font-weight:700;color:${pWin?pw:neu}">${m.fmt(pt[m.key])}</span>
+          ${pWin?'<span style="font-size:9px;color:'+pw+';margin-left:4px">▲</span>':''}
+        </div>
+      </div>`;
+    grid.appendChild(cell);
+  });
+  scoreEl.appendChild(grid);
+
+  // Overall bias
+  const cWins=[d.flow_winner,d.vol_winner,d.oi_winner,d.ddoi_winner].filter(x=>x==='call').length;
+  const bias=cWins>=3?'CALL HEAVY':cWins<=1?'PUT HEAVY':'MIXED';
+  const biasCol=cWins>=3?cw:cWins<=1?pw:neu;
+  const biasEl=document.createElement('div');
+  biasEl.style.cssText='margin-top:10px;text-align:center;font-size:14px;font-weight:800;letter-spacing:1px;color:'+biasCol;
+  biasEl.textContent=bias+' ('+cWins+'/4 metrics call-dominant)';
+  scoreEl.appendChild(biasEl);
+  res.appendChild(scoreEl);
+
+  // ── ladder table ────────────────────────────────────────────────────────
+  const ladderEl=document.createElement('div');
+  ladderEl.style.cssText='background:#0d0d16;border:1px solid #1a1a2e;border-radius:10px;padding:14px 16px;margin-bottom:60px';
+
+  const ladderHdr=document.createElement('div');
+  ladderHdr.style.cssText='font-size:9px;color:#555;letter-spacing:.8px;margin-bottom:10px';
+  ladderHdr.textContent='TOP STRIKES BY $ FLOW';
+  ladderEl.appendChild(ladderHdr);
+
+  // header row
+  const hrow=document.createElement('div');
+  hrow.style.cssText='display:grid;grid-template-columns:60px 1fr 1fr 1fr 1fr;gap:4px;font-size:9px;color:#444;letter-spacing:.5px;margin-bottom:6px;padding:0 4px';
+  hrow.innerHTML='<span>STRIKE</span><span style="text-align:right">$FLOW</span><span style="text-align:right">VOL</span><span style="text-align:right">OI</span><span style="text-align:right">ΔOI</span>';
+  ladderEl.appendChild(hrow);
+
+  // merge calls + puts, sort by dollar flow
+  const allStrikes=[...d.calls.map(r=>({...r,side:'call'})),...d.puts.map(r=>({...r,side:'put'}))];
+  allStrikes.sort((a,b)=>b.dollar_flow-a.dollar_flow);
+
+  allStrikes.slice(0,12).forEach(r=>{
+    const col=r.side==='call'?cw:pw;
+    const row=document.createElement('div');
+    row.style.cssText='display:grid;grid-template-columns:60px 1fr 1fr 1fr 1fr;gap:4px;font-size:11px;padding:5px 4px;border-bottom:1px solid #111';
+    row.innerHTML=`
+      <span style="font-weight:700;color:${col}">${r.side==='call'?'C':'P'} ${r.strike}</span>
+      <span style="text-align:right;color:#ccc">$${fmtM(r.dollar_flow)}</span>
+      <span style="text-align:right;color:#aaa">${fmtN(r.vol)}</span>
+      <span style="text-align:right;color:#888">${fmtN(r.oi)}</span>
+      <span style="text-align:right;color:#666">${fmtN(r.ddoi)}</span>`;
+    ladderEl.appendChild(row);
+  });
+
+  res.appendChild(ladderEl);
 }
 
 function renderContracts(ticker,cs,ts){
