@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 # scanner.py — Elite Market Scanner v2
-# pip install yfinance colorama tabulate
+
+import sys, os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import yfinance as yf
 import colorama
@@ -16,12 +18,7 @@ colorama.init(autoreset=True)
 
 # ─── TastyTrade real flow (drop-in replacement for yfinance scan) ─────────────
 try:
-    # same dir (deployed) or ../flowdigger (local dev)
-    _tt_paths = [os.path.dirname(__file__), os.path.join(os.path.dirname(__file__), "..", "flowdigger")]
-    for _p in _tt_paths:
-        if _p not in sys.path:
-            sys.path.insert(0, _p)
-    from tt_flow import scan_options_flow_tt, load_credentials as _tt_load_creds
+    from data.tt_flow import scan_options_flow_tt, load_credentials as _tt_load_creds
     _TT_USER, _TT_PASS = _tt_load_creds()
     _TT_AVAILABLE = bool(_TT_USER and _TT_PASS)
 except Exception:

@@ -53,13 +53,13 @@ warnings.filterwarnings("ignore")
 init(autoreset=True)
 
 # ── Import scanner logic ───────────────────────────────────────────────────────
-sys.path.insert(0, str(Path(__file__).parent))
-from scanner import (
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from core.scanner import (
     UNIVERSE, TICKER_SECTOR, SECTOR_ETFS,
     bs_delta, norm_cdf, vix_delta_target, fetch_vix,
 )
 
-RESULTS_DIR = Path(__file__).parent / "backtest_results"
+RESULTS_DIR = Path(__file__).parent.parent / "results"
 RESULTS_DIR.mkdir(exist_ok=True)
 
 

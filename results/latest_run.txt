@@ -1,0 +1,23 @@
+
+  D — SIGNAL COMPARISON
+
+
+  D — SCANNER BACKTEST
+  Tickers: 80  |  Lookback: 60 days  |  Signal: all  |  Hold: 1D
+  Delta target: 0.3  |  Stop: -50%  |  Target: +100%
+
+  Downloading 80 tickers...$SPX: possibly delisted; no price data found  (1d 2025-12-24 -> 2026-04-23)
+
+1 Failed download:
+['SPX']: possibly delisted; no price data found  (1d 2025-12-24 -> 2026-04-23)
+ done (80 tickers)
+  Processing [1/80] SPX       Processing [2/80] SPY       Processing [3/80] QQQ       Processing [4/80] IWM       Processing [5/80] DIA       Processing [6/80] MDY       Processing [7/80] VXX       Processing [8/80] UVXY      Processing [9/80] SVXY      Processing [10/80] TQQQ      Processing [11/80] SOXL      Processing [12/80] UPRO      Processing [13/80] SPXL      Processing [14/80] TNA       Processing [15/80] LABU      Processing [16/80] TECL      Processing [17/80] FNGU      Processing [18/80] SQQQ      Processing [19/80] SOXS      Processing [20/80] SPXS      Processing [21/80] TZA       Processing [22/80] LABD      Processing [23/80] TECS      Processing [24/80] FNGD      Processing [25/80] SDOW      Processing [26/80] AAPL      Processing [27/80] MSFT      Processing [28/80] NVDA      Processing [29/80] META      Processing [30/80] AMZN      Processing [31/80] GOOGL     Processing [32/80] TSLA      Processing [33/80] AMD       Processing [34/80] AVGO      Processing [35/80] MU        Processing [36/80] ARM       Processing [37/80] SMCI      Processing [38/80] INTC      Processing [39/80] QCOM      Processing [40/80] TXN       Processing [41/80] AMAT      Processing [42/80] LRCX      Processing [43/80] KLAC      Processing [44/80] MRVL      Processing [45/80] ON        Processing [46/80] SWKS      Processing [47/80] MPWR      Processing [48/80] WOLF      Processing [49/80] NXPI      Processing [50/80] ADI       Processing [51/80] COIN      Processing [52/80] PLTR      Processing [53/80] MSTR      Processing [54/80] HOOD      Processing [55/80] SOFI      Processing [56/80] MARA      Processing [57/80] RIOT      Processing [58/80] CLSK      Processing [59/80] BITF      Processing [60/80] HUT       Processing [61/80] RBLX      Processing [62/80] SNAP      Processing [63/80] UBER      Processing [64/80] LYFT      Processing [65/80] DASH      Processing [66/80] AFRM      Processing [67/80] UPST      Processing [68/80] GME       Processing [69/80] AMC       Processing [70/80] BULL      Processing [71/80] CORZ      Processing [72/80] IREN      Processing [73/80] CIFR      Processing [74/80] NFLX      Processing [75/80] CRWD      Processing [76/80] PANW      Processing [77/80] DDOG      Processing [78/80] NET       Processing [79/80] ZS        Processing [80/80] SNOW                                                                              Processed: 79 tickers  |  Signals found: 2726  |  Failed: 1
+
+  Signal            N  Win%    Avg Ret      PF    Sharpe  EV       Opt Win%    Opt Avg%    $/contract
+  -------------  ----  ------  ---------  ----  --------  -------  ----------  ----------  ------------
+  gap_up         1222  46.3%   -0.26%     0.84     -0.99  -0.262%  12.7%       -34.1%      $-38.26
+  gap_down       1252  50.2%   +0.06%     1.04      0.2   +0.066%  13.8%       -32.2%      $-33.07
+  inside          283  51.9%   +0.12%     1.09      0.51  +0.145%  17.9%       -26.7%      $-28.28
+  double_inside     4  50.0%   -0.29%     0.42     -5.7   -0.286%  0.0%        -50.0%      $-96.47
+  highvol         273  55.3%   +0.67%     1.48      2.21  +0.666%  13.9%       -32.7%      $-32.34
+  trend           825  50.2%   -0.24%     0.85     -0.89  -0.239%  11.8%       -36.1%      $-39.01

@@ -1,1 +1,1 @@
-web: python3 web_combined.py
+web: python3 web/app.py

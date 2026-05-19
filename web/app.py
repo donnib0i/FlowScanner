@@ -23,27 +23,27 @@ try:
 except ImportError:
     sys.exit("pip install fastapi 'uvicorn[standard]'")
 
-sys.path.insert(0, os.path.dirname(__file__))
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 try:
-    from finra_darkpool import get_darkpool_signals_cached
+    from data.finra_darkpool import get_darkpool_signals_cached
     _DARKPOOL_OK = True
 except ImportError:
     _DARKPOOL_OK = False
 
 try:
-    from sec_insider import get_insider_signals_cached
+    from data.sec_insider import get_insider_signals_cached
     _INSIDER_OK = True
 except ImportError:
     _INSIDER_OK = False
 
 try:
-    from fred_macro import get_macro_context_cached
+    from data.fred_macro import get_macro_context_cached
     _FRED_OK = True
 except ImportError:
     _FRED_OK = False
 
-from scanner import (
+from core.scanner import (
     UNIVERSE, TICKER_SECTOR, SECTOR_ETFS,
     fetch_vix, vix_delta_target,
     scan_options_flow, get_best_contract,
