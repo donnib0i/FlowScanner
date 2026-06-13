@@ -72,7 +72,15 @@ def _lookup_quote_type(ticker: str) -> str:
         return ""
 
 
-def is_etf(ticker: str) -> bool:
+def is_etf(ticker: str, network: bool = False) -> bool:
+    """
+    True if `ticker` is an ETF.
+
+    Fast path (default): known-ETF blocklist + cached answers only — no network,
+    safe to call across the whole universe. Unknown names are treated as stocks.
+    Pass network=True to confirm an unknown name via a (slow) yfinance quoteType
+    lookup; the result is cached so it is paid at most once per name.
+    """
     t = (ticker or "").upper().strip()
     if not t:
         return False
@@ -81,6 +89,8 @@ def is_etf(ticker: str) -> bool:
     cache = _load_cache()
     if t in cache:
         return cache[t] == "ETF"
+    if not network:
+        return False
     qt = _lookup_quote_type(t)
     if qt:                      # only cache confident answers
         cache[t] = qt
@@ -88,12 +98,12 @@ def is_etf(ticker: str) -> bool:
     return qt == "ETF"
 
 
-def filter_etfs(tickers: Iterable[str]) -> List[str]:
-    """Drop ETFs, preserve order, dedupe."""
+def filter_etfs(tickers: Iterable[str], network: bool = False) -> List[str]:
+    """Drop ETFs, preserve order, dedupe. network=True confirms unknowns via yfinance."""
     out, seen = [], set()
     for t in tickers:
         u = (t or "").upper().strip()
-        if not u or u in seen or is_etf(u):
+        if not u or u in seen or is_etf(u, network=network):
             continue
         seen.add(u)
         out.append(u)

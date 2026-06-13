@@ -28,7 +28,18 @@ def test_unknown_ticker_uses_quote_type_lookup_and_caches(monkeypatch, tmp_path)
     etf_filter._set_cache_path(str(tmp_path / "etf_cache.json"))
     etf_filter._reset_cache()
 
-    assert etf_filter.is_etf("ZZZX") is True     # first call hits lookup
-    assert etf_filter.is_etf("ZZZX") is True     # second call hits cache
-    assert calls["n"] == 1                        # lookup called only once
-    assert etf_filter.is_etf("ABCD") is False
+    assert etf_filter.is_etf("ZZZX", network=True) is True   # first call hits lookup
+    assert etf_filter.is_etf("ZZZX", network=True) is True   # second call hits cache
+    assert calls["n"] == 1                                    # lookup called only once
+    assert etf_filter.is_etf("ABCD", network=True) is False
+
+
+def test_unknown_ticker_without_network_is_treated_as_stock(monkeypatch):
+    # Default fast path must NOT hit the network for unknown names.
+    def boom(ticker):
+        raise AssertionError("network lookup should not be called by default")
+
+    monkeypatch.setattr(etf_filter, "_lookup_quote_type", boom)
+    etf_filter._reset_cache()
+    assert etf_filter.is_etf("ZQXW") is False
+    assert etf_filter.filter_etfs(["ZQXW", "SPY", "NVDA"]) == ["ZQXW", "NVDA"]
