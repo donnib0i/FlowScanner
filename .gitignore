@@ -10,4 +10,5 @@ __pycache__/
 .gradio/
 backtest_results/
 .tt_creds.json
+data/baselines/
 
