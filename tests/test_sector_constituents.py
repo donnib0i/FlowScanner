@@ -15,18 +15,20 @@ def test_constituents_excludes_etfs(monkeypatch):
     out = sc.constituents_for("Technology")
     assert "AAPL" in out and "MSFT" in out
     assert "XLK" not in out          # ETF filtered
-    assert "JPM" not in out          # wrong sector
+    assert "JPM" not in out          # wrong sector (and not in Tech static)
 
 
 def test_gics_and_yfinance_names_both_map(monkeypatch):
+    # Live names (GICS + yfinance variants) are unioned with the static base.
     monkeypatch.setattr(sc, "get_ticker_sector_map", lambda: {
-        "AMZN": "Consumer Cyclical",        # yfinance name
-        "HD":   "Consumer Discretionary",   # GICS name
-        "KO":   "Consumer Defensive",       # yfinance -> Staples
+        "ZZZA": "Consumer Cyclical",        # yfinance name -> Discretionary
+        "ZZZB": "Consumer Discretionary",   # GICS name
+        "ZZZC": "Consumer Defensive",       # yfinance -> Staples
     })
     disc = sc.constituents_for("Consumer Discretionary")
-    assert set(disc) == {"AMZN", "HD"}
-    assert sc.constituents_for("Consumer Staples") == ["KO"]
+    assert "ZZZA" in disc and "ZZZB" in disc
+    assert "ZZZC" not in disc                       # that one is Staples
+    assert "ZZZC" in sc.constituents_for("Consumer Staples")
 
 
 def test_every_gics_sector_has_a_bucket():
@@ -39,10 +41,17 @@ def test_every_gics_sector_has_a_bucket():
         assert sc.normalize_sector(name) in SECTOR_ETFS
 
 
-def test_fallback_when_live_map_empty(monkeypatch):
+def test_static_base_works_when_live_map_empty(monkeypatch):
+    # Cloud scenario: live fetch IP-blocked -> still rich coverage from static base.
     monkeypatch.setattr(sc, "get_ticker_sector_map", lambda: {})
-    fallback = {"NVDA": "Technology", "JPM": "Financials"}
-    assert sc.constituents_for("Technology", fallback_map=fallback) == ["NVDA"]
+    fin = sc.constituents_for("Financials")
+    assert len(fin) >= 30
+    assert {"JPM", "GS", "BAC"} <= set(fin)
+    # every static sector returns a healthy, ETF-free list
+    for sector in SECTOR_ETFS:
+        names = sc.constituents_for(sector)
+        assert len(names) >= 25, f"{sector} too small: {len(names)}"
+        assert "XLK" not in names and "SPY" not in names
 
 
 # ── top_individual_laggard ───────────────────────────────────────────────────
