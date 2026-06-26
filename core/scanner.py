@@ -1189,10 +1189,11 @@ _HEATMAP_CACHE: Dict[str, tuple] = {}   # sector -> (timestamp, payload)
 _HEATMAP_TTL = 60.0
 
 
-def sector_heatmap(sector: str, limit: int = 30) -> Dict:
+def sector_heatmap(sector: str, limit: int = 150) -> Dict:
     """
     Heatmap data for one sector: its individual constituents with today's % change
-    and a size weight (dollar volume). Sorted by weight desc, capped to `limit`.
+    and a size weight (dollar volume). Sorted by weight desc, capped to `limit`
+    (default high enough to show essentially every liquid name in the sector).
     """
     now    = time.time()
     cached = _HEATMAP_CACHE.get(sector)

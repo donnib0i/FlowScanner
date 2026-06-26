@@ -1175,7 +1175,7 @@ body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
   border:1px solid var(--border);border-radius:6px}
 .heat-map{display:flex;flex-wrap:wrap;gap:3px;width:100%}
 .heat-tile{display:flex;flex-direction:column;justify-content:center;align-items:center;
-  border-radius:5px;overflow:hidden;min-height:46px;padding:4px 2px;box-sizing:border-box;
+  border-radius:4px;overflow:hidden;padding:2px;box-sizing:border-box;
   cursor:pointer;transition:transform .1s}
 .heat-tile:active{transform:scale(.96)}
 .heat-tile .ht-tk{font-size:11px;font-weight:800;color:#fff;text-shadow:0 1px 2px rgba(0,0,0,.5)}
@@ -1254,6 +1254,14 @@ body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
   color:var(--text);font-family:var(--font);font-size:11px;padding:6px 10px;cursor:pointer;outline:none}
 .sel option{background:var(--bg2)}
 .scan-stat{font-size:10px;color:var(--sub);margin-left:auto;letter-spacing:.3px}
+.sort-bar{display:flex;gap:6px;align-items:center;padding:0 14px 8px}
+.sort-lbl{font-size:9px;font-weight:700;letter-spacing:.8px;color:var(--sub)}
+.dir-toggle{background:var(--bg3);border:1px solid var(--border);border-radius:6px;
+  color:var(--text);font-size:11px;padding:6px 9px;cursor:pointer;line-height:1}
+.dir-toggle:active{transform:scale(.95)}
+th.sortable{cursor:pointer;user-select:none;white-space:nowrap}
+th.sortable.active{color:var(--cyan)}
+th.sortable .arr{font-size:8px;margin-left:2px}
 #hot-feed{padding:4px 0 8px}
 .hot-card{margin:5px 12px;background:var(--card);border:1px solid var(--border);
   border-radius:8px;padding:11px 14px;display:flex;align-items:center;gap:10px}
@@ -1301,6 +1309,19 @@ body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
       <button class="chip" id="c-whale" onclick="tWhale()">WHALE+</button>
       <button class="chip" id="c-scope" onclick="tScope()">QUICK</button>
       <button class="scan-btn" id="scan-btn" onclick="doFlowScan()">SCAN</button>
+    </div>
+    <div class="sort-bar" id="flow-sort-bar" style="display:none">
+      <span class="sort-lbl">SORT</span>
+      <select class="sel" id="flow-sort" onchange="setFlowSort(this.value)">
+        <option value="premium">PREMIUM $</option>
+        <option value="score">WHALE SCORE</option>
+        <option value="vol">VOLUME</option>
+        <option value="oi">OPEN INTEREST</option>
+        <option value="voloi">VOL / OI</option>
+        <option value="dte">DTE</option>
+        <option value="pc">P/C RATIO</option>
+      </select>
+      <button class="dir-toggle" id="flow-dir" onclick="toggleFlowDir()" title="Ascending / descending">&#9660;</button>
     </div>
     <div class="prog-wrap" id="pw" style="display:none"><div class="prog-bar" id="pb"></div></div>
     <div class="prog-lbl" id="pl" style="display:none"></div>
@@ -1489,6 +1510,16 @@ const S={
   view:'signals',
   qt:[],ft:[],
   scanData:[],scanFilter:'any',scanSort:'setup',
+  flowSort:'premium',flowDir:-1,
+};
+const FLOW_SORT_KEYS={
+  premium:function(s){return s.total||0},
+  score:function(s){return s.score||0},
+  vol:function(s){return s.vol||0},
+  oi:function(s){return s.oi||0},
+  voloi:function(s){return s.vol_oi||0},
+  dte:function(s){return s.dte<0?9999:s.dte},
+  pc:function(s){return s.pc_ratio||0},
 };
 
 (function(){
@@ -1577,6 +1608,7 @@ function doFlowScan(retryCount){
     S.scanning=true;S.callFlow=0;S.putFlow=0;S.signals=[];S.hotContracts=[];
     setView('signals');
     document.getElementById('view-toggle').style.display='none';
+    document.getElementById('flow-sort-bar').style.display='none';
     document.getElementById('flow-feed').textContent='';
     document.getElementById('hot-feed').textContent='';
     document.getElementById('flow-bar').classList.remove('on');
@@ -1612,6 +1644,7 @@ function doFlowScan(retryCount){
       (s.top3||[]).forEach(function(c){S.hotContracts.push(Object.assign({},c,{ticker:s.ticker,badge:s.badge,cls:s.cls}))});
       renderFlowCard(s);
       updateFlowBias();
+      document.getElementById('flow-sort-bar').style.display='flex';
     }
   };
   es.onerror=function(){
@@ -1794,6 +1827,20 @@ function renderFlowCard(s){
   if(s.top3&&s.top3.length) card.appendChild(contractsRow);
   card.appendChild(det);
   feed.appendChild(card);
+}
+function setFlowSort(v){S.flowSort=v;sortFlowFeed()}
+function toggleFlowDir(){
+  S.flowDir=-S.flowDir;
+  document.getElementById('flow-dir').innerHTML=S.flowDir<0?'&#9660;':'&#9650;';
+  sortFlowFeed();
+}
+function sortFlowFeed(){
+  if(!S.signals.length) return;
+  const key=FLOW_SORT_KEYS[S.flowSort]||FLOW_SORT_KEYS.premium;
+  S.signals.sort(function(a,b){return (key(a)-key(b))*S.flowDir});
+  const feed=document.getElementById('flow-feed');
+  feed.textContent='';
+  S.signals.forEach(renderFlowCard);
 }
 function toggleDetail(head){
   head.closest('.flow-card').querySelector('.card-detail').classList.toggle('open');
@@ -2107,19 +2154,24 @@ async function loadHeatmap(sector,map,sub){
     }
     sub.textContent=stocks.length+' stocks';
     const W=map.clientWidth||map.offsetWidth||320;
-    const H=Math.max(180,Math.min(420,Math.round(W*0.7)));
+    // taller canvas when there are more names so even small tiles stay tappable
+    const H=Math.max(220,Math.min(640,Math.round(W*0.55+stocks.length*5)));
     map.style.position='relative';map.style.height=H+'px';
     const rects=squarify(stocks.map(function(s){return {w:Math.max(s.weight,1),it:s}}),W,H);
     rects.forEach(function(rc){
       const s=rc.it;
       const t=document.createElement('div');t.className='heat-tile';
       t.style.cssText='position:absolute;left:'+rc.x+'px;top:'+rc.y+'px;width:'+
-        (rc.w-3)+'px;height:'+(rc.h-3)+'px;background:'+heatColor(s.change);
-      const tk=document.createElement('div');tk.className='ht-tk';tk.textContent=s.ticker;
-      const ch=document.createElement('div');ch.className='ht-ch';
-      ch.textContent=(s.change>0?'+':'')+s.change+'%';
-      t.appendChild(tk);
-      if(rc.h>30&&rc.w>34) t.appendChild(ch);
+        Math.max(rc.w-2,1)+'px;height:'+Math.max(rc.h-2,1)+'px;background:'+heatColor(s.change);
+      if(rc.h>=14&&rc.w>=22){
+        const tk=document.createElement('div');tk.className='ht-tk';
+        if(rc.w<40)tk.style.fontSize='9px';
+        tk.textContent=s.ticker;t.appendChild(tk);
+      }
+      if(rc.h>30&&rc.w>40){
+        const ch=document.createElement('div');ch.className='ht-ch';
+        ch.textContent=(s.change>0?'+':'')+s.change+'%';t.appendChild(ch);
+      }
       t.onclick=function(ev){ev.stopPropagation();toast(s.ticker+'  '+(s.change>0?'+':'')+s.change+'%')};
       map.appendChild(t);
     });
@@ -2503,6 +2555,81 @@ function _e(v){return String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;').repla
 function _fN(n){if(n>=1e6)return'$'+(n/1e6).toFixed(1)+'M';if(n>=1e3)return'$'+(n/1e3).toFixed(0)+'K';return'$'+n;}
 
 const _UOA_COLORS={'🔴 EXTREME':'#ff3355','🟠 UNUSUAL':'#ff8c00','🟡 NOTABLE':'#ffd700','⚪ NORMAL':'#666'};
+let _uoaSignals=[]; let _uoaMeta=''; let _uoaSort={key:'score',dir:-1};
+// {label, key, type:'n'umeric | 's'tring | 'x' non-sortable}
+const _UOA_COLS=[
+  {label:'SIGNAL',key:'score',type:'x'},
+  {label:'TICKER',key:'ticker',type:'s'},
+  {label:'SECTOR',key:'sector',type:'s'},
+  {label:'TYPE',key:'type',type:'s'},
+  {label:'STRIKE',key:'strike',type:'n'},
+  {label:'EXPIRY',key:'dte',type:'x'},
+  {label:'DTE',key:'dte',type:'n'},
+  {label:'VOL',key:'volume',type:'n'},
+  {label:'OI',key:'open_interest',type:'n'},
+  {label:'V/OI',key:'vol_oi',type:'n'},
+  {label:'NOTIONAL',key:'notional',type:'n'},
+  {label:'SIDE',key:'trade_side',type:'s'},
+  {label:'SCORE',key:'score',type:'n'},
+];
+function sortUOA(key){
+  if(_uoaSort.key===key){_uoaSort.dir=-_uoaSort.dir;}
+  else{_uoaSort.key=key;_uoaSort.dir=-1;}
+  renderUOATable();
+}
+function renderUOATable(){
+  const wrap=document.getElementById('uoa-table-wrap');
+  wrap.innerHTML='';
+  if(!_uoaSignals.length){
+    const msg=document.createElement('div');
+    msg.style.cssText='text-align:center;padding:30px;color:#555;font-size:12px';
+    msg.textContent='No unusual flow detected right now.';
+    wrap.appendChild(msg);return;
+  }
+  const sk=_uoaSort.key,dir=_uoaSort.dir;
+  const sorted=_uoaSignals.slice().sort(function(a,b){
+    let av=a[sk],bv=b[sk];
+    if(typeof av==='string'||typeof bv==='string'){
+      return String(av).localeCompare(String(bv))*dir;
+    }
+    return ((av||0)-(bv||0))*dir;
+  });
+  const rows=sorted.map(function(s){
+    const lc=_UOA_COLORS[s.label]||'#666';
+    const tc=s.type==='call'?'#00ff88':'#ff3355';
+    const sc=s.trade_side==='ask'?'#ffd700':s.trade_side==='bid'?'#ff8c00':'#555';
+    const vc=s.vol_oi>=5?'#ff3355':s.vol_oi>=1?'#ff8c00':s.vol_oi>=0.5?'#ffd700':'#aaa';
+    return '<tr>'
+      +'<td style="color:'+lc+';font-size:9px;white-space:nowrap">'+_e(s.label)+'</td>'
+      +'<td style="font-weight:700;color:#eee">'+_e(s.ticker)+'</td>'
+      +'<td style="font-size:9px;color:#666">'+_e(s.sector)+'</td>'
+      +'<td style="color:'+tc+';font-weight:700">'+_e(s.type.toUpperCase())+'</td>'
+      +'<td style="color:#aaa">$'+_e(s.strike)+'</td>'
+      +'<td style="font-size:10px;color:#888">'+_e(s.expiry)+'</td>'
+      +'<td style="color:#777">'+_e(s.dte)+'d</td>'
+      +'<td style="color:#ccc">'+_e(Number(s.volume).toLocaleString())+'</td>'
+      +'<td style="color:#666">'+_e(Number(s.open_interest).toLocaleString())+'</td>'
+      +'<td style="color:'+vc+';font-weight:700">'+_e(s.vol_oi)+'x</td>'
+      +'<td style="color:#00ff88;font-weight:700">'+_e(_fN(s.notional))+'</td>'
+      +'<td style="color:'+sc+';font-size:10px">'+_e(s.trade_side)+'</td>'
+      +'<td style="color:#aaa">'+_e(s.score)+'</td>'
+      +'</tr>';
+  }).join('');
+  const meta=document.createElement('div');
+  meta.style.cssText='font-size:9px;color:#444;margin-bottom:6px;text-align:right';
+  meta.textContent=_uoaMeta;
+  wrap.appendChild(meta);
+  const ths=_UOA_COLS.map(function(c){
+    if(c.type==='x') return '<th>'+c.label+'</th>';
+    const active=c.key===sk;
+    const arr=active?(dir<0?' <span class="arr">&#9660;</span>':' <span class="arr">&#9650;</span>'):'';
+    return '<th class="sortable'+(active?' active':'')+'" onclick="sortUOA(\''+c.key+'\')">'+c.label+arr+'</th>';
+  }).join('');
+  const tbl=document.createElement('table');
+  tbl.className='scan-table';tbl.style.fontSize='11px';
+  tbl.innerHTML='<thead><tr>'+ths+'</tr></thead><tbody>'+rows+'</tbody>';
+  wrap.appendChild(tbl);
+}
 
 async function loadUOA(force){
   const btn=document.getElementById('uoa-run-btn');
@@ -2542,49 +2669,10 @@ async function loadUOA(force){
         +bhtml+'</div>';
       bar.style.display='block';
     }
-    // Contracts table
-    if(!d.signals||!d.signals.length){
-      const msg=document.createElement('div');
-      msg.style.cssText='text-align:center;padding:30px;color:#555;font-size:12px';
-      msg.textContent='No unusual flow detected right now.';
-      wrap.appendChild(msg);
-    } else {
-      const rows=d.signals.map(s=>{
-        const lc=_UOA_COLORS[s.label]||'#666';
-        const tc=s.type==='call'?'#00ff88':'#ff3355';
-        const sc=s.trade_side==='ask'?'#ffd700':s.trade_side==='bid'?'#ff8c00':'#555';
-        const vc=s.vol_oi>=5?'#ff3355':s.vol_oi>=1?'#ff8c00':s.vol_oi>=0.5?'#ffd700':'#aaa';
-        return '<tr>'
-          +'<td style="color:'+lc+';font-size:9px;white-space:nowrap">'+_e(s.label)+'</td>'
-          +'<td style="font-weight:700;color:#eee">'+_e(s.ticker)+'</td>'
-          +'<td style="font-size:9px;color:#666">'+_e(s.sector)+'</td>'
-          +'<td style="color:'+tc+';font-weight:700">'+_e(s.type.toUpperCase())+'</td>'
-          +'<td style="color:#aaa">$'+_e(s.strike)+'</td>'
-          +'<td style="font-size:10px;color:#888">'+_e(s.expiry)+'</td>'
-          +'<td style="color:#777">'+_e(s.dte)+'d</td>'
-          +'<td style="color:#ccc">'+_e(Number(s.volume).toLocaleString())+'</td>'
-          +'<td style="color:#666">'+_e(Number(s.open_interest).toLocaleString())+'</td>'
-          +'<td style="color:'+vc+';font-weight:700">'+_e(s.vol_oi)+'x</td>'
-          +'<td style="color:#00ff88;font-weight:700">'+_e(_fN(s.notional))+'</td>'
-          +'<td style="color:'+sc+';font-size:10px">'+_e(s.trade_side)+'</td>'
-          +'<td style="color:#aaa">'+_e(s.score)+'</td>'
-          +'</tr>';
-      }).join('');
-      const meta=document.createElement('div');
-      meta.style.cssText='font-size:9px;color:#444;margin-bottom:6px;text-align:right';
-      meta.textContent=d.count+' contracts · '+(d.cached?'cached':'live')+' · '+(d.last_updated||'');
-      wrap.appendChild(meta);
-      const tbl=document.createElement('table');
-      tbl.className='scan-table';
-      tbl.style.fontSize='11px';
-      tbl.innerHTML='<thead><tr>'
-        +'<th>SIGNAL</th><th>TICKER</th><th>SECTOR</th><th>TYPE</th>'
-        +'<th>STRIKE</th><th>EXPIRY</th><th>DTE</th>'
-        +'<th>VOL</th><th>OI</th><th>V/OI</th>'
-        +'<th>NOTIONAL</th><th>SIDE</th><th>SCORE</th>'
-        +'</tr></thead><tbody>'+rows+'</tbody>';
-      wrap.appendChild(tbl);
-    }
+    // Contracts table (sortable — tap a column header)
+    _uoaSignals=d.signals||[];
+    _uoaMeta=d.count+' contracts · '+(d.cached?'cached':'live')+' · '+(d.last_updated||'');
+    renderUOATable();
   } catch(e){
     status.style.display='none';
     const err=document.createElement('div');
