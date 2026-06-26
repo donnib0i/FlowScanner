@@ -50,11 +50,18 @@ from core.scanner import (
     scan_sectors, calc_whale_score, fmt_whale_score,
     scan_tickers, apply_forward_directions,
     enrich_contracts, find_sector_laggards,
+    sector_heatmap, top_individual_laggard,
     apply_filter, apply_sort,
     FILTER_LABELS, SORT_LABELS,
-    fetch_dynamic_universe,
     _TT_AVAILABLE,
 )
+from core.universe import get_universe, ANCHOR
+from data.unusual_flow import scan_unusual_flow, sector_flow_summary
+from data.sources import available_sources
+
+# Cache unusual flow results (expensive scan)
+_UOA_CACHE: dict = {"signals": [], "summary": {}, "ts": 0.0}
+_UOA_TTL = 600  # 10 min
 
 PORT = int(os.environ.get("PORT", 8765))
 
@@ -62,7 +69,8 @@ PORT = int(os.environ.get("PORT", 8765))
 _ETF_PREFIXES = {"SPY","QQQ","IWM","DIA","MDY","VXX","UVXY","SVXY","TQQQ","SOXL","UPRO",
                  "SPXL","TNA","LABU","TECL","FNGU","SQQQ","SOXS","SPXS","TZA","LABD",
                  "TECS","FNGD","SDOW","GLD","SLV","USO","CPER","KWEB","FXI","XBI","ARKK"}
-INSIDER_UNIVERSE = [t for t in UNIVERSE if t not in _ETF_PREFIXES][:35]
+def _get_insider_universe() -> list:
+    return [t for t in get_universe() if t not in _ETF_PREFIXES][:50]
 _PIN = os.environ.get("SCANNER_PIN", "").strip()
 
 # Valid parameter enums
@@ -337,13 +345,14 @@ async def api_status(req: Request):
         "darkpool": _DARKPOOL_OK,
         "insider": _INSIDER_OK,
         "macro": _FRED_OK,
+        "chain_sources": available_sources(),
     }
 
 @app.get("/api/universe")
 async def api_universe(req: Request):
     _check_pin(req)
     _check_rate(req, "universe", limit=10, window=60)
-    return {"quick": DEFAULT_FLOW_TICKERS, "full": UNIVERSE}
+    return {"quick": DEFAULT_FLOW_TICKERS, "full": get_universe()}
 
 @app.get("/api/flow")
 async def api_flow(
@@ -461,14 +470,7 @@ async def api_scan(
     loop = asyncio.get_event_loop()
     mo = is_market_open()
 
-    tickers = list(UNIVERSE)
-    if dynamic == "true":
-        try:
-            dyn = await loop.run_in_executor(None, lambda: fetch_dynamic_universe(top_n=40))
-            added = [t for t in dyn if t not in tickers]
-            tickers = list(dict.fromkeys(tickers + added))
-        except Exception:
-            pass
+    tickers = await loop.run_in_executor(None, get_universe)
 
     with contextlib.redirect_stdout(io.StringIO()):
         try:
@@ -566,23 +568,17 @@ async def api_sectors(req: Request):
         except asyncio.TimeoutError:
             raise HTTPException(504, "Sector scan timed out")
 
+    # Top laggard = the individual stock most diverging against its sector.
     laggard = None
     try:
-        items = [(k, v) for k, v in data.items()]
-        if items:
-            avg_chg = sum(v.get("change_pct", 0) for _, v in items) / len(items)
-            worst_k, worst_v = min(items, key=lambda x: x[1].get("change_pct", 0) - avg_chg)
-            laggard = {
-                "ticker":  worst_v.get("etf", worst_k),
-                "name":    worst_k,
-                "lag_pct": round(worst_v.get("change_pct", 0) - avg_chg, 2),
-            }
+        laggard = await asyncio.wait_for(
+            loop.run_in_executor(None, top_individual_laggard, data), timeout=30.0
+        )
     except Exception:
-        pass
+        laggard = None
 
     clean = [{
         "name":     k,
-        "etf":      v.get("etf", ""),
         "change":   round(v.get("change_pct", 0), 2),
         "strength": round(v.get("strength", 0), 2),
         "price":    round(v.get("price", 0), 2),
@@ -596,6 +592,28 @@ async def api_sectors(req: Request):
     return {
         "sectors":      sorted(clean, key=lambda x: x["change"], reverse=True),
         "laggard":      laggard,
+        "last_updated": datetime.now().strftime("%H:%M:%S"),
+    }
+
+@app.get("/api/sector/{name}/heatmap")
+async def api_sector_heatmap(req: Request, name: str):
+    _check_pin(req)
+    _check_rate(req, "heatmap", limit=20, window=60)
+    if name not in SECTOR_ETFS:
+        raise HTTPException(404, "Unknown sector")
+    loop = asyncio.get_event_loop()
+    with contextlib.redirect_stdout(io.StringIO()):
+        try:
+            data = await asyncio.wait_for(
+                loop.run_in_executor(None, sector_heatmap, name), timeout=45.0
+            )
+        except asyncio.TimeoutError:
+            raise HTTPException(504, "Heatmap scan timed out")
+    if not data.get("stocks"):
+        raise HTTPException(503, "No data -- market may be closed")
+    return {
+        "sector":       data["sector"],
+        "stocks":       data["stocks"],
         "last_updated": datetime.now().strftime("%H:%M:%S"),
     }
 
@@ -798,7 +816,7 @@ async def api_darkpool(req: Request, tickers: str = Query("")):
     if raw:
         ticker_list = [_validate_ticker(t) for t in raw.split(",") if t.strip()]
     else:
-        ticker_list = list(UNIVERSE)[:80]  # default: first 80 tickers
+        ticker_list = get_universe()[:100]  # default: top 100 live tickers
     try:
         loop = asyncio.get_event_loop()
         signals = await asyncio.wait_for(
@@ -820,7 +838,7 @@ async def api_insider(req: Request, tickers: str = Query(""), days: int = Query(
     if raw:
         ticker_list = [_validate_ticker(t) for t in raw.split(",") if t.strip()]
     else:
-        ticker_list = list(INSIDER_UNIVERSE)
+        ticker_list = _get_insider_universe()
     days = max(7, min(90, days))
     try:
         loop = asyncio.get_event_loop()
@@ -831,6 +849,59 @@ async def api_insider(req: Request, tickers: str = Query(""), days: int = Query(
     except asyncio.TimeoutError:
         raise HTTPException(504, "Insider scan timed out")
     return {"signals": signals, "count": len(signals), "days": days, "last_updated": datetime.now().strftime("%H:%M:%S")}
+
+
+@app.get("/api/unusual-flow")
+async def api_unusual_flow(
+    req: Request,
+    tickers: str = Query(""),
+    min_score: int = Query(35),
+    force: bool = Query(False),
+):
+    """
+    Unusual options activity scanner.
+    Returns contracts where vol/OI, notional, or DTE signals anomalous flow.
+    Results cached 10 min. Pass force=true to rebuild immediately.
+    """
+    _check_pin(req)
+    _check_rate(req, "unusual_flow", limit=3, window=120)
+
+    now = time.time()
+    if not force and now - _UOA_CACHE["ts"] < _UOA_TTL and _UOA_CACHE["signals"]:
+        return {
+            "signals":  _UOA_CACHE["signals"],
+            "summary":  _UOA_CACHE["summary"],
+            "count":    len(_UOA_CACHE["signals"]),
+            "cached":   True,
+            "last_updated": datetime.fromtimestamp(_UOA_CACHE["ts"]).strftime("%H:%M:%S"),
+        }
+
+    # Custom ticker list or full pool
+    pool = [t.strip().upper() for t in tickers.split(",") if t.strip()] or None
+
+    loop = asyncio.get_event_loop()
+    try:
+        signals = await asyncio.wait_for(
+            loop.run_in_executor(None, lambda: scan_unusual_flow(
+                tickers=pool, top_tickers=80, min_score=min_score, max_results=150,
+            )),
+            timeout=120,
+        )
+    except asyncio.TimeoutError:
+        raise HTTPException(504, "Unusual flow scan timed out")
+
+    summary = sector_flow_summary(signals)
+    _UOA_CACHE["signals"]  = signals
+    _UOA_CACHE["summary"]  = summary
+    _UOA_CACHE["ts"]       = time.time()
+
+    return {
+        "signals":      signals,
+        "summary":      summary,
+        "count":        len(signals),
+        "cached":       False,
+        "last_updated": datetime.now().strftime("%H:%M:%S"),
+    }
 
 
 @app.get("/api/macro")
@@ -1094,6 +1165,22 @@ body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
   text-transform:uppercase;margin-bottom:4px}
 .laggard-ticker{font-size:18px;font-weight:800;color:var(--text)}
 .laggard-desc{font-size:10px;color:var(--sub);margin-top:2px}
+.sector-card.open{border-color:var(--cyan)}
+.heat-panel{grid-column:1/-1;background:var(--card);border:1px solid var(--border);
+  border-radius:10px;padding:12px;margin-top:-2px}
+.heat-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+.heat-title{font-size:13px;font-weight:700;color:var(--text)}
+.heat-sub{font-size:10px;color:var(--sub);margin-left:6px;font-weight:400}
+.heat-close{font-size:11px;color:var(--sub);cursor:pointer;padding:2px 8px;
+  border:1px solid var(--border);border-radius:6px}
+.heat-map{display:flex;flex-wrap:wrap;gap:3px;width:100%}
+.heat-tile{display:flex;flex-direction:column;justify-content:center;align-items:center;
+  border-radius:5px;overflow:hidden;min-height:46px;padding:4px 2px;box-sizing:border-box;
+  cursor:pointer;transition:transform .1s}
+.heat-tile:active{transform:scale(.96)}
+.heat-tile .ht-tk{font-size:11px;font-weight:800;color:#fff;text-shadow:0 1px 2px rgba(0,0,0,.5)}
+.heat-tile .ht-ch{font-size:9px;font-weight:600;color:rgba(255,255,255,.92)}
+.heat-empty{font-size:11px;color:var(--sub);padding:14px;text-align:center}
 .finder{padding:16px 14px}
 .find-input{width:100%;background:var(--bg3);border:1px solid var(--border);
   border-radius:8px;color:var(--text);font-size:22px;font-weight:800;
@@ -1312,6 +1399,26 @@ body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
       <div id="both-result"></div>
     </div>
   </div>
+
+  <div class="tab-pane" id="tab-uoa">
+    <div style="padding:14px 12px 0">
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px">
+        <button class="ctrl-btn" id="uoa-run-btn" onclick="loadUOA(false)"
+          style="flex:1;background:rgba(255,80,80,.12);color:#ff5050;border:1px solid rgba(255,80,80,.25)">
+          &#9654; SCAN UNUSUAL FLOW
+        </button>
+        <button class="ctrl-btn" onclick="loadUOA(true)"
+          style="width:60px;font-size:9px;color:var(--sub);border:1px solid #333">
+          FORCE
+        </button>
+      </div>
+      <div id="uoa-sector-bar" style="display:none;margin-bottom:10px"></div>
+      <div id="uoa-status" style="font-size:10px;color:var(--sub);text-align:center;padding:20px 0">
+        Press SCAN to detect unusual options activity across all sectors.
+      </div>
+      <div id="uoa-table-wrap" style="overflow-x:auto"></div>
+    </div>
+  </div>
 </div>
 <div id="source-badge" style="text-align:center;padding:4px 0 0;font-size:9px;letter-spacing:.8px;color:#444">LOADING...</div>
 <div id="tabbar">
@@ -1329,6 +1436,9 @@ body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
   </button>
   <button class="tab-btn" onclick="showTab('intel',this)">
     <svg viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>INTEL
+  </button>
+  <button class="tab-btn" onclick="showTab('uoa',this)">
+    <svg viewBox="0 0 24 24"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>UOA
   </button>
 </div>
 </div>
@@ -1905,12 +2015,15 @@ async function loadSectors(){
     hdr.appendChild(hdrLeft);hdr.appendChild(ts);
     feed.appendChild(hdr);
     if(d.laggard){
+      const lg=d.laggard;
       const lb=document.createElement('div');lb.className='laggard-box';
       const lbl=document.createElement('div');lbl.className='laggard-label';lbl.textContent='TOP LAGGARD';
       const lt=document.createElement('div');lt.className='laggard-ticker';
-      lt.textContent=d.laggard.ticker+' ('+d.laggard.name+')';
+      lt.textContent=lg.ticker+'  ·  '+lg.sector;
       const ld=document.createElement('div');ld.className='laggard-desc';
-      ld.textContent='vs sector avg: '+(d.laggard.lag_pct>0?'+':'')+d.laggard.lag_pct+'%';
+      const scs=(lg.sector_change>0?'+':'')+lg.sector_change+'%';
+      const tcs=(lg.stock_change>0?'+':'')+lg.stock_change+'%';
+      ld.textContent=lg.sector+' '+scs+'  ·  '+lg.ticker+' '+tcs+'   (diverges '+lg.divergence+'%)';
       lb.appendChild(lbl);lb.appendChild(lt);lb.appendChild(ld);feed.appendChild(lb);
     }
     const grid=document.createElement('div');grid.className='sector-grid';
@@ -1920,11 +2033,11 @@ async function loadSectors(){
       const biasClr=s.bias==='bull'?'var(--green)':s.bias==='bear'?'var(--red)':'var(--sub)';
       const card=document.createElement('div');
       card.className='sector-card '+(up?'up':'dn');
+      card.dataset.sector=s.name;
       const changeStr=(up?'+':'')+s.change.toFixed(2)+'%';
-      card.title=s.name+': '+changeStr+' . Strength: '+s.strength;
-      card.onclick=function(){toast(s.name+': '+changeStr+' . Strength: '+s.strength)};
+      card.title='Tap to see '+s.name+' stocks';
+      card.onclick=function(){toggleHeatmap(card,s.name,grid)};
       const nm=document.createElement('div');nm.className='sc-name';nm.textContent=s.name;
-      const etf=document.createElement('div');etf.className='sc-etf';etf.textContent=s.etf;
       const chg=document.createElement('div');chg.className='sc-chg '+(up?'up':'dn');
       chg.textContent=changeStr;
       const track=document.createElement('div');track.className='sc-bar-track';
@@ -1937,7 +2050,7 @@ async function loadSectors(){
       const volEl=document.createElement('span');
       volEl.textContent=s.rel_vol.toFixed(1)+'x vol';
       meta.appendChild(biasEl);meta.appendChild(volEl);
-      card.appendChild(nm);card.appendChild(etf);card.appendChild(chg);
+      card.appendChild(nm);card.appendChild(chg);
       card.appendChild(track);card.appendChild(meta);
       grid.appendChild(card);
     });
@@ -1954,6 +2067,106 @@ async function loadSectors(){
     btn.textContent='TRY AGAIN';btn.onclick=loadSectors;feed.appendChild(btn);
     toast('Sectors failed: '+e.message,'err');
   }
+}
+
+// ── Sector heatmap (tap a sector card) ──────────────────────────────────────
+function toggleHeatmap(card,sector,grid){
+  const existing=grid.querySelector('.heat-panel');
+  const wasMine=existing && existing.dataset.sector===sector;
+  if(existing) existing.remove();
+  grid.querySelectorAll('.sector-card.open').forEach(function(c){c.classList.remove('open')});
+  if(wasMine) return;                          // tapping the open one closes it
+  card.classList.add('open');
+  const panel=document.createElement('div');
+  panel.className='heat-panel';panel.dataset.sector=sector;
+  const head=document.createElement('div');head.className='heat-head';
+  const title=document.createElement('div');title.className='heat-title';title.textContent=sector;
+  const sub=document.createElement('span');sub.className='heat-sub';sub.textContent='loading…';
+  title.appendChild(sub);
+  const close=document.createElement('div');close.className='heat-close';close.textContent='✕';
+  close.onclick=function(ev){ev.stopPropagation();panel.remove();card.classList.remove('open')};
+  head.appendChild(title);head.appendChild(close);panel.appendChild(head);
+  const map=document.createElement('div');map.className='heat-map';
+  const sk=document.createElement('div');sk.className='skel';sk.style.cssText='height:200px;width:100%';
+  map.appendChild(sk);panel.appendChild(map);
+  card.insertAdjacentElement('afterend',panel);
+  loadHeatmap(sector,map,sub);
+}
+
+async function loadHeatmap(sector,map,sub){
+  try{
+    const r=await fetch(_pa('/api/sector/'+encodeURIComponent(sector)+'/heatmap'));
+    if(!r.ok){const e=await r.json();throw new Error(e.detail||'Failed');}
+    const d=await r.json();
+    const stocks=(d.stocks||[]).filter(function(s){return s.weight>0});
+    map.textContent='';
+    if(!stocks.length){
+      const em=document.createElement('div');em.className='heat-empty';
+      em.textContent='No stock data — market may be closed';map.appendChild(em);
+      sub.textContent='';return;
+    }
+    sub.textContent=stocks.length+' stocks';
+    const W=map.clientWidth||map.offsetWidth||320;
+    const H=Math.max(180,Math.min(420,Math.round(W*0.7)));
+    map.style.position='relative';map.style.height=H+'px';
+    const rects=squarify(stocks.map(function(s){return {w:Math.max(s.weight,1),it:s}}),W,H);
+    rects.forEach(function(rc){
+      const s=rc.it;
+      const t=document.createElement('div');t.className='heat-tile';
+      t.style.cssText='position:absolute;left:'+rc.x+'px;top:'+rc.y+'px;width:'+
+        (rc.w-3)+'px;height:'+(rc.h-3)+'px;background:'+heatColor(s.change);
+      const tk=document.createElement('div');tk.className='ht-tk';tk.textContent=s.ticker;
+      const ch=document.createElement('div');ch.className='ht-ch';
+      ch.textContent=(s.change>0?'+':'')+s.change+'%';
+      t.appendChild(tk);
+      if(rc.h>30&&rc.w>34) t.appendChild(ch);
+      t.onclick=function(ev){ev.stopPropagation();toast(s.ticker+'  '+(s.change>0?'+':'')+s.change+'%')};
+      map.appendChild(t);
+    });
+  }catch(e){
+    map.textContent='';
+    const em=document.createElement('div');em.className='heat-empty';
+    em.textContent=e.message||'Failed to load';map.appendChild(em);
+    sub.textContent='';
+  }
+}
+
+// Squarified treemap (Bruls et al.) — returns absolute rects {it,x,y,w,h}.
+function squarify(items,W,H){
+  const totalArea=W*H;
+  let totalW=0;items.forEach(function(i){totalW+=i.w});if(totalW<=0)totalW=1;
+  const data=items.map(function(i){return {it:i.it,area:i.w/totalW*totalArea}});
+  const out=[];let X=0,Y=0,Wc=W,Hc=H;
+  function worst(row,side){
+    let s=0,mx=-Infinity,mn=Infinity;
+    row.forEach(function(r){s+=r.area;if(r.area>mx)mx=r.area;if(r.area<mn)mn=r.area});
+    return Math.max(side*side*mx/(s*s),s*s/(side*side*mn));
+  }
+  function layout(row){
+    let s=0;row.forEach(function(r){s+=r.area});
+    if(Wc>=Hc){const colW=s/Hc;let oy=Y;
+      row.forEach(function(r){const th=r.area/colW;out.push({it:r.it,x:X,y:oy,w:colW,h:th});oy+=th});
+      X+=colW;Wc-=colW;
+    }else{const rowH=s/Wc;let ox=X;
+      row.forEach(function(r){const tw=r.area/rowH;out.push({it:r.it,x:ox,y:Y,w:tw,h:rowH});ox+=tw});
+      Y+=rowH;Hc-=rowH;}
+  }
+  let row=[];
+  data.forEach(function(d){
+    const side=Math.min(Wc,Hc);
+    if(row.length===0){row=[d];return;}
+    if(worst(row.concat([d]),side)<=worst(row,side)){row.push(d);}
+    else{layout(row);row=[d];}
+  });
+  if(row.length)layout(row);
+  return out;
+}
+
+function heatColor(ch){
+  const a=Math.min(Math.abs(ch)/3,1);
+  const lerp=function(x,y){return Math.round(x+(y-x)*a)};
+  if(ch>=0){return 'rgb('+lerp(28,21)+','+lerp(46,194)+','+lerp(40,101)+')';}
+  return 'rgb('+lerp(48,255)+','+lerp(34,51)+','+lerp(40,85)+')';
 }
 
 // Contract finder
@@ -2283,6 +2496,104 @@ function renderIntelIns(data){
     </div>`;
   }).join('');
   el.innerHTML=`<div style="max-height:280px;overflow-y:auto">${rows}</div><div style="font-size:9px;color:#444;margin-top:6px">Source: SEC EDGAR Form 4 · Updated: ${data.last_updated||'—'}</div>`;
+}
+
+// ── UOA: Unusual Options Activity tab ────────────────────────────────────────
+function _e(v){return String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function _fN(n){if(n>=1e6)return'$'+(n/1e6).toFixed(1)+'M';if(n>=1e3)return'$'+(n/1e3).toFixed(0)+'K';return'$'+n;}
+
+const _UOA_COLORS={'🔴 EXTREME':'#ff3355','🟠 UNUSUAL':'#ff8c00','🟡 NOTABLE':'#ffd700','⚪ NORMAL':'#666'};
+
+async function loadUOA(force){
+  const btn=document.getElementById('uoa-run-btn');
+  const status=document.getElementById('uoa-status');
+  const wrap=document.getElementById('uoa-table-wrap');
+  const bar=document.getElementById('uoa-sector-bar');
+  btn.disabled=true; btn.textContent='SCANNING…';
+  status.textContent='Screening tickers → fetching options chains → scoring anomalies…';
+  status.style.display='block';
+  wrap.innerHTML='';
+  bar.style.display='none';
+  try{
+    const r=await fetch(_pa('/api/unusual-flow?min_score=35'+(force?'&force=true':'')));
+    if(!r.ok) throw new Error(await r.text());
+    const d=await r.json();
+    status.style.display='none';
+    // Sector bar
+    const sumKeys=Object.keys(d.summary||{});
+    if(sumKeys.length){
+      const maxN=Math.max(...sumKeys.map(k=>d.summary[k].notional));
+      const bhtml=sumKeys.sort((a,b)=>d.summary[b].notional-d.summary[a].notional).map(sec=>{
+        const s=d.summary[sec];
+        const pct=Math.round(s.notional/maxN*100);
+        const bias=s.calls>=s.puts?'#00ff88':'#ff3355';
+        const cpct=s.count?(s.calls/s.count*100).toFixed(0):0;
+        return '<div style="margin-bottom:5px">'
+          +'<div style="display:flex;justify-content:space-between;font-size:9px;color:#aaa;margin-bottom:2px">'
+          +'<span>'+_e(sec)+'</span>'
+          +'<span style="color:'+bias+'">'+_e(cpct)+'% CALLS · '+_e(_fN(s.notional))+'</span>'
+          +'</div>'
+          +'<div style="height:4px;background:#1a1a2e;border-radius:2px">'
+          +'<div style="height:4px;width:'+pct+'%;background:'+bias+';border-radius:2px"></div>'
+          +'</div></div>';
+      }).join('');
+      bar.innerHTML='<div style="background:#0d0d1a;border:1px solid #222;border-radius:8px;padding:10px 12px">'
+        +'<div style="font-size:9px;letter-spacing:.8px;color:#555;margin-bottom:8px">SECTOR FLOW BREAKDOWN</div>'
+        +bhtml+'</div>';
+      bar.style.display='block';
+    }
+    // Contracts table
+    if(!d.signals||!d.signals.length){
+      const msg=document.createElement('div');
+      msg.style.cssText='text-align:center;padding:30px;color:#555;font-size:12px';
+      msg.textContent='No unusual flow detected right now.';
+      wrap.appendChild(msg);
+    } else {
+      const rows=d.signals.map(s=>{
+        const lc=_UOA_COLORS[s.label]||'#666';
+        const tc=s.type==='call'?'#00ff88':'#ff3355';
+        const sc=s.trade_side==='ask'?'#ffd700':s.trade_side==='bid'?'#ff8c00':'#555';
+        const vc=s.vol_oi>=5?'#ff3355':s.vol_oi>=1?'#ff8c00':s.vol_oi>=0.5?'#ffd700':'#aaa';
+        return '<tr>'
+          +'<td style="color:'+lc+';font-size:9px;white-space:nowrap">'+_e(s.label)+'</td>'
+          +'<td style="font-weight:700;color:#eee">'+_e(s.ticker)+'</td>'
+          +'<td style="font-size:9px;color:#666">'+_e(s.sector)+'</td>'
+          +'<td style="color:'+tc+';font-weight:700">'+_e(s.type.toUpperCase())+'</td>'
+          +'<td style="color:#aaa">$'+_e(s.strike)+'</td>'
+          +'<td style="font-size:10px;color:#888">'+_e(s.expiry)+'</td>'
+          +'<td style="color:#777">'+_e(s.dte)+'d</td>'
+          +'<td style="color:#ccc">'+_e(Number(s.volume).toLocaleString())+'</td>'
+          +'<td style="color:#666">'+_e(Number(s.open_interest).toLocaleString())+'</td>'
+          +'<td style="color:'+vc+';font-weight:700">'+_e(s.vol_oi)+'x</td>'
+          +'<td style="color:#00ff88;font-weight:700">'+_e(_fN(s.notional))+'</td>'
+          +'<td style="color:'+sc+';font-size:10px">'+_e(s.trade_side)+'</td>'
+          +'<td style="color:#aaa">'+_e(s.score)+'</td>'
+          +'</tr>';
+      }).join('');
+      const meta=document.createElement('div');
+      meta.style.cssText='font-size:9px;color:#444;margin-bottom:6px;text-align:right';
+      meta.textContent=d.count+' contracts · '+(d.cached?'cached':'live')+' · '+(d.last_updated||'');
+      wrap.appendChild(meta);
+      const tbl=document.createElement('table');
+      tbl.className='scan-table';
+      tbl.style.fontSize='11px';
+      tbl.innerHTML='<thead><tr>'
+        +'<th>SIGNAL</th><th>TICKER</th><th>SECTOR</th><th>TYPE</th>'
+        +'<th>STRIKE</th><th>EXPIRY</th><th>DTE</th>'
+        +'<th>VOL</th><th>OI</th><th>V/OI</th>'
+        +'<th>NOTIONAL</th><th>SIDE</th><th>SCORE</th>'
+        +'</tr></thead><tbody>'+rows+'</tbody>';
+      wrap.appendChild(tbl);
+    }
+  } catch(e){
+    status.style.display='none';
+    const err=document.createElement('div');
+    err.style.cssText='text-align:center;padding:20px;color:#ff3355;font-size:11px';
+    err.textContent='Error: '+e.message;
+    wrap.appendChild(err);
+  } finally {
+    btn.disabled=false; btn.textContent='▶ SCAN UNUSUAL FLOW';
+  }
 }
 </script>
 </body>

@@ -4,6 +4,9 @@
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from core.universe import get_universe, ANCHOR, universe_summary
+from data.sector_constituents import constituents_for, SECTORS
+
 import yfinance as yf
 import colorama
 from colorama import Fore, Style
@@ -45,30 +48,33 @@ def _yf(sym: str) -> yf.Ticker:
     return yf.Ticker(_yf_ticker(sym))
 
 # ─── Sector ETFs & Ticker→Sector Map ─────────────────────────────────────────
+# Full, human-readable sector names — never show the ETF ticker to the user. The
+# ETF is only an internal proxy for the sector's headline % move.
 SECTOR_ETFS: Dict[str, str] = {
-    "Tech":        "XLK",
-    "Financials":  "XLF",
-    "Energy":      "XLE",
-    "Health":      "XLV",
-    "Industrials": "XLI",
-    "Staples":     "XLP",
-    "Utilities":   "XLU",
-    "Materials":   "XLB",
-    "CommSvcs":    "XLC",
-    "RealEstate":  "XLRE",
+    "Technology":             "XLK",
+    "Communication Services": "XLC",
+    "Consumer Discretionary": "XLY",
+    "Consumer Staples":       "XLP",
+    "Financials":             "XLF",
+    "Health Care":            "XLV",
+    "Energy":                 "XLE",
+    "Industrials":            "XLI",
+    "Materials":              "XLB",
+    "Utilities":              "XLU",
+    "Real Estate":            "XLRE",
 }
 
 TICKER_SECTOR: Dict[str, str] = {
     # Tech / semis / software
-    "AAPL":"Tech","MSFT":"Tech","NVDA":"Tech","AMD":"Tech","AVGO":"Tech",
-    "INTC":"Tech","QCOM":"Tech","TXN":"Tech","AMAT":"Tech","LRCX":"Tech",
-    "MU":"Tech","ARM":"Tech","SMCI":"Tech","PLTR":"Tech","SNOW":"Tech",
-    "CRWD":"Tech","PANW":"Tech","DDOG":"Tech","NET":"Tech","ZS":"Tech",
-    "TWLO":"Tech","OKTA":"Tech","NFLX":"Tech","AMZN":"Tech","TSLA":"Tech",
-    "SHOP":"Tech","RIVN":"Tech","LCID":"Tech","NIO":"Tech","LI":"Tech","XPEV":"Tech",
-    "MSTR":"Tech","MARA":"Tech","RIOT":"Tech","CLSK":"Tech","BITF":"Tech","HUT":"Tech",
-    "TQQQ":"Tech","SOXL":"Tech","SQQQ":"Tech","SOXS":"Tech","TECL":"Tech","TECS":"Tech",
-    "FNGU":"Tech","FNGD":"Tech","QQQ":"Tech",
+    "AAPL":"Technology","MSFT":"Technology","NVDA":"Technology","AMD":"Technology","AVGO":"Technology",
+    "INTC":"Technology","QCOM":"Technology","TXN":"Technology","AMAT":"Technology","LRCX":"Technology",
+    "MU":"Technology","ARM":"Technology","SMCI":"Technology","PLTR":"Technology","SNOW":"Technology",
+    "CRWD":"Technology","PANW":"Technology","DDOG":"Technology","NET":"Technology","ZS":"Technology",
+    "TWLO":"Technology","OKTA":"Technology","NFLX":"Technology","AMZN":"Technology","TSLA":"Technology",
+    "SHOP":"Technology","RIVN":"Technology","LCID":"Technology","NIO":"Technology","LI":"Technology","XPEV":"Technology",
+    "MSTR":"Technology","MARA":"Technology","RIOT":"Technology","CLSK":"Technology","BITF":"Technology","HUT":"Technology",
+    "TQQQ":"Technology","SOXL":"Technology","SQQQ":"Technology","SOXS":"Technology","TECL":"Technology","TECS":"Technology",
+    "FNGU":"Technology","FNGD":"Technology","QQQ":"Technology",
     # Financials
     "GS":"Financials","MS":"Financials","JPM":"Financials","BAC":"Financials",
     "C":"Financials","WFC":"Financials","V":"Financials","MA":"Financials",
@@ -78,16 +84,16 @@ TICKER_SECTOR: Dict[str, str] = {
     # Energy
     "XOM":"Energy","CVX":"Energy","USO":"Energy","CPER":"Materials",
     # Health / Biotech
-    "HIMS":"Health","MRNA":"Health","PFE":"Health","BNTX":"Health",
-    "LABU":"Health","LABD":"Health",
+    "HIMS":"Health Care","MRNA":"Health Care","PFE":"Health Care","BNTX":"Health Care",
+    "LABU":"Health Care","LABD":"Health Care",
     # Drones / Defense Tech
-    "ONDS":"Tech",
+    "ONDS":"Technology",
     # CommSvcs / consumer
-    "META":"CommSvcs","GOOGL":"CommSvcs","GOOG":"CommSvcs","SNAP":"CommSvcs",
-    "PINS":"CommSvcs","RBLX":"CommSvcs","ABNB":"CommSvcs","BKNG":"CommSvcs",
-    "EBAY":"CommSvcs","ETSY":"CommSvcs","UBER":"CommSvcs","LYFT":"CommSvcs",
-    "DASH":"CommSvcs","GME":"CommSvcs","AMC":"CommSvcs",
-    "BABA":"CommSvcs","JD":"CommSvcs","PDD":"CommSvcs","KWEB":"CommSvcs","FXI":"CommSvcs",
+    "META":"Communication Services","GOOGL":"Communication Services","GOOG":"Communication Services","SNAP":"Communication Services",
+    "PINS":"Communication Services","RBLX":"Communication Services","ABNB":"Communication Services","BKNG":"Communication Services",
+    "EBAY":"Communication Services","ETSY":"Communication Services","UBER":"Communication Services","LYFT":"Communication Services",
+    "DASH":"Communication Services","GME":"Communication Services","AMC":"Communication Services",
+    "BABA":"Communication Services","JD":"Communication Services","PDD":"Communication Services","KWEB":"Communication Services","FXI":"Communication Services",
     # Industrials
     "F":"Industrials","GM":"Industrials",
     # Materials / metals
@@ -1133,6 +1139,110 @@ def find_sector_laggards(results: List[Dict], sector_data: Dict[str, Dict]) -> L
 
     laggards.sort(key=lambda x: x["lag_score"], reverse=True)
     return laggards[:12]
+
+
+# ─── Sector Heatmap (individual constituents) ────────────────────────────────
+def _quotes_for(tickers: List[str], period: str = "5d") -> Dict[str, Dict]:
+    """
+    Batch-fetch OHLCV for `tickers` and return
+    {ticker: {"change_pct", "dollar_vol", "price"}}.
+
+    Same fetch path as scan_sectors (single yf.download with per-ticker fallback),
+    so it works behind cloud IP blocks. Network — call off the event loop.
+    """
+    out: Dict[str, Dict] = {}
+    if not tickers:
+        return out
+
+    batch     = _fetch_batch_history(tickers, period=period)
+    use_batch = not batch.empty
+
+    for tk in tickers:
+        try:
+            if use_batch:
+                hist = _extract_ticker_hist(batch, tk)
+            else:
+                hist = _yf(tk).history(period=period)
+            if hist.empty:
+                continue
+            hist = hist.dropna(subset=["Close", "Volume"])
+            if len(hist) < 2:
+                continue
+
+            today       = hist.iloc[-1]
+            prior_close = float(hist.iloc[-2]["Close"])
+            price       = float(today["Close"])
+            if prior_close <= 0 or price <= 0:
+                continue
+
+            change_pct = (price - prior_close) / prior_close * 100
+            dollar_vol = price * float(today["Volume"])
+            out[tk] = {"change_pct": change_pct, "dollar_vol": dollar_vol, "price": price}
+        except Exception:
+            pass
+
+    return out
+
+
+# In-process cache so repeated taps on the same sector don't refetch.
+_HEATMAP_CACHE: Dict[str, tuple] = {}   # sector -> (timestamp, payload)
+_HEATMAP_TTL = 60.0
+
+
+def sector_heatmap(sector: str, limit: int = 30) -> Dict:
+    """
+    Heatmap data for one sector: its individual constituents with today's % change
+    and a size weight (dollar volume). Sorted by weight desc, capped to `limit`.
+    """
+    now    = time.time()
+    cached = _HEATMAP_CACHE.get(sector)
+    if cached and now - cached[0] < _HEATMAP_TTL:
+        return cached[1]
+
+    tickers = constituents_for(sector, fallback_map=TICKER_SECTOR)
+    quotes  = _quotes_for(tickers)
+
+    stocks = [
+        {"ticker": tk, "change": round(q["change_pct"], 2), "weight": round(q["dollar_vol"], 0)}
+        for tk, q in quotes.items()
+    ]
+    stocks.sort(key=lambda s: s["weight"], reverse=True)
+
+    payload = {"sector": sector, "stocks": stocks[:limit]}
+    _HEATMAP_CACHE[sector] = (now, payload)
+    return payload
+
+
+def top_individual_laggard(sector_data: Dict[str, Dict], scan_n: int = 2) -> Optional[Dict]:
+    """
+    The single individual stock that most diverges against its sector — the red name
+    in a green sector (or the green name in a red sector). Looks only at the
+    strongest-moving sectors (|change| >= 0.5%) to bound network cost.
+    """
+    moved = [(n, d) for n, d in sector_data.items() if abs(d.get("change_pct", 0)) >= 0.5]
+    if not moved:
+        return None
+    moved.sort(key=lambda x: abs(x[1]["change_pct"]), reverse=True)
+
+    best: Optional[Dict] = None
+    for name, d in moved[:scan_n]:
+        sector_chg = d["change_pct"]
+        quotes     = _quotes_for(constituents_for(name, fallback_map=TICKER_SECTOR))
+        for tk, q in quotes.items():
+            stock_chg = q["change_pct"]
+            # divergence against the sector's direction; >0 means it's bucking the move
+            div = (sector_chg - stock_chg) if sector_chg > 0 else (stock_chg - sector_chg)
+            if div <= 0:
+                continue
+            if best is None or div > best["divergence"]:
+                best = {
+                    "ticker":        tk,
+                    "sector":        name,
+                    "sector_change": round(sector_chg, 2),
+                    "stock_change":  round(stock_chg, 2),
+                    "divergence":    round(div, 2),
+                }
+    return best
 
 
 # ─── Options Flow Scanner (Enhanced) ─────────────────────────────────────────
@@ -2813,14 +2923,10 @@ def main() -> None:
             print(Fore.RED + f"  File not found: {args.watchlist}" + Style.RESET_ALL)
             sys.exit(1)
     else:
-        tickers = list(UNIVERSE)
-        if args.dynamic:
-            print(f"  {Fore.CYAN}Dynamic mode: scanning for today's movers...{Style.RESET_ALL}", end="", flush=True)
-            dynamic_tickers = fetch_dynamic_universe(top_n=50)
-            added = [t for t in dynamic_tickers if t not in tickers]
-            tickers = list(dict.fromkeys(tickers + added))
-            sys.stdout.write(f"\r  Dynamic mode: +{len(added)} movers added → {len(tickers)} total tickers\n")
-            sys.stdout.flush()
+        print(f"  {Fore.CYAN}Building live universe...{Style.RESET_ALL}", end="", flush=True)
+        tickers = get_universe()
+        sys.stdout.write(f"\r  {universe_summary()}\n")
+        sys.stdout.flush()
 
     # Step 0: fetch VIX — sets IV regime for contract selection
     print(f"  {Fore.CYAN}Fetching VIX...{Style.RESET_ALL}", end="", flush=True)
