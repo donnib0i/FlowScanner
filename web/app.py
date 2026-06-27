@@ -50,7 +50,7 @@ from core.scanner import (
     scan_sectors, calc_whale_score, fmt_whale_score,
     scan_tickers, apply_forward_directions,
     enrich_contracts, find_sector_laggards,
-    sector_heatmap, top_individual_laggard,
+    sector_heatmap, top_individual_laggard, sector_breakout_plays,
     apply_filter, apply_sort,
     FILTER_LABELS, SORT_LABELS,
     _TT_AVAILABLE,
@@ -584,6 +584,8 @@ async def api_sectors(req: Request):
         "price":    round(v.get("price", 0), 2),
         "rel_vol":  round(v.get("rel_vol", 1), 2),
         "bias":     v.get("bias", "neutral"),
+        "rs":       round(v.get("rs_vs_spy", 0), 2),
+        "breakout": v.get("breakout", "none"),
     } for k, v in data.items()]
 
     if not clean:
@@ -616,6 +618,36 @@ async def api_sector_heatmap(req: Request, name: str):
         "stocks":       data["stocks"],
         "last_updated": datetime.now().strftime("%H:%M:%S"),
     }
+
+@app.get("/api/sector/{name}/plays")
+async def api_sector_plays(req: Request, name: str, dte_mode: str = Query("all")):
+    _check_pin(req)
+    _check_rate(req, "plays", limit=15, window=60)
+    if name not in SECTOR_ETFS:
+        raise HTTPException(404, "Unknown sector")
+    _validate_enum(dte_mode, _VALID_DTE_MODE, "dte_mode")
+
+    loop = asyncio.get_event_loop()
+    with contextlib.redirect_stdout(io.StringIO()):
+        try:
+            sector_data = await asyncio.wait_for(
+                loop.run_in_executor(None, scan_sectors), timeout=45.0)
+        except asyncio.TimeoutError:
+            raise HTTPException(504, "Sector scan timed out")
+    try:
+        vix = await loop.run_in_executor(None, fetch_vix)
+    except Exception:
+        vix = -1.0
+    with contextlib.redirect_stdout(io.StringIO()):
+        try:
+            data = await asyncio.wait_for(
+                loop.run_in_executor(None, lambda: sector_breakout_plays(
+                    name, sector_data, vix, dte_mode)), timeout=45.0)
+        except asyncio.TimeoutError:
+            raise HTTPException(504, "Plays scan timed out")
+
+    return {"sector": data["sector"], "breakout": data["breakout"],
+            "plays": data["plays"], "last_updated": datetime.now().strftime("%H:%M:%S")}
 
 @app.get("/api/find")
 async def api_find(
