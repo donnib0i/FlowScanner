@@ -1213,6 +1213,14 @@ body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
 .heat-tile .ht-tk{font-size:11px;font-weight:800;color:#fff;text-shadow:0 1px 2px rgba(0,0,0,.5)}
 .heat-tile .ht-ch{font-size:9px;font-weight:600;color:rgba(255,255,255,.92)}
 .heat-empty{font-size:11px;color:var(--sub);padding:14px;text-align:center}
+.plays-panel{padding:8px 10px 12px;border-top:1px solid var(--border)}
+.plays-empty{font-size:11px;color:var(--sub);padding:8px;text-align:center}
+.plays-head{font-size:10px;letter-spacing:.08em;color:var(--sub);font-weight:700;margin:4px 0 8px}
+.play-card{background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:8px 10px;margin-bottom:6px;border-left:3px solid var(--sub)}
+.play-card.laggard{border-left-color:var(--green)}
+.play-card.leader{border-left-color:var(--blue,#4a9eff)}
+.play-top{font-size:12px;font-weight:700;color:var(--fg,#e8e8e8)}
+.play-con{font-size:11px;color:var(--sub);margin-top:2px;font-variant-numeric:tabular-nums}
 .finder{padding:16px 14px}
 .find-input{width:100%;background:var(--bg3);border:1px solid var(--border);
   border-radius:8px;color:var(--text);font-size:22px;font-weight:800;
@@ -2117,7 +2125,9 @@ async function loadSectors(){
       const changeStr=(up?'+':'')+s.change.toFixed(2)+'%';
       card.title='Tap to see '+s.name+' stocks';
       card.onclick=function(){toggleHeatmap(card,s.name,grid)};
-      const nm=document.createElement('div');nm.className='sc-name';nm.textContent=s.name;
+      const nm=document.createElement('div');nm.className='sc-name';
+      const bk=s.breakout==='up'?' 🚀':s.breakout==='down'?' 🔻':'';
+      nm.textContent=s.name+bk;
       const chg=document.createElement('div');chg.className='sc-chg '+(up?'up':'dn');
       chg.textContent=changeStr;
       const track=document.createElement('div');track.className='sc-bar-track';
@@ -2169,8 +2179,44 @@ function toggleHeatmap(card,sector,grid){
   const map=document.createElement('div');map.className='heat-map';
   const sk=document.createElement('div');sk.className='skel';sk.style.cssText='height:200px;width:100%';
   map.appendChild(sk);panel.appendChild(map);
+  const plays=document.createElement('div');plays.className='plays-panel';
+  panel.appendChild(plays);
   card.insertAdjacentElement('afterend',panel);
   loadHeatmap(sector,map,sub);
+  loadPlays(sector,plays);
+}
+
+async function loadPlays(sector,box){
+  try{
+    const r=await fetch(_pa('/api/sector/'+encodeURIComponent(sector)+'/plays'));
+    if(!r.ok) return;                          // plays are best-effort, never block heatmap
+    const d=await r.json();
+    const plays=d.plays||[];
+    box.textContent='';
+    if(d.breakout==='none'||!plays.length){
+      const em=document.createElement('div');em.className='plays-empty';
+      em.textContent='No RS breakout right now.';box.appendChild(em);return;
+    }
+    const dir=d.breakout==='up'?'CALLS':'PUTS';
+    const hd=document.createElement('div');hd.className='plays-head';
+    hd.textContent='BREAKOUT PLAYS · '+dir;box.appendChild(hd);
+    plays.forEach(function(p){
+      const c=p.contract||{};
+      const cd=document.createElement('div');cd.className='play-card '+p.role;
+      const top=document.createElement('div');top.className='play-top';
+      const chg=(p.change>=0?'+':'')+p.change+'%';
+      top.textContent=p.ticker+'  ·  '+p.role.toUpperCase()+'  ·  '+chg;
+      const bot=document.createElement('div');bot.className='play-con';
+      const bits=[];
+      if(c.label) bits.push(c.label);
+      else{ if(c.strike) bits.push(c.strike+(c.type?' '+c.type:'')); }
+      if(c.mid!=null) bits.push('@'+c.mid);
+      if(c.delta!=null) bits.push('Δ'+c.delta);
+      if(c.dte!=null&&c.dte>=0) bits.push(c.dte+'DTE');
+      bot.textContent=bits.join('  ');
+      cd.appendChild(top);cd.appendChild(bot);box.appendChild(cd);
+    });
+  }catch(e){ /* best-effort */ }
 }
 
 async function loadHeatmap(sector,map,sub){
