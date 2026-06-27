@@ -1681,6 +1681,7 @@ function endFlowScan(err){
   } else {
     toast(S.signals.length+' signal'+(S.signals.length>1?'s':'')+' - institutional only');
     if(S.hotContracts.length) document.getElementById('view-toggle').style.display='flex';
+    sortFlowFeed();   // apply the selected sort so order matches the dropdown
   }
 }
 function updateFlowBias(){
