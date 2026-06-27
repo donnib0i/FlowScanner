@@ -2623,11 +2623,14 @@ function renderUOATable(){
     if(c.type==='x') return '<th>'+c.label+'</th>';
     const active=c.key===sk;
     const arr=active?(dir<0?' <span class="arr">&#9660;</span>':' <span class="arr">&#9650;</span>'):'';
-    return '<th class="sortable'+(active?' active':'')+'" onclick="sortUOA(\''+c.key+'\')">'+c.label+arr+'</th>';
+    return '<th class="sortable'+(active?' active':'')+'" data-key="'+c.key+'">'+c.label+arr+'</th>';
   }).join('');
   const tbl=document.createElement('table');
   tbl.className='scan-table';tbl.style.fontSize='11px';
   tbl.innerHTML='<thead><tr>'+ths+'</tr></thead><tbody>'+rows+'</tbody>';
+  tbl.querySelectorAll('th.sortable').forEach(function(th){
+    th.onclick=function(){sortUOA(th.dataset.key)};
+  });
   wrap.appendChild(tbl);
 }
 
