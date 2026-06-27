@@ -71,7 +71,15 @@ _ETF_PREFIXES = {"SPY","QQQ","IWM","DIA","MDY","VXX","UVXY","SVXY","TQQQ","SOXL"
                  "TECS","FNGD","SDOW","GLD","SLV","USO","CPER","KWEB","FXI","XBI","ARKK"}
 def _get_insider_universe() -> list:
     return [t for t in get_universe() if t not in _ETF_PREFIXES][:50]
-_PIN = os.environ.get("SCANNER_PIN", "").strip()
+_PIN             = os.environ.get("SCANNER_PIN", "").strip()
+_REQUIRE_PIN     = os.environ.get("SCANNER_REQUIRE_PIN", "").strip() in ("1", "true", "yes")
+_ALLOW_PIN_QUERY = os.environ.get("SCANNER_ALLOW_PIN_QUERY", "").strip() in ("1", "true", "yes")
+_PROXY_HOPS      = max(1, int(os.environ.get("SCANNER_PROXY_HOPS", "1") or 1))
+
+if not _PIN:
+    logging.warning("SCANNER_PIN not set — API is UNAUTHENTICATED")
+elif len(_PIN) < 6:
+    logging.warning("SCANNER_PIN is weak (<6 chars) — consider a longer PIN")
 
 # Valid parameter enums
 _VALID_DIRECTION  = {"up", "down"}
@@ -142,8 +150,11 @@ _active_scan = threading.Event()
 def _client_ip(req: Request) -> str:
     xff = req.headers.get("x-forwarded-for", "")
     if xff:
-        return xff.split(",")[0].strip()
-    return req.client.host if req.client else "unknown"
+        parts = [p.strip() for p in xff.split(",") if p.strip()]
+        if parts:
+            idx = min(_PROXY_HOPS, len(parts))
+            return parts[-idx]   # trust only the proxy-appended hop, not forged left entries
+    return req.client.host if getattr(req, "client", None) else "unknown"
 
 def _check_rate(req: Request, endpoint: str, limit: int, window: int):
     key = f"{_client_ip(req)}:{endpoint}"
@@ -153,12 +164,16 @@ def _check_rate(req: Request, endpoint: str, limit: int, window: int):
 
 def _check_pin(req: Request):
     if not _PIN:
+        if _REQUIRE_PIN:
+            raise HTTPException(503, "Server auth not configured")
         return
     ip = _client_ip(req)
-    supplied = (req.headers.get("x-pin", "") or req.query_params.get("pin", "")).strip()
+    supplied = req.headers.get("x-pin", "").strip()
+    if not supplied and _ALLOW_PIN_QUERY:
+        supplied = req.query_params.get("pin", "").strip()
     if not hmac.compare_digest(supplied.encode("utf-8", errors="replace"),
                                _PIN.encode("utf-8")):
-        if not _rl.allow(f"{ip}:auth_fail", limit=10, window=300):
+        if not _rl.allow(f"{ip}:auth_fail", 10, 300):
             raise HTTPException(429, detail="Too many failed attempts -- try later",
                                 headers={"Retry-After": "300"})
         raise HTTPException(401, "Unauthorized")
