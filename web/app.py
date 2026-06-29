@@ -19,6 +19,8 @@ try:
     from fastapi import FastAPI, Query, Request, HTTPException
     from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse, Response as _Response
     from fastapi.middleware.cors import CORSMiddleware
+    from starlette.middleware.trustedhost import TrustedHostMiddleware
+    from starlette.middleware.httpsredirect import HTTPSRedirectMiddleware
     import uvicorn
 except ImportError:
     sys.exit("pip install fastapi 'uvicorn[standard]'")
@@ -189,13 +191,31 @@ DEFAULT_FLOW_TICKERS = [
 ]
 
 # App setup
-app = FastAPI(title="Scanner Pro", docs_url=None, redoc_url=None)
+app = FastAPI(title="Scanner Pro", docs_url=None, redoc_url=None, openapi_url=None)
 
 @app.exception_handler(Exception)
 async def _generic_error(request: Request, exc: Exception):
     # Never expose internal errors to public
     logger.error("Unhandled error on %s: %s", request.url.path, exc, exc_info=True)
     return JSONResponse(status_code=500, content={"detail": "Internal server error"})
+
+# Reject Host-header injection. Default allows local dev + the TestClient host;
+# in prod set SCANNER_ALLOWED_HOSTS=flowscanner-production.up.railway.app
+_allowed_hosts = [h.strip() for h in os.environ.get(
+    "SCANNER_ALLOWED_HOSTS", "localhost,127.0.0.1,testserver").split(",") if h.strip()]
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=_allowed_hosts)
+if os.environ.get("SCANNER_FORCE_HTTPS", "").strip() in ("1", "true", "yes"):
+    app.add_middleware(HTTPSRedirectMiddleware)
+
+_MAX_BODY = 16 * 1024
+
+@app.middleware("http")
+async def _limit_body(request: Request, call_next):
+    if request.method == "POST":
+        cl = request.headers.get("content-length")
+        if cl and cl.isdigit() and int(cl) > _MAX_BODY:
+            return JSONResponse({"detail": "payload too large"}, status_code=413)
+    return await call_next(request)
 
 app.add_middleware(
     CORSMiddleware,
@@ -354,6 +374,7 @@ async def api_vix(req: Request):
 @app.get("/api/status")
 async def api_status(req: Request):
     _check_pin(req)
+    _check_rate(req, "status", limit=30, window=60)
     return {
         "flow_source": "tastytrade-live" if _TT_AVAILABLE else "yfinance-delayed",
         "live": _TT_AVAILABLE,
