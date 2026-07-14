@@ -735,7 +735,7 @@ async def api_find_both(
 
     def _fetch():
         import yfinance as yf
-        from scanner import _yf, vix_delta_target, fetch_vix
+        from core.scanner import _yf, vix_delta_target, fetch_vix
         import pandas as pd
         from datetime import datetime
 
