@@ -931,7 +931,6 @@ def get_best_contract(ticker: str, direction: str, price: float,
             # For 0DTE: use actual minutes remaining until 4 PM ET instead of arbitrary floor
             if d == 0:
                 close_et = _now_et.replace(hour=16, minute=0, second=0, microsecond=0)
-                mins_left = max(1.0, (_now_et.replace(tzinfo=None) - _now_et.replace(tzinfo=None)).total_seconds())
                 try:
                     mins_left = max(1.0, (close_et - _now_et).total_seconds() / 60)
                 except Exception:
