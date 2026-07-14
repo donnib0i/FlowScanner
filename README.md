@@ -49,6 +49,15 @@ python3 scanner.py --filter momentum --sort score
 python3 scanner.py --tickers NVDA AMD TSLA
 ```
 
+**Live FlowDeck (continuous terminal dashboard):**
+```bash
+python3 core/scanner.py --live                 # 45s refresh, single stocks only
+python3 core/scanner.py --live --interval 30
+```
+Single-stock volume + unusual options flow, refreshed continuously. No ETFs.
+Optional real-time options data: `export TRADIER_TOKEN=…` (free, developer.tradier.com).
+Without it, data is ~15 min delayed and the status bar shows `DELAYED`.
+
 **Backtest:**
 ```bash
 python3 backtest.py

@@ -2985,7 +2985,7 @@ def interactive_loop(results: List[Dict], args: argparse.Namespace,
             sort_by = SORT_MAP[cmd]
 
 # ─── Entry Point ──────────────────────────────────────────────────────────────
-def main() -> None:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Elite market scanner — gap fills, key levels, options contracts."
     )
@@ -3005,7 +3005,23 @@ def main() -> None:
                         help="Initial sort (default: setup)")
     parser.add_argument("--dynamic",    action="store_true",
                         help="Add today's movers from extended watchlist to find sleepers")
+    parser.add_argument("--live",       action="store_true",
+                        help="Launch the live FlowDeck terminal dashboard")
+    parser.add_argument("--interval",   type=int, default=45,
+                        help="Live refresh interval in seconds (default: 45)")
+    return parser
+
+
+def main() -> None:
+    parser = build_parser()
     args = parser.parse_args()
+
+    if getattr(args, "live", False):
+        from core.live_flow import run as run_live
+        run_live(interval=args.interval,
+                 top=getattr(args, "enrich_top", 30) or 30,
+                 min_score=35)
+        return
 
     if args.tickers:
         tickers = [t.upper() for t in args.tickers]
