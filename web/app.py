@@ -181,14 +181,15 @@ def _check_pin(req: Request):
         raise HTTPException(401, "Unauthorized")
 
 # Default flow tickers
-DEFAULT_FLOW_TICKERS = [
-    "SPX","SPY","QQQ","IWM",
+# Single-stocks only (plus SPX index for 0DTE). ETFs are filtered out to stay
+# consistent with the ETF-free scan universe. SPX is an index, not an ETF.
+DEFAULT_FLOW_TICKERS = [t for t in [
+    "SPX",
     "NVDA","AMD","AAPL","MSFT","META","AMZN","TSLA","GOOGL",
     "COIN","PLTR","MSTR","HOOD","MARA",
     "SOFI","AFRM","GME","HIMS",
-    "TQQQ","SQQQ","SOXL","SOXS",
-    "GS","JPM","VXX","UVXY",
-]
+    "GS","JPM",
+] if t not in _ETF_PREFIXES]
 
 # App setup
 app = FastAPI(title="Scanner Pro", docs_url=None, redoc_url=None, openapi_url=None)
