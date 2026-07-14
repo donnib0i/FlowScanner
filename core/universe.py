@@ -231,9 +231,17 @@ def build_universe() -> List[str]:
         + list(ANCHOR)
     )
 
-    # Anchors also go at front so they're never missed
-    final = _clean(list(ANCHOR) + ordered)
-    return final
+    # Single-stocks only: strip ETFs (mega-cap stocks in ANCHOR survive the filter).
+    return finalize_universe(ordered, exclude_etfs=True)
+
+
+def finalize_universe(raw: List[str], exclude_etfs: bool = True) -> List[str]:
+    """Clean + dedupe a raw ticker list, optionally dropping ETFs (keep stocks)."""
+    cleaned = _clean(raw)
+    if exclude_etfs:
+        from data.etf_filter import filter_etfs
+        return filter_etfs(cleaned)
+    return cleaned
 
 
 def get_universe(force: bool = False) -> List[str]:

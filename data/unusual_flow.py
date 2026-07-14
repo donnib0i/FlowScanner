@@ -183,7 +183,8 @@ def build_ticker_sector_map() -> Dict[str, str]:
     merged.update(sp500_map)
     merged.update(ndx_sectors)
     merged.update(screener_sectors)
-    merged.update(_ETF_ANCHORS)   # ETFs always last (override any misclassification)
+    # ETFs are intentionally NOT injected — the scanner is single-stocks only.
+    # (ETF exclusion is enforced downstream via apply_pool_exclusions / filter_etfs.)
 
     return merged
 
@@ -297,6 +298,69 @@ def adjusted_score(base_score: int, multiplier: float) -> int:
     return max(0, min(100, int(round(base_score * multiplier))))
 
 
+def apply_pool_exclusions(tickers: list, exclude_etfs: bool = True) -> list:
+    """Drop ETFs from a ticker pool when exclude_etfs is set (order-preserving)."""
+    if not exclude_etfs:
+        return list(tickers)
+    from data.etf_filter import filter_etfs
+    return filter_etfs(tickers)
+
+
+def score_contract(contract: dict, price: float, sector: str,
+                   chain_volumes: list,
+                   oi_vs_avg, ticker_optvol_rvol, dampen: bool,
+                   ticker: str = "") -> Optional[dict]:
+    """Pure scoring of a single option contract dict -> signal dict (or None)."""
+    vol    = int(contract.get("volume") or 0)
+    oi     = int(contract.get("open_interest") or 0)
+    bid    = float(contract.get("bid") or 0)
+    ask    = float(contract.get("ask") or 0)
+    last   = float(contract.get("last") or 0)
+    mid    = float(contract.get("mid") or 0)
+    strike = float(contract.get("strike") or 0)
+    iv     = float(contract.get("iv") or 0)
+    expiry = contract.get("expiry", "")
+    dte    = int(contract.get("dte") or _days_to_expiry(expiry))
+    opt_type = contract.get("type", "")
+
+    if vol < MIN_VOLUME or strike <= 0 or price <= 0:
+        return None
+    if not mid:
+        mid = (bid + ask) / 2 if bid > 0 and ask > 0 else last
+    if not mid:
+        return None
+
+    notional = vol * mid * 100
+    vol_oi   = vol / max(oi, 1)
+    otm      = _otm_pct(strike, price, opt_type)
+    side     = _classify_side(bid, ask, last)
+    base     = _anomaly_score(notional, vol_oi, dte, otm, side)
+    z        = intra_chain_z(vol, chain_volumes)
+    if z >= 2:
+        base = min(100, base + 5)
+    mult     = baseline_multiplier(oi_vs_avg, ticker_optvol_rvol, dampen)
+    score    = adjusted_score(base, mult)
+
+    if score < 25 or notional < MIN_NOTIONAL:
+        return None
+
+    return {
+        "ticker": ticker or contract.get("ticker", ""),
+        "sector": sector, "price": round(price, 2),
+        "type": opt_type, "strike": strike, "expiry": expiry, "dte": dte,
+        "volume": vol, "open_interest": oi, "vol_oi": round(vol_oi, 2),
+        "mid_price": round(mid, 2), "notional": round(notional, 0),
+        "iv": round(iv * 100, 1) if iv < 10 else round(iv, 1),
+        "otm_pct": round(otm, 1), "trade_side": side,
+        "intra_chain_z": z,
+        "ticker_oi_vs_avg": oi_vs_avg,
+        "ticker_optvol_rvol": ticker_optvol_rvol,
+        "score": score, "label": _label(score),
+        "data_source": contract.get("source", "unknown"),
+        "ts": datetime.now().strftime("%H:%M:%S"),
+    }
+
+
 # ── Phase 1: relative-volume screen ──────────────────────────────────────────
 
 def _screen_relvol(tickers: List[str], top_n: int = 80) -> List[str]:
@@ -324,66 +388,41 @@ def _screen_relvol(tickers: List[str], top_n: int = 80) -> List[str]:
             except Exception:
                 continue
         scored.sort(key=lambda x: x[1], reverse=True)
-        top = [t for t, _ in scored[:top_n]]
-        # Always include the ETF anchors regardless of relvol rank
-        anchors = list(_ETF_ANCHORS.keys())[:10]
-        return list(dict.fromkeys(anchors + top))
+        return [t for t, _ in scored[:top_n]]
     except Exception:
         return tickers[:top_n]
 
 
 # ── Phase 2: options chain scan for one ticker ────────────────────────────────
 
-def _scan_ticker_options(ticker: str, price: float, sector: str) -> List[Dict]:
+def _scan_ticker_options(ticker: str, price: float, sector: str,
+                         store=None, dampen: bool = False) -> List[Dict]:
     """
     Fetch options chain via best available source (Tradier → Schwab → Polygon →
     Yahoo direct → yfinance) and score each contract for unusual activity.
+
+    When a BaselineStore is supplied, each contract is scored relative to this
+    name's own OI/option-volume history (baseline multiplier + intra-chain z).
     """
     signals = []
     try:
         contracts = get_option_chain(ticker)
         if not contracts:
             return []
+        chain_volumes = [int(c.get("volume") or 0) for c in contracts]
+        ticker_vol = sum(chain_volumes)
+        rvol = store.ticker_optvol_rvol(ticker, ticker_vol) if store else None
         for c in contracts:
-            vol    = int(c.get("volume") or 0)
-            oi     = int(c.get("open_interest") or 0)
-            bid    = float(c.get("bid") or 0)
-            ask    = float(c.get("ask") or 0)
-            last   = float(c.get("last") or 0)
-            mid    = float(c.get("mid") or 0)
-            strike = float(c.get("strike") or 0)
-            iv     = float(c.get("iv") or 0)
-            expiry = c.get("expiry", "")
-            dte    = int(c.get("dte") or _days_to_expiry(expiry))
-            opt_type = c.get("type", "")
-
-            if vol < MIN_VOLUME or strike <= 0 or price <= 0:
-                continue
-            if not mid:
-                mid = (bid + ask) / 2 if bid > 0 and ask > 0 else last
-            if not mid:
-                continue
-
-            notional = vol * mid * 100
-            vol_oi   = vol / max(oi, 1)
-            otm      = _otm_pct(strike, price, opt_type)
-            side     = _classify_side(bid, ask, last)
-            score    = _anomaly_score(notional, vol_oi, dte, otm, side)
-
-            if score < 25 or notional < MIN_NOTIONAL:
-                continue
-
-            signals.append({
-                "ticker": ticker, "sector": sector, "price": round(price, 2),
-                "type": opt_type, "strike": strike, "expiry": expiry, "dte": dte,
-                "volume": vol, "open_interest": oi, "vol_oi": round(vol_oi, 2),
-                "mid_price": round(mid, 2), "notional": round(notional, 0),
-                "iv": round(iv * 100, 1) if iv < 10 else round(iv, 1),
-                "otm_pct": round(otm, 1),
-                "trade_side": side, "score": score, "label": _label(score),
-                "data_source": c.get("source", "unknown"),
-                "ts": datetime.now().strftime("%H:%M:%S"),
-            })
+            oi_vs_avg = None
+            if store:
+                oi_vs_avg = store.contract_oi_vs_avg(
+                    ticker, c.get("type", ""), float(c.get("strike") or 0),
+                    c.get("expiry", ""), int(c.get("open_interest") or 0),
+                )
+            sig = score_contract(c, price, sector, chain_volumes,
+                                  oi_vs_avg, rvol, dampen, ticker=ticker)
+            if sig:
+                signals.append(sig)
     except Exception:
         pass
     return signals
@@ -396,6 +435,7 @@ def scan_unusual_flow(
     top_tickers: int = 80,
     min_score: int = 35,
     max_results: int = 150,
+    exclude_etfs: bool = True,
 ) -> List[Dict]:
     """
     Full unusual flow scan — entirely data-driven, no hardcoded lists.
@@ -407,6 +447,7 @@ def scan_unusual_flow(
     """
     sector_map = get_ticker_sector_map()
     pool = tickers or list(sector_map.keys())
+    pool = apply_pool_exclusions(pool, exclude_etfs)
 
     # Phase 1: find hot tickers
     hot = _screen_relvol(pool, top_n=top_tickers)
