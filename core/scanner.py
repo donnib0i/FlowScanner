@@ -65,6 +65,20 @@ SECTOR_ETFS: Dict[str, str] = {
     "Real Estate":            "XLRE",
 }
 
+# Sector relative-strength breakout tunables
+RS_THRESH = 0.5   # sector must out/under-perform SPY by >= this many points
+RS_VOL    = 1.1   # elevated relative-volume gate
+
+def classify_breakout(change_pct: float, spy_chg: float, rel_vol: float) -> tuple:
+    """RS vs SPY + breakout label. When spy_chg == 0.0, rs falls back to change_pct
+    (same convention as the per-ticker RS calc). Returns (rs_vs_spy, breakout)."""
+    rs = round(change_pct - spy_chg, 2) if spy_chg != 0.0 else round(change_pct, 2)
+    if rs >= RS_THRESH and change_pct > 0 and rel_vol >= RS_VOL:
+        return rs, "up"
+    if rs <= -RS_THRESH and change_pct < 0 and rel_vol >= RS_VOL:
+        return rs, "down"
+    return rs, "none"
+
 TICKER_SECTOR: Dict[str, str] = {
     # Tech / semis / software
     "AAPL":"Technology","MSFT":"Technology","NVDA":"Technology","AMD":"Technology","AVGO":"Technology",
@@ -989,7 +1003,6 @@ def get_best_contract(ticker: str, direction: str, price: float,
             # For 0DTE: use actual minutes remaining until 4 PM ET instead of arbitrary floor
             if d == 0:
                 close_et = _now_et.replace(hour=16, minute=0, second=0, microsecond=0)
-                mins_left = max(1.0, (_now_et.replace(tzinfo=None) - _now_et.replace(tzinfo=None)).total_seconds())
                 try:
                     mins_left = max(1.0, (close_et - _now_et).total_seconds() / 60)
                 except Exception:
@@ -1105,9 +1118,10 @@ def scan_sectors() -> Dict[str, Dict]:
     """Fetch sector ETF data. Returns sector_name → metrics dict."""
     sector_data: Dict[str, Dict] = {}
     etfs = list(SECTOR_ETFS.values())
+    fetch_list = etfs + ["SPY"]
 
     print(f"  {Fore.CYAN}Scanning sectors (batch)...{Style.RESET_ALL}", end="", flush=True)
-    batch = _fetch_batch_history(etfs, period="30d")
+    batch = _fetch_batch_history(fetch_list, period="30d")
     sys.stdout.write("\r" + " " * 50 + "\r")
     sys.stdout.flush()
 
@@ -1116,6 +1130,8 @@ def scan_sectors() -> Dict[str, Dict]:
     use_batch = not batch.empty
     if not use_batch:
         print(f"  {Fore.YELLOW}Batch failed — falling back to individual fetches{Style.RESET_ALL}", end="", flush=True)
+
+    spy_chg = _get_spy_change(batch) if use_batch else 0.0
 
     for name, etf in SECTOR_ETFS.items():
         try:
@@ -1152,6 +1168,8 @@ def scan_sectors() -> Dict[str, Dict]:
 
             strength = change_pct * 2.0 + (rel_vol - 1.0) * 0.5 + mom_3d * 0.3
 
+            rs_vs_spy, breakout = classify_breakout(change_pct, spy_chg, rel_vol)
+
             sector_data[name] = {
                 "etf":        etf,
                 "price":      price,
@@ -1161,6 +1179,8 @@ def scan_sectors() -> Dict[str, Dict]:
                 "mom_3d":     mom_3d,
                 "strength":   strength,
                 "bias":       "up" if strength >= 0 else "down",
+                "rs_vs_spy":  rs_vs_spy,
+                "breakout":   breakout,
             }
         except Exception:
             pass
@@ -1211,6 +1231,38 @@ def find_sector_laggards(results: List[Dict], sector_data: Dict[str, Dict]) -> L
 
     laggards.sort(key=lambda x: x["lag_score"], reverse=True)
     return laggards[:12]
+
+
+def rank_breakout_constituents(sector_chg: float, breakout: str,
+                               quotes: Dict[str, Dict],
+                               n_laggards: int = 3, n_leaders: int = 2) -> List[tuple]:
+    """Order a breakout sector's constituents: catch-up laggards first, then momentum
+    leaders. lag = sector_chg - ticker_chg. Returns [(ticker, role, change, lag)]."""
+    if breakout == "none" or not quotes:
+        return []
+
+    rows = [(tk, q["change_pct"], sector_chg - q["change_pct"]) for tk, q in quotes.items()]
+
+    if breakout == "up":
+        laggards = sorted(rows, key=lambda r: r[2], reverse=True)   # hasn't risen yet: biggest +lag
+        leaders  = sorted(rows, key=lambda r: r[1], reverse=True)   # strongest up move
+    else:  # down
+        laggards = sorted(rows, key=lambda r: r[2])                 # hasn't fallen yet: most -lag
+        leaders  = sorted(rows, key=lambda r: r[1])                 # strongest down move
+
+    picked: List[tuple] = []
+    used = set()
+    for tk, ch, lag in laggards[:n_laggards]:
+        picked.append((tk, "laggard", round(ch, 2), round(lag, 2)))
+        used.add(tk)
+    for tk, ch, lag in leaders:
+        if len([p for p in picked if p[1] == "leader"]) >= n_leaders:
+            break
+        if tk in used:
+            continue
+        picked.append((tk, "leader", round(ch, 2), round(lag, 2)))
+        used.add(tk)
+    return picked
 
 
 # ─── Sector Heatmap (individual constituents) ────────────────────────────────
@@ -1283,6 +1335,47 @@ def sector_heatmap(sector: str, limit: int = 150) -> Dict:
 
     payload = {"sector": sector, "stocks": stocks[:limit]}
     _HEATMAP_CACHE[sector] = (now, payload)
+    return payload
+
+
+_PLAYS_CACHE: Dict[str, tuple] = {}   # "sector:dte_mode" -> (timestamp, payload)
+_PLAYS_TTL = 60.0
+
+
+def sector_breakout_plays(sector: str, sector_data: Dict[str, Dict],
+                          vix: float = -1.0, dte_mode: str = "all",
+                          n_laggards: int = 3, n_leaders: int = 2) -> Dict:
+    """For an RS-breakout sector, build constituent contract plays (laggards first,
+    then leaders). Returns {sector, breakout, plays:[{ticker,role,change,lag,contract}]}.
+    Network — call off the event loop."""
+    sd = sector_data.get(sector)
+    breakout = sd.get("breakout", "none") if sd else "none"
+    if not sd or breakout == "none":
+        return {"sector": sector, "breakout": "none", "plays": []}
+
+    now    = time.time()
+    key    = f"{sector}:{dte_mode}"
+    cached = _PLAYS_CACHE.get(key)
+    if cached and now - cached[0] < _PLAYS_TTL:
+        return cached[1]
+
+    direction = "up" if breakout == "up" else "down"
+    quotes    = _quotes_for(constituents_for(sector, fallback_map=TICKER_SECTOR))
+    ranked    = rank_breakout_constituents(sd["change_pct"], breakout, quotes,
+                                           n_laggards, n_leaders)
+
+    plays = []
+    for ticker, role, change, lag in ranked:
+        contract = get_best_contract(ticker, direction, 0, vix, top_n=1, dte_mode=dte_mode)
+        if isinstance(contract, list):
+            contract = contract[0] if contract else None
+        if not contract:
+            continue
+        plays.append({"ticker": ticker, "role": role, "change": change,
+                      "lag": lag, "contract": contract})
+
+    payload = {"sector": sector, "breakout": breakout, "plays": plays}
+    _PLAYS_CACHE[key] = (now, payload)
     return payload
 
 
@@ -2964,7 +3057,7 @@ def interactive_loop(results: List[Dict], args: argparse.Namespace,
             sort_by = SORT_MAP[cmd]
 
 # ─── Entry Point ──────────────────────────────────────────────────────────────
-def main() -> None:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Elite market scanner — gap fills, key levels, options contracts."
     )
@@ -2984,7 +3077,23 @@ def main() -> None:
                         help="Initial sort (default: setup)")
     parser.add_argument("--dynamic",    action="store_true",
                         help="Add today's movers from extended watchlist to find sleepers")
+    parser.add_argument("--live",       action="store_true",
+                        help="Launch the live FlowDeck terminal dashboard")
+    parser.add_argument("--interval",   type=int, default=45,
+                        help="Live refresh interval in seconds (default: 45)")
+    return parser
+
+
+def main() -> None:
+    parser = build_parser()
     args = parser.parse_args()
+
+    if getattr(args, "live", False):
+        from core.live_flow import run as run_live
+        run_live(interval=args.interval,
+                 top=getattr(args, "enrich_top", 30) or 30,
+                 min_score=35)
+        return
 
     if args.tickers:
         tickers = [t.upper() for t in args.tickers]

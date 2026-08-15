@@ -19,6 +19,8 @@ try:
     from fastapi import FastAPI, Query, Request, HTTPException
     from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse, Response as _Response
     from fastapi.middleware.cors import CORSMiddleware
+    from starlette.middleware.trustedhost import TrustedHostMiddleware
+    from starlette.middleware.httpsredirect import HTTPSRedirectMiddleware
     import uvicorn
 except ImportError:
     sys.exit("pip install fastapi 'uvicorn[standard]'")
@@ -50,13 +52,14 @@ from core.scanner import (
     scan_sectors, calc_whale_score, fmt_whale_score,
     scan_tickers, apply_forward_directions,
     enrich_contracts, find_sector_laggards,
-    sector_heatmap, top_individual_laggard,
+    sector_heatmap, top_individual_laggard, sector_breakout_plays,
     apply_filter, apply_sort,
     FILTER_LABELS, SORT_LABELS,
     _TT_AVAILABLE,
 )
 from core.universe import get_universe, ANCHOR
 from data.unusual_flow import scan_unusual_flow, sector_flow_summary
+from data.etf_filter import filter_etfs, is_etf
 from data.sources import available_sources
 
 # Cache unusual flow results (expensive scan)
@@ -65,13 +68,19 @@ _UOA_TTL = 600  # 10 min
 
 PORT = int(os.environ.get("PORT", 8765))
 
-# Insider scan default — equities only (ETFs have no Form 4 filings)
-_ETF_PREFIXES = {"SPY","QQQ","IWM","DIA","MDY","VXX","UVXY","SVXY","TQQQ","SOXL","UPRO",
-                 "SPXL","TNA","LABU","TECL","FNGU","SQQQ","SOXS","SPXS","TZA","LABD",
-                 "TECS","FNGD","SDOW","GLD","SLV","USO","CPER","KWEB","FXI","XBI","ARKK"}
+# Insider scan default — equities only (ETFs have no Form 4 filings).
+# ETF membership comes from data.etf_filter, the single source of truth.
 def _get_insider_universe() -> list:
-    return [t for t in get_universe() if t not in _ETF_PREFIXES][:50]
-_PIN = os.environ.get("SCANNER_PIN", "").strip()
+    return filter_etfs(get_universe())[:50]
+_PIN             = os.environ.get("SCANNER_PIN", "").strip()
+_REQUIRE_PIN     = os.environ.get("SCANNER_REQUIRE_PIN", "").strip() in ("1", "true", "yes")
+_ALLOW_PIN_QUERY = os.environ.get("SCANNER_ALLOW_PIN_QUERY", "").strip() in ("1", "true", "yes")
+_PROXY_HOPS      = max(1, int(os.environ.get("SCANNER_PROXY_HOPS", "1") or 1))
+
+if not _PIN:
+    logging.warning("SCANNER_PIN not set — API is UNAUTHENTICATED")
+elif len(_PIN) < 6:
+    logging.warning("SCANNER_PIN is weak (<6 chars) — consider a longer PIN")
 
 # Valid parameter enums
 _VALID_DIRECTION  = {"up", "down"}
@@ -142,8 +151,11 @@ _active_scan = threading.Event()
 def _client_ip(req: Request) -> str:
     xff = req.headers.get("x-forwarded-for", "")
     if xff:
-        return xff.split(",")[0].strip()
-    return req.client.host if req.client else "unknown"
+        parts = [p.strip() for p in xff.split(",") if p.strip()]
+        if parts:
+            idx = min(_PROXY_HOPS, len(parts))
+            return parts[-idx]   # trust only the proxy-appended hop, not forged left entries
+    return req.client.host if getattr(req, "client", None) else "unknown"
 
 def _check_rate(req: Request, endpoint: str, limit: int, window: int):
     key = f"{_client_ip(req)}:{endpoint}"
@@ -153,34 +165,62 @@ def _check_rate(req: Request, endpoint: str, limit: int, window: int):
 
 def _check_pin(req: Request):
     if not _PIN:
+        if _REQUIRE_PIN:
+            raise HTTPException(503, "Server auth not configured")
         return
     ip = _client_ip(req)
-    supplied = (req.headers.get("x-pin", "") or req.query_params.get("pin", "")).strip()
+    supplied = req.headers.get("x-pin", "").strip()
+    if not supplied and _ALLOW_PIN_QUERY:
+        supplied = req.query_params.get("pin", "").strip()
     if not hmac.compare_digest(supplied.encode("utf-8", errors="replace"),
                                _PIN.encode("utf-8")):
-        if not _rl.allow(f"{ip}:auth_fail", limit=10, window=300):
+        if not _rl.allow(f"{ip}:auth_fail", 10, 300):
             raise HTTPException(429, detail="Too many failed attempts -- try later",
                                 headers={"Retry-After": "300"})
         raise HTTPException(401, "Unauthorized")
 
 # Default flow tickers
-DEFAULT_FLOW_TICKERS = [
-    "SPX","SPY","QQQ","IWM",
+# Single-stocks only (plus SPX index for 0DTE). ETFs are filtered out to stay
+# consistent with the ETF-free scan universe. SPX is an index, not an ETF.
+DEFAULT_FLOW_TICKERS = filter_etfs([
+    "SPX",
     "NVDA","AMD","AAPL","MSFT","META","AMZN","TSLA","GOOGL",
     "COIN","PLTR","MSTR","HOOD","MARA",
     "SOFI","AFRM","GME","HIMS",
-    "TQQQ","SQQQ","SOXL","SOXS",
-    "GS","JPM","VXX","UVXY",
-]
+    "GS","JPM",
+])
 
 # App setup
-app = FastAPI(title="Scanner Pro", docs_url=None, redoc_url=None)
+app = FastAPI(title="Scanner Pro", docs_url=None, redoc_url=None, openapi_url=None)
 
 @app.exception_handler(Exception)
 async def _generic_error(request: Request, exc: Exception):
     # Never expose internal errors to public
     logger.error("Unhandled error on %s: %s", request.url.path, exc, exc_info=True)
     return JSONResponse(status_code=500, content={"detail": "Internal server error"})
+
+# Reject Host-header injection. Opt-in, like the PIN: unset means no filtering.
+# The default used to be "localhost,127.0.0.1,testserver", which 400s every
+# request the moment this is deployed anywhere with a real domain — a security
+# control whose default breaks production just gets ripped out in an outage.
+# In prod set SCANNER_ALLOWED_HOSTS=flowscanner-production.up.railway.app
+_allowed_hosts = [h.strip() for h in os.environ.get("SCANNER_ALLOWED_HOSTS", "").split(",")
+                  if h.strip()] or ["*"]
+if _allowed_hosts == ["*"]:
+    logging.warning("SCANNER_ALLOWED_HOSTS not set — Host header is not validated")
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=_allowed_hosts)
+if os.environ.get("SCANNER_FORCE_HTTPS", "").strip() in ("1", "true", "yes"):
+    app.add_middleware(HTTPSRedirectMiddleware)
+
+_MAX_BODY = 16 * 1024
+
+@app.middleware("http")
+async def _limit_body(request: Request, call_next):
+    if request.method == "POST":
+        cl = request.headers.get("content-length")
+        if cl and cl.isdigit() and int(cl) > _MAX_BODY:
+            return JSONResponse({"detail": "payload too large"}, status_code=413)
+    return await call_next(request)
 
 app.add_middleware(
     CORSMiddleware,
@@ -339,6 +379,7 @@ async def api_vix(req: Request):
 @app.get("/api/status")
 async def api_status(req: Request):
     _check_pin(req)
+    _check_rate(req, "status", limit=30, window=60)
     return {
         "flow_source": "tastytrade-live" if _TT_AVAILABLE else "yfinance-delayed",
         "live": _TT_AVAILABLE,
@@ -382,6 +423,13 @@ async def api_flow(
 
     if not ticker_list:
         raise HTTPException(400, "No valid tickers provided")
+
+    # Single stocks only — ETFs never reach the engine, whatever the caller sent.
+    # (Cash indexes like SPX are not ETFs and survive.)
+    equities = filter_etfs(ticker_list)
+    if not equities:
+        raise HTTPException(400, "No valid tickers provided — all requested symbols are ETFs")
+    ticker_list = equities
 
     if _active_scan.is_set():
         raise HTTPException(503, detail="A scan is already running -- wait for it to finish.",
@@ -584,6 +632,8 @@ async def api_sectors(req: Request):
         "price":    round(v.get("price", 0), 2),
         "rel_vol":  round(v.get("rel_vol", 1), 2),
         "bias":     v.get("bias", "neutral"),
+        "rs":       round(v.get("rs_vs_spy", 0), 2),
+        "breakout": v.get("breakout", "none"),
     } for k, v in data.items()]
 
     if not clean:
@@ -616,6 +666,36 @@ async def api_sector_heatmap(req: Request, name: str):
         "stocks":       data["stocks"],
         "last_updated": datetime.now().strftime("%H:%M:%S"),
     }
+
+@app.get("/api/sector/{name}/plays")
+async def api_sector_plays(req: Request, name: str, dte_mode: str = Query("all")):
+    _check_pin(req)
+    _check_rate(req, "plays", limit=15, window=60)
+    if name not in SECTOR_ETFS:
+        raise HTTPException(404, "Unknown sector")
+    _validate_enum(dte_mode, _VALID_DTE_MODE, "dte_mode")
+
+    loop = asyncio.get_event_loop()
+    with contextlib.redirect_stdout(io.StringIO()):
+        try:
+            sector_data = await asyncio.wait_for(
+                loop.run_in_executor(None, scan_sectors), timeout=45.0)
+        except asyncio.TimeoutError:
+            raise HTTPException(504, "Sector scan timed out")
+    try:
+        vix = await loop.run_in_executor(None, fetch_vix)
+    except Exception:
+        vix = -1.0
+    with contextlib.redirect_stdout(io.StringIO()):
+        try:
+            data = await asyncio.wait_for(
+                loop.run_in_executor(None, lambda: sector_breakout_plays(
+                    name, sector_data, vix, dte_mode)), timeout=45.0)
+        except asyncio.TimeoutError:
+            raise HTTPException(504, "Plays scan timed out")
+
+    return {"sector": data["sector"], "breakout": data["breakout"],
+            "plays": data["plays"], "last_updated": datetime.now().strftime("%H:%M:%S")}
 
 # Expiry window each dte_mode promises the user, mirroring get_best_contract().
 _DTE_WINDOWS = {"0dte": (0, 0), "weekly": (2, 7)}
@@ -1177,6 +1257,14 @@ body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
 .heat-tile .ht-tk{font-size:11px;font-weight:800;color:#fff;text-shadow:0 1px 2px rgba(0,0,0,.5)}
 .heat-tile .ht-ch{font-size:9px;font-weight:600;color:rgba(255,255,255,.92)}
 .heat-empty{font-size:11px;color:var(--sub);padding:14px;text-align:center}
+.plays-panel{padding:8px 10px 12px;border-top:1px solid var(--border)}
+.plays-empty{font-size:11px;color:var(--sub);padding:8px;text-align:center}
+.plays-head{font-size:10px;letter-spacing:.08em;color:var(--sub);font-weight:700;margin:4px 0 8px}
+.play-card{background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:8px 10px;margin-bottom:6px;border-left:3px solid var(--sub)}
+.play-card.laggard{border-left-color:var(--green)}
+.play-card.leader{border-left-color:var(--blue,#4a9eff)}
+.play-top{font-size:12px;font-weight:700;color:var(--fg,#e8e8e8)}
+.play-con{font-size:11px;color:var(--sub);margin-top:2px;font-variant-numeric:tabular-nums}
 .finder{padding:16px 14px}
 .find-input{width:100%;background:var(--bg3);border:1px solid var(--border);
   border-radius:8px;color:var(--text);font-size:22px;font-weight:800;
@@ -1614,8 +1702,9 @@ function doFlowScan(retryCount){
     document.getElementById('pw').style.display='block';
     document.getElementById('pl').style.display='block';
   }
+  // Single stocks only — no ETFs. SPX is a cash index, not an ETF.
   const tickers=(S.full?S.ft:S.qt).join(',')
-    ||'SPX,SPY,QQQ,IWM,NVDA,AMD,AAPL,MSFT,META,AMZN,TSLA';
+    ||'SPX,NVDA,AMD,AAPL,MSFT,META,AMZN,TSLA';
   const n=tickers.split(',').length;
   const btn=document.getElementById('scan-btn');
   btn.textContent='SCANNING '+n+'...';btn.className='scan-btn loading';
@@ -2081,7 +2170,9 @@ async function loadSectors(){
       const changeStr=(up?'+':'')+s.change.toFixed(2)+'%';
       card.title='Tap to see '+s.name+' stocks';
       card.onclick=function(){toggleHeatmap(card,s.name,grid)};
-      const nm=document.createElement('div');nm.className='sc-name';nm.textContent=s.name;
+      const nm=document.createElement('div');nm.className='sc-name';
+      const bk=s.breakout==='up'?' 🚀':s.breakout==='down'?' 🔻':'';
+      nm.textContent=s.name+bk;
       const chg=document.createElement('div');chg.className='sc-chg '+(up?'up':'dn');
       chg.textContent=changeStr;
       const track=document.createElement('div');track.className='sc-bar-track';
@@ -2133,8 +2224,44 @@ function toggleHeatmap(card,sector,grid){
   const map=document.createElement('div');map.className='heat-map';
   const sk=document.createElement('div');sk.className='skel';sk.style.cssText='height:200px;width:100%';
   map.appendChild(sk);panel.appendChild(map);
+  const plays=document.createElement('div');plays.className='plays-panel';
+  panel.appendChild(plays);
   card.insertAdjacentElement('afterend',panel);
   loadHeatmap(sector,map,sub);
+  loadPlays(sector,plays);
+}
+
+async function loadPlays(sector,box){
+  try{
+    const r=await fetch(_pa('/api/sector/'+encodeURIComponent(sector)+'/plays'));
+    if(!r.ok) return;                          // plays are best-effort, never block heatmap
+    const d=await r.json();
+    const plays=d.plays||[];
+    box.textContent='';
+    if(d.breakout==='none'||!plays.length){
+      const em=document.createElement('div');em.className='plays-empty';
+      em.textContent='No RS breakout right now.';box.appendChild(em);return;
+    }
+    const dir=d.breakout==='up'?'CALLS':'PUTS';
+    const hd=document.createElement('div');hd.className='plays-head';
+    hd.textContent='BREAKOUT PLAYS · '+dir;box.appendChild(hd);
+    plays.forEach(function(p){
+      const c=p.contract||{};
+      const cd=document.createElement('div');cd.className='play-card '+p.role;
+      const top=document.createElement('div');top.className='play-top';
+      const chg=(p.change>=0?'+':'')+p.change+'%';
+      top.textContent=p.ticker+'  ·  '+p.role.toUpperCase()+'  ·  '+chg;
+      const bot=document.createElement('div');bot.className='play-con';
+      const bits=[];
+      if(c.label) bits.push(c.label);
+      else{ if(c.strike) bits.push(c.strike+(c.type?' '+c.type:'')); }
+      if(c.mid!=null) bits.push('@'+c.mid);
+      if(c.delta!=null) bits.push('Δ'+c.delta);
+      if(c.dte!=null&&c.dte>=0) bits.push(c.dte+'DTE');
+      bot.textContent=bits.join('  ');
+      cd.appendChild(top);cd.appendChild(bot);box.appendChild(cd);
+    });
+  }catch(e){ /* best-effort */ }
 }
 
 async function loadHeatmap(sector,map,sub){
@@ -2229,6 +2356,15 @@ function setDteMode(m){
   ['0dte','weekly','all'].forEach(function(k){
     document.getElementById('dt-'+k).className='dte-btn'+(k===m?' on':'');
   });
+}
+
+function _findError(msg){
+  const res=document.getElementById('find-result');
+  res.textContent='';
+  const p=document.createElement('div');p.className='empty-st';p.style.padding='16px';
+  p.textContent=msg;res.appendChild(p);
+  const btn=document.getElementById('find-btn');
+  btn.textContent='FIND TOP 3 CONTRACTS';btn.classList.remove('loading');
 }
 
 async function doFind(retry){
