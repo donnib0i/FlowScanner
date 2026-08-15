@@ -169,3 +169,49 @@ def test_configured_origin_is_allowed():
     c = TestClient(webapp.app)
     r = c.get("/api/status", headers={"Origin": "https://good.example.com"})
     assert r.headers.get("access-control-allow-origin") == "https://good.example.com"
+
+
+# ─── Rate limiting behind a CDN ───────────────────────────────────────────────
+def test_default_proxy_hops_resolves_real_client_behind_cdn():
+    # Production sits behind a CDN edge AND Railway's proxy, so the chain is
+    # [real_client, cdn_edge]. With one hop the code took the CDN edge — whose
+    # address rotates per request — so rate-limit buckets never filled and 40
+    # parallel requests against a 30/60s limit all returned 200.
+    webapp = _reload({})
+
+    class Req:
+        def __init__(self, xff):
+            self.headers = {"x-forwarded-for": xff}
+            self.client = None
+    assert webapp._client_ip(Req("47.44.170.146, 84.17.44.228")) == "47.44.170.146"
+
+
+def test_single_hop_chain_still_resolves():
+    # A deploy with only one proxy yields a one-entry chain; min() must keep it
+    # working rather than index off the end.
+    webapp = _reload({})
+
+    class Req:
+        def __init__(self, xff):
+            self.headers = {"x-forwarded-for": xff}
+            self.client = None
+    assert webapp._client_ip(Req("47.44.170.146")) == "47.44.170.146"
+
+
+def test_forged_left_entries_are_ignored():
+    webapp = _reload({})
+
+    class Req:
+        def __init__(self, xff):
+            self.headers = {"x-forwarded-for": xff}
+            self.client = None
+    # Attacker prepends a fake IP; the CDN appends the real one, Railway appends
+    # its edge. The forged leftmost entry must never win.
+    assert webapp._client_ip(Req("1.2.3.4, 47.44.170.146, 84.17.44.228")) != "1.2.3.4"
+
+
+def test_rate_limiter_blocks_past_limit():
+    webapp = _reload({})
+    rl = webapp._RateLimiter()
+    assert all(rl.allow("k", 30, 60) for _ in range(30))
+    assert rl.allow("k", 30, 60) is False

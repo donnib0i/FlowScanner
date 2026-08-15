@@ -75,7 +75,13 @@ def _get_insider_universe() -> list:
 _PIN             = os.environ.get("SCANNER_PIN", "").strip()
 _REQUIRE_PIN     = os.environ.get("SCANNER_REQUIRE_PIN", "").strip() in ("1", "true", "yes")
 _ALLOW_PIN_QUERY = os.environ.get("SCANNER_ALLOW_PIN_QUERY", "").strip() in ("1", "true", "yes")
-_PROXY_HOPS      = max(1, int(os.environ.get("SCANNER_PROXY_HOPS", "1") or 1))
+# Number of trusted proxies appending to X-Forwarded-For. Production sits behind
+# a CDN edge *and* Railway's proxy, so the chain is [real_client, cdn_edge] and
+# the real caller is the 2nd entry from the right. With this at 1 the limiter
+# keyed on the CDN edge address, which rotates per request, so it never fired:
+# 40 parallel requests against a 30/60s limit all returned 200. A single-proxy
+# deploy still works — _client_ip clamps the index to the chain length.
+_PROXY_HOPS      = max(1, int(os.environ.get("SCANNER_PROXY_HOPS", "2") or 2))
 
 if not _PIN:
     logging.warning("SCANNER_PIN not set — API is UNAUTHENTICATED")
@@ -408,12 +414,6 @@ async def api_status(req: Request):
         "insider": _INSIDER_OK,
         "macro": _FRED_OK,
         "chain_sources": available_sources(),
-        # The rate limiter buckets per client IP; if this value moves between
-        # requests from one caller, the limiter silently never triggers.
-        # Echoing the caller their own IP discloses nothing they don't know.
-        "client_ip": _client_ip(req),
-        "rate_limit_keys": _rl.size(),
-        "xff_chain": [x.strip() for x in req.headers.get("x-forwarded-for","").split(",") if x.strip()],
     }
 
 @app.get("/api/universe")
