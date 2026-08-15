@@ -413,6 +413,7 @@ async def api_status(req: Request):
         # Echoing the caller their own IP discloses nothing they don't know.
         "client_ip": _client_ip(req),
         "rate_limit_keys": _rl.size(),
+        "xff_chain": [x.strip() for x in req.headers.get("x-forwarded-for","").split(",") if x.strip()],
     }
 
 @app.get("/api/universe")
