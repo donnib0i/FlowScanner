@@ -205,8 +205,20 @@ async def _generic_error(request: Request, exc: Exception):
 # control whose default breaks production just gets ripped out in an outage.
 # In prod set SCANNER_ALLOWED_HOSTS=flowscanner-production.up.railway.app
 _allowed_hosts = [h.strip() for h in os.environ.get("SCANNER_ALLOWED_HOSTS", "").split(",")
-                  if h.strip()] or ["*"]
-if _allowed_hosts == ["*"]:
+                  if h.strip()]
+if not _allowed_hosts:
+    # Railway injects RAILWAY_PUBLIC_DOMAIN — use it so host validation is on in
+    # production without depending on anyone setting a second variable by hand.
+    _platform_domain = os.environ.get("RAILWAY_PUBLIC_DOMAIN", "").strip()
+    if _platform_domain:
+        # Include the platform wildcards too: Railway's healthcheck and internal
+        # routing don't always use the public domain as the Host, and a 400 there
+        # reads as a failed deploy. A custom domain needs SCANNER_ALLOWED_HOSTS.
+        _allowed_hosts = [_platform_domain, "*.railway.app", "*.up.railway.app",
+                          "localhost", "127.0.0.1"]
+        logging.info("Host validation on via RAILWAY_PUBLIC_DOMAIN=%s", _platform_domain)
+if not _allowed_hosts:
+    _allowed_hosts = ["*"]
     logging.warning("SCANNER_ALLOWED_HOSTS not set — Host header is not validated")
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=_allowed_hosts)
 if os.environ.get("SCANNER_FORCE_HTTPS", "").strip() in ("1", "true", "yes"):
@@ -222,9 +234,14 @@ async def _limit_body(request: Request, call_next):
             return JSONResponse({"detail": "payload too large"}, status_code=413)
     return await call_next(request)
 
+# The dashboard is served from this same origin, so it needs no CORS grant at
+# all. allow_origins=["*"] previously let any site on the internet read every
+# API response from a visitor's browser. Opt in per-origin if that's ever needed.
+_allowed_origins = [o.strip() for o in os.environ.get("SCANNER_ALLOWED_ORIGINS", "").split(",")
+                    if o.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_allowed_origins,
     allow_methods=["GET"],
     allow_headers=["x-pin"],
     max_age=600,

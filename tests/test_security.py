@@ -5,7 +5,8 @@ from fastapi.testclient import TestClient
 
 def _reload(env):
     for k in ["SCANNER_PIN", "SCANNER_REQUIRE_PIN", "SCANNER_ALLOW_PIN_QUERY",
-              "SCANNER_PROXY_HOPS", "SCANNER_ALLOWED_HOSTS", "SCANNER_FORCE_HTTPS"]:
+              "SCANNER_PROXY_HOPS", "SCANNER_ALLOWED_HOSTS", "SCANNER_FORCE_HTTPS",
+              "SCANNER_ALLOWED_ORIGINS", "RAILWAY_PUBLIC_DOMAIN"]:
         os.environ.pop(k, None)
     os.environ.update(env)
     import web.app as webapp
@@ -133,3 +134,38 @@ def test_explicit_allowed_hosts_still_filters():
     c = TestClient(webapp.app, raise_server_exceptions=False)
     assert c.get("/api/status", headers={"Host": "evil.example.com"}).status_code == 400
     assert c.get("/api/status", headers={"Host": "good.example.com"}).status_code == 200
+
+
+# ─── Hardening: auto-trust the platform domain ────────────────────────────────
+def test_railway_domain_is_trusted_automatically():
+    # Railway injects RAILWAY_PUBLIC_DOMAIN. Use it so host validation is ON in
+    # production without anyone having to remember a second env var.
+    webapp = _reload({"RAILWAY_PUBLIC_DOMAIN": "flowscanner-production.up.railway.app"})
+    c = TestClient(webapp.app, raise_server_exceptions=False)
+    assert c.get("/api/status", headers={"Host": "flowscanner-production.up.railway.app"}).status_code == 200
+    assert c.get("/api/status", headers={"Host": "evil.example.com"}).status_code == 400
+
+
+def test_explicit_hosts_win_over_platform_domain():
+    webapp = _reload({"RAILWAY_PUBLIC_DOMAIN": "auto.example.com",
+                      "SCANNER_ALLOWED_HOSTS": "manual.example.com"})
+    c = TestClient(webapp.app, raise_server_exceptions=False)
+    assert c.get("/api/status", headers={"Host": "manual.example.com"}).status_code == 200
+    assert c.get("/api/status", headers={"Host": "auto.example.com"}).status_code == 400
+
+
+# ─── Hardening: no wildcard CORS ──────────────────────────────────────────────
+def test_cross_origin_read_is_not_allowed_by_default():
+    # allow_origins=["*"] let any site on the internet read API responses from a
+    # visitor's browser. The dashboard is same-origin and needs no CORS at all.
+    webapp = _reload({})
+    c = TestClient(webapp.app)
+    r = c.get("/api/status", headers={"Origin": "https://evil.example.com"})
+    assert "access-control-allow-origin" not in {k.lower() for k in r.headers}
+
+
+def test_configured_origin_is_allowed():
+    webapp = _reload({"SCANNER_ALLOWED_ORIGINS": "https://good.example.com"})
+    c = TestClient(webapp.app)
+    r = c.get("/api/status", headers={"Origin": "https://good.example.com"})
+    assert r.headers.get("access-control-allow-origin") == "https://good.example.com"
