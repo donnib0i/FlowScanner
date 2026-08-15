@@ -37,7 +37,8 @@ except Exception:
 
 # ─── yfinance ticker normalization ───────────────────────────────────────────
 _YF_TICKER_MAP: Dict[str, str] = {
-    "SPX": "^GSPC", "VIX": "^VIX", "RUT": "^RUT", "NDX": "^NDX",
+    # ^SPX, not ^GSPC: both quote the index, but ^GSPC exposes no option chain.
+    "SPX": "^SPX", "VIX": "^VIX", "RUT": "^RUT", "NDX": "^NDX",
 }
 
 def _yf_ticker(sym: str) -> str:
@@ -294,6 +295,77 @@ def bs_delta(S: float, K: float, T: float, sigma: float, opt_type: str = "call")
     d1 = (math.log(S / K) + 0.5 * sigma ** 2 * T) / (sigma * math.sqrt(T))
     d  = norm_cdf(d1)
     return d if opt_type == "call" else d - 1.0
+
+# ─── Ladder (calls vs puts) row selection ─────────────────────────────────────
+# Floors that keep untradeable strikes out of the ladder. A strike with OI=1 or
+# 3 contracts of volume is noise, not flow.
+LADDER_MIN_OI    = 50
+LADDER_MIN_VOL   = 25
+LADDER_DELTA_MIN = 0.10   # below: lottery tickets
+LADDER_DELTA_MAX = 0.90   # above: deep ITM, priced like stock
+
+
+def _num(v, default=0.0) -> float:
+    """float() that survives None/NaN/strings."""
+    try:
+        f = float(v)
+        return default if f != f else f   # NaN != NaN
+    except (TypeError, ValueError):
+        return default
+
+
+def ladder_rows(raw, opt_type: str, price: float, dte: int,
+                top_n: int = 8) -> List[Dict]:
+    """
+    Clean, score and rank one side of an option chain for the calls-vs-puts ladder.
+
+    `raw` is an iterable of chain rows (dicts or a DataFrame's records) carrying
+    strike / volume / openInterest / bid / ask / lastPrice / impliedVolatility.
+
+    Ranking is by dollar flow, but only across strikes that are actually
+    tradeable. Ranking the whole chain by dollar flow alone surfaces deep-ITM
+    contracts — they cost 10x more, so vol x mid puts them on top even when the
+    real positioning is at the money. Delta comes from Black-Scholes on the
+    chain's own IV, not a moneyness approximation.
+    """
+    rows: List[Dict] = []
+    T = max(dte, 0) / 365.0
+
+    for r in raw:
+        strike = _num(r.get("strike"))
+        if strike <= 0:
+            continue
+        vol = int(_num(r.get("volume")))
+        oi  = int(_num(r.get("openInterest")))
+        if vol < LADDER_MIN_VOL or oi < LADDER_MIN_OI:
+            continue
+
+        bid, ask = _num(r.get("bid")), _num(r.get("ask"))
+        # Outside RTH yfinance zeroes bid/ask — fall back to the last print.
+        mid = (bid + ask) / 2 if bid + ask > 0 else _num(r.get("lastPrice"))
+        if mid <= 0:
+            continue
+
+        iv = _num(r.get("impliedVolatility"))
+        delta = abs(bs_delta(price, strike, T, iv, opt_type))
+        if not (LADDER_DELTA_MIN <= delta <= LADDER_DELTA_MAX):
+            continue
+
+        rows.append({
+            "strike": strike,
+            "type": opt_type,
+            "vol": vol,
+            "oi": oi,
+            "mid": round(mid, 2),
+            "iv": round(iv * 100, 1),
+            "dollar_flow": round(vol * mid * 100, 0),
+            "ddoi": round(delta * oi, 0),
+            "delta": round(delta, 3),
+        })
+
+    rows.sort(key=lambda x: x["dollar_flow"], reverse=True)
+    return rows[:top_n]
+
 
 # ─── Display helpers ──────────────────────────────────────────────────────────
 def fmt_vol(v: int) -> str:

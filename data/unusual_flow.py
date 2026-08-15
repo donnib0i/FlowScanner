@@ -198,7 +198,10 @@ def get_ticker_sector_map(force: bool = False) -> Dict[str, str]:
     if m:
         _POOL_CACHE["ticker_sector"] = m
         _POOL_CACHE["ts"] = now
-    return _POOL_CACHE["ticker_sector"] or dict(_ETF_ANCHORS)
+    # No ETF-anchor fallback: the scanner is single-stocks only, and returning
+    # the anchor dict here injected SPY/QQQ/XLK into the pool whenever the live
+    # sources failed. An empty map means "no pool", not "scan ETFs".
+    return _POOL_CACHE["ticker_sector"]
 
 
 def get_scan_pool() -> List[str]:
