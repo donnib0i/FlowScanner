@@ -127,6 +127,10 @@ class _RateLimiter:
             dq.append(now)
             return True
 
+    def size(self) -> int:
+        with self._lock:
+            return len(self._windows)
+
 _rl = _RateLimiter()
 
 # TTL cache (5-min for scan results)
@@ -404,6 +408,11 @@ async def api_status(req: Request):
         "insider": _INSIDER_OK,
         "macro": _FRED_OK,
         "chain_sources": available_sources(),
+        # The rate limiter buckets per client IP; if this value moves between
+        # requests from one caller, the limiter silently never triggers.
+        # Echoing the caller their own IP discloses nothing they don't know.
+        "client_ip": _client_ip(req),
+        "rate_limit_keys": _rl.size(),
     }
 
 @app.get("/api/universe")
