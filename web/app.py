@@ -46,7 +46,7 @@ except ImportError:
 from core.scanner import (
     UNIVERSE, TICKER_SECTOR, SECTOR_ETFS,
     fetch_vix, vix_delta_target,
-    scan_options_flow, get_best_contract,
+    scan_options_flow, get_best_contract, ladder_rows,
     scan_sectors, calc_whale_score, fmt_whale_score,
     scan_tickers, apply_forward_directions,
     enrich_contracts, find_sector_laggards,
@@ -617,6 +617,25 @@ async def api_sector_heatmap(req: Request, name: str):
         "last_updated": datetime.now().strftime("%H:%M:%S"),
     }
 
+# Expiry window each dte_mode promises the user, mirroring get_best_contract().
+_DTE_WINDOWS = {"0dte": (0, 0), "weekly": (2, 7)}
+
+def _dte_note(dte_mode: str, contracts: list) -> Optional[str]:
+    """
+    get_best_contract() silently widens its expiry search when the requested
+    window is empty (no 0DTE chain after hours, say). Returning the resulting
+    contract under a "0DTE / Today only" label is misleading, so say so instead.
+    """
+    window = _DTE_WINDOWS.get(dte_mode)
+    if not window or not contracts:
+        return None
+    lo, hi = window
+    d = contracts[0].get("dte")
+    if d is None or lo <= d <= hi:
+        return None
+    label = "0DTE" if dte_mode == "0dte" else "WEEKLY (2-7DTE)"
+    return f"No {label} contracts available — showing nearest expiry ({d}DTE)"
+
 @app.get("/api/find")
 async def api_find(
     req:       Request,
@@ -647,7 +666,8 @@ async def api_find(
     if isinstance(contracts, dict):
         contracts = [contracts]
     return {"contracts": contracts, "ticker": ticker, "direction": direction,
-            "dte_mode": dte_mode, "last_updated": datetime.now().strftime("%H:%M:%S")}
+            "dte_mode": dte_mode, "dte_note": _dte_note(dte_mode, contracts),
+            "last_updated": datetime.now().strftime("%H:%M:%S")}
 
 @app.get("/api/find/both")
 async def api_find_both(
@@ -657,7 +677,8 @@ async def api_find_both(
 ):
     """
     Returns call vs put ladder comparison:
-    dollar flow, volume, OI, DDOI (delta × OI) for top strikes on each side.
+    dollar flow, volume, OI, DDOI (delta × OI) for top strikes on each side,
+    plus the best tradeable contract on each side from the scoring engine.
     """
     _check_pin(req)
     _check_rate(req, "find_both", limit=10, window=60)
@@ -665,9 +686,7 @@ async def api_find_both(
     dte_mode = _validate_enum(dte_mode, _VALID_DTE_MODE, "dte_mode")
 
     def _fetch():
-        import yfinance as yf
-        from scanner import _yf, vix_delta_target, fetch_vix
-        import pandas as pd
+        from core.scanner import _yf
         from datetime import datetime
 
         t = _yf(ticker)
@@ -709,60 +728,8 @@ async def api_find_both(
         calls_df = chain.calls.copy()
         puts_df  = chain.puts.copy()
 
-        def _safe_int(v):
-            try:
-                f = float(v)
-                return 0 if (f != f) else int(f)  # NaN check
-            except Exception:
-                return 0
-
-        def _safe_float(v):
-            try:
-                f = float(v)
-                return 0.0 if (f != f) else f
-            except Exception:
-                return 0.0
-
-        def enrich(df, opt_type):
-            rows = []
-            for _, r in df.iterrows():
-                vol  = _safe_int(r.get("volume", 0))
-                oi   = _safe_int(r.get("openInterest", 0))
-                bid  = _safe_float(r.get("bid", 0))
-                ask  = _safe_float(r.get("ask", 0))
-                mid  = (bid + ask) / 2 if bid + ask > 0 else _safe_float(r.get("lastPrice", 0))
-                iv   = _safe_float(r.get("impliedVolatility", 0))
-                strike = _safe_float(r.get("strike", 0))
-                dollar_flow = vol * mid * 100
-                # Simple delta proxy from moneyness
-                if price > 0 and d > 0:
-                    import math
-                    moneyness = math.log(price / strike) if strike > 0 else 0
-                    delta_proxy = max(0.01, min(0.99, 0.5 + moneyness * 5))
-                    if opt_type == "put":
-                        delta_proxy = -(1 - delta_proxy)
-                else:
-                    delta_proxy = 0.5 if opt_type == "call" else -0.5
-                ddoi = abs(delta_proxy) * oi
-                rows.append({
-                    "strike": strike,
-                    "type": opt_type,
-                    "vol": vol,
-                    "oi": oi,
-                    "mid": round(mid, 2),
-                    "iv": round(iv * 100, 1),
-                    "dollar_flow": round(dollar_flow, 0),
-                    "ddoi": round(ddoi, 0),
-                    "delta": round(abs(delta_proxy), 3),
-                })
-            # Filter near-the-money strikes (±15% of price)
-            if price > 0:
-                rows = [r for r in rows if price*0.85 <= r["strike"] <= price*1.15]
-            rows.sort(key=lambda x: x["dollar_flow"], reverse=True)
-            return rows[:8]
-
-        calls = enrich(calls_df, "call")
-        puts  = enrich(puts_df,  "put")
+        calls = ladder_rows(calls_df.to_dict("records"), "call", price, d)
+        puts  = ladder_rows(puts_df.to_dict("records"),  "put",  price, d)
 
         def side_totals(rows):
             return {
@@ -785,6 +752,7 @@ async def api_find_both(
             "exp": exp,
             "dte": d,
             "dte_mode": dte_mode,
+            "dte_note": _dte_note(dte_mode, [{"dte": d}]),
             "calls": calls,
             "puts": puts,
             "call_totals": call_totals,
@@ -803,6 +771,34 @@ async def api_find_both(
         raise HTTPException(504, "Timed out")
     if not result:
         raise HTTPException(404, f"No chain data for {ticker}")
+
+    # The ladder shows where the money is; these are the contracts actually worth
+    # buying on each side, scored by the same engine that backs FIND TOP 3.
+    def _pick(direction: str, vix: float):
+        try:
+            c = get_best_contract(ticker, direction, 0, vix, top_n=1,
+                                  dte_mode=dte_mode, target_price=0)
+        except Exception:
+            return None
+        if isinstance(c, list):
+            c = c[0] if c else None
+        return c
+
+    try:
+        vix = await loop.run_in_executor(None, fetch_vix)
+        best_call, best_put = await asyncio.wait_for(
+            asyncio.gather(
+                loop.run_in_executor(None, lambda: _pick("up", vix)),
+                loop.run_in_executor(None, lambda: _pick("down", vix)),
+            ), timeout=30.0
+        )
+    except Exception:
+        # The ladder is still useful without the picks — never fail the whole
+        # response because the scoring engine came up empty or slow.
+        best_call = best_put = None
+
+    result["best_call"] = best_call
+    result["best_put"]  = best_put
     return result
 
 
@@ -2238,11 +2234,12 @@ function setDteMode(m){
 async function doFind(retry){
   const btn=document.getElementById('find-btn');
   if(!retry&&btn.classList.contains('loading')) return;
-  const ticker=document.getElementById('ft').value.trim().toUpperCase()||'SPY';
+  const ticker=document.getElementById('ft').value.trim().toUpperCase()||'NVDA';
   btn.textContent=retry?'RETRYING...':'FINDING...';btn.classList.add('loading');
   const res=document.getElementById('find-result');
   if(!retry){
     res.textContent='';
+    document.getElementById('both-result').textContent='';  // drop a stale ladder
     const skelWrap=document.createElement('div');skelWrap.style.cssText='margin:4px 0';
     [130,110,110].forEach(function(h){
       const s=document.createElement('div');
@@ -2253,9 +2250,19 @@ async function doFind(retry){
   }
   try{
     const r=await fetch(_pa('/api/find?ticker='+ticker+'&direction='+S.dir+'&dte_mode='+S.dteMode));
-    if(!r.ok){const e=await r.json();throw new Error(e.detail||e.error||'No contracts found');}
+    if(_handleAuth(r))return;
+    if(!r.ok){
+      // 4xx is a real answer (bad ticker / no chain) — show it now. Only a
+      // network failure or 5xx means the server may still be cold.
+      if(r.status<500){
+        const e=await r.json().catch(function(){return {}});
+        _findError(e.detail||e.error||'No contracts found for '+ticker);
+        return;
+      }
+      throw new Error('Server error ('+r.status+')');
+    }
     const d=await r.json();
-    renderContracts(d.ticker,d.contracts,d.last_updated);
+    renderContracts(d.ticker,d.contracts,d.last_updated,d.dte_note);
     btn.textContent='FIND TOP 3 CONTRACTS';btn.classList.remove('loading');
   }catch(e){
     if(!retry){
@@ -2264,20 +2271,18 @@ async function doFind(retry){
       p.textContent='Waking up server...';res.appendChild(p);
       setTimeout(function(){doFind(true)},5000);
     }else{
-      res.textContent='';
-      const p=document.createElement('div');p.className='empty-st';p.style.padding='16px';
-      p.textContent=e.message;res.appendChild(p);
-      btn.textContent='FIND TOP 3 CONTRACTS';btn.classList.remove('loading');
+      _findError(e.message);
     }
   }
 }
 
 async function doFindBoth(){
-  const ticker=(document.getElementById('ft').value.trim()||'SPY').toUpperCase();
+  const ticker=(document.getElementById('ft').value.trim()||'NVDA').toUpperCase();
   const btn=document.getElementById('both-btn');
   const res=document.getElementById('both-result');
   btn.textContent='Loading...';btn.classList.add('loading');
   res.textContent='';
+  document.getElementById('find-result').textContent='';  // drop stale contracts
   try{
     const r=await fetch(_pa('/api/find/both?ticker='+ticker+'&dte_mode='+S.dteMode));
     if(_handleAuth(r))return;
@@ -2300,6 +2305,44 @@ function renderBothLadder(d){
 
   const ct=d.call_totals, pt=d.put_totals;
   const cw='#00ff88', pw='#ff3355', neu='#888';
+
+  if(d.dte_note){
+    const warn=document.createElement('div');
+    warn.style.cssText='background:rgba(255,176,32,.08);border:1px solid rgba(255,176,32,.3);'
+      +'border-radius:8px;padding:9px 12px;margin-bottom:10px;font-size:11px;color:var(--amber)';
+    warn.textContent='⚠ '+d.dte_note;
+    res.appendChild(warn);
+  }
+
+  // ── best contract per side ──────────────────────────────────────────────
+  if(d.best_call||d.best_put){
+    const pickWrap=document.createElement('div');
+    pickWrap.style.cssText='display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px';
+    [['BEST CALL',d.best_call,cw,'C'],['BEST PUT',d.best_put,pw,'P']].forEach(function(p){
+      const label=p[0], c=p[1], col=p[2], letter=p[3];
+      const box=document.createElement('div');
+      box.style.cssText='background:#0d0d16;border:1px solid '+col+'33;border-radius:10px;padding:12px';
+      if(!c){
+        box.innerHTML='<div style="font-size:9px;color:#555;letter-spacing:.8px;margin-bottom:6px">'
+          +label+'</div><div style="font-size:11px;color:#555">no qualifying contract</div>';
+        pickWrap.appendChild(box);return;
+      }
+      const roi=(c.roi!=null)?Number(c.roi).toFixed(0)+'%':'-';
+      box.innerHTML='<div style="font-size:9px;color:#555;letter-spacing:.8px;margin-bottom:6px">'
+        +label+'</div>'
+        +'<div style="font-size:15px;font-weight:800;color:'+col+'">$'+Number(c.strike).toFixed(0)+' '+letter+'</div>'
+        +'<div style="font-size:10px;color:var(--sub);margin-top:3px">'
+        +(c.exp?String(c.exp).slice(5):'-')+' · '+(c.dte===0?'0DTE':c.dte+'DTE')+'</div>'
+        +'<div style="display:flex;gap:10px;margin-top:8px;font-size:10px;color:#888">'
+        +'<span>MID <b style="color:#ccc">$'+Number(c.mid||0).toFixed(2)+'</b></span>'
+        +'<span>Δ <b style="color:#ccc">'+Number(c.delta||0).toFixed(2)+'</b></span></div>'
+        +'<div style="display:flex;gap:10px;margin-top:3px;font-size:10px;color:#888">'
+        +'<span>SCORE <b style="color:'+col+'">'+Number(c.score||0).toFixed(0)+'</b></span>'
+        +'<span>ROI <b style="color:#ccc">'+roi+'</b></span></div>';
+      pickWrap.appendChild(box);
+    });
+    res.appendChild(pickWrap);
+  }
 
   // ── summary scoreboard ──────────────────────────────────────────────────
   const scoreEl=document.createElement('div');
@@ -2387,12 +2430,19 @@ function renderBothLadder(d){
   res.appendChild(ladderEl);
 }
 
-function renderContracts(ticker,cs,ts){
+function renderContracts(ticker,cs,ts,dteNote){
   if(!Array.isArray(cs)) cs=[cs];
   const isCall=S.dir==='up';
   const dteLbl={'0dte':'0DTE','weekly':'WEEKLY','all':'ALL'}[S.dteMode]||'';
   const res=document.getElementById('find-result');
   res.textContent='';
+  if(dteNote){
+    const warn=document.createElement('div');
+    warn.style.cssText='background:rgba(255,176,32,.08);border:1px solid rgba(255,176,32,.3);'
+      +'border-radius:8px;padding:9px 12px;margin-bottom:10px;font-size:11px;color:var(--amber)';
+    warn.textContent='⚠ '+dteNote;
+    res.appendChild(warn);
+  }
   const wrap=document.createElement('div');wrap.className='cont-cards';
   cs.forEach(function(c,i){
     const card=document.createElement('div');
