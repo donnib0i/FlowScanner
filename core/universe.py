@@ -17,6 +17,7 @@ from __future__ import annotations
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import logging
 import time
 import warnings
 from typing import List, Tuple
@@ -213,6 +214,17 @@ def build_universe() -> List[str]:
     # Tier 2 — index coverage (slower, full index memberships)
     sp500 = fetch_sp500()
     ndx   = fetch_nasdaq100()
+
+    # Wikipedia blocks datacenter IPs, so on Railway both of the above return
+    # empty and the universe silently collapses to "whatever moved today" —
+    # measured in production as 227 tickers vs 682 locally, of which 224 were
+    # just the screener set. Fall back to the static constituent table (the same
+    # one that keeps sector heatmaps full) so index breadth survives the outage.
+    if not sp500 and not ndx:
+        from data.sector_constituents import STATIC_CONSTITUENTS
+        sp500 = [t for names in STATIC_CONSTITUENTS.values() for t in names]
+        logging.warning("Index fetch failed (Wikipedia unreachable?) — "
+                        "falling back to %d static constituents", len(sp500))
 
     # Tier 3 — relative volume anomalies within the index pool
     # Batch the index tickers in chunks to keep it fast
