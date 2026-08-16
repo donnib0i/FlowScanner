@@ -58,6 +58,7 @@ from core.scanner import (
     _TT_AVAILABLE,
 )
 from core.universe import get_universe, ANCHOR
+from core.market_calendar import is_market_open
 from data.unusual_flow import scan_unusual_flow, sector_flow_summary
 from data.etf_filter import filter_etfs, is_etf
 from data.sources import available_sources
@@ -810,13 +811,8 @@ async def api_find_both(
         def dte(e):
             return (datetime.strptime(e, "%Y-%m-%d").date() - today).days
 
-        try:
-            import zoneinfo
-            _now_et = datetime.now(zoneinfo.ZoneInfo("America/New_York"))
-        except ImportError:
-            import pytz
-            _now_et = datetime.now(pytz.timezone("America/New_York"))
-        _market_open = _now_et.weekday() < 5 and (9*60+30) <= (_now_et.hour*60+_now_et.minute) <= 960
+        # Holiday- and early-close-aware; weekday() < 5 called Thanksgiving a session.
+        _market_open = is_market_open()
         min_dte = 0 if _market_open else 1
         future = [e for e in exps if dte(e) >= min_dte]
 
@@ -2717,7 +2713,12 @@ function renderIntelMacro(data){
     html+=`<div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:8px">`;
     for(const[k,v]of Object.entries(data.data)){
       if(v.value!=null){
-        html+=`<span style="background:#111;border:1px solid #222;border-radius:4px;padding:3px 8px;font-size:10px;color:#aaa">${v.label}: <span style="color:#ccc">${v.value.toFixed?v.value.toFixed(2):v.value}${v.unit}</span></span>`;
+        // Monthly series (CPI, unemployment, fed funds) lag by weeks while the
+        // daily ones are current. Without the age they read as equally fresh.
+        const age=v.stale_days;
+        const aged=age!=null&&age>=30;
+        const tag=age==null?'':` <span style="color:${aged?'#ffb020':'#555'}" title="${v.as_of||''}">${age}d</span>`;
+        html+=`<span style="background:#111;border:1px solid ${aged?'#3a2c10':'#222'};border-radius:4px;padding:3px 8px;font-size:10px;color:#aaa">${v.label}: <span style="color:#ccc">${v.value.toFixed?v.value.toFixed(2):v.value}${v.unit}</span>${tag}</span>`;
       }
     }
     html+=`</div>`;

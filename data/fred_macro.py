@@ -17,8 +17,8 @@ import json
 import logging
 import os
 import time
-from datetime import datetime, timedelta
-from typing import Dict, List, Optional
+from datetime import date as _date, datetime, timedelta
+from typing import Dict, List, NamedTuple, Optional
 
 import requests
 
@@ -61,8 +61,20 @@ def load_api_key() -> str:
 
 # ── Fetcher ───────────────────────────────────────────────────────────────────
 
-def _fetch_series(series_id: str, api_key: str, limit: int = 3) -> Optional[float]:
-    """Fetch most recent value for a FRED series. Returns float or None."""
+class Observation(NamedTuple):
+    """A FRED reading and the date it is actually for."""
+    value: float
+    date: Optional[_date]
+
+
+def _fetch_series(series_id: str, api_key: str, limit: int = 3) -> Optional["Observation"]:
+    """
+    Most recent real observation for a FRED series.
+
+    Returns the value *with its date*. Monthly series (CPI, unemployment) lag by
+    weeks while daily ones (DGS10, VIX) are current; without the date they are
+    indistinguishable in the UI.
+    """
     try:
         r = requests.get(FRED_BASE, params={
             "series_id": series_id,
@@ -77,8 +89,14 @@ def _fetch_series(series_id: str, api_key: str, limit: int = 3) -> Optional[floa
         obs = r.json().get("observations", [])
         for ob in obs:
             val = ob.get("value", ".")
-            if val != ".":
-                return float(val)
+            if val == ".":          # FRED's marker for a missing print
+                continue
+            raw_date = ob.get("date")
+            try:
+                when = _date.fromisoformat(raw_date) if raw_date else None
+            except (TypeError, ValueError):
+                when = None
+            return Observation(float(val), when)
         return None
     except Exception as exc:
         logger.debug("FRED fetch failed for %s: %s", series_id, exc)
@@ -211,11 +229,14 @@ def get_macro_context() -> Dict:
         }
         return result
 
-    raw: Dict[str, Optional[float]] = {}
+    obs: Dict[str, Optional[Observation]] = {}
     for key, info in SERIES.items():
-        raw[key] = _fetch_series(info["id"], api_key)
+        obs[key] = _fetch_series(info["id"], api_key)
 
+    # The regime engine reasons over bare numbers; dates travel alongside.
+    raw: Dict[str, Optional[float]] = {k: (o.value if o else None) for k, o in obs.items()}
     regime_info = _compute_regime(raw)
+    _today = datetime.now().date()
 
     result = {
         "regime": regime_info["regime"],
@@ -224,11 +245,15 @@ def get_macro_context() -> Dict:
         "data": {
             key: {
                 "label": SERIES[key]["label"],
-                "value": raw[key],
+                "value": obs[key].value,
                 "unit": SERIES[key]["unit"],
+                # When the reading is actually from, and how old that is. A
+                # six-week-old CPI print must not look like today's VIX.
+                "as_of": obs[key].date.isoformat() if obs[key].date else None,
+                "stale_days": (_today - obs[key].date).days if obs[key].date else None,
             }
             for key in SERIES
-            if raw.get(key) is not None
+            if obs.get(key) is not None
         },
         "source": "FRED (St. Louis Fed)",
         "last_updated": datetime.now().strftime("%H:%M:%S"),

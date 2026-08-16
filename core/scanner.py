@@ -5,6 +5,7 @@ import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core.universe import get_universe, ANCHOR, universe_summary
+from core.market_calendar import is_market_open, minutes_to_close
 from data.sector_constituents import constituents_for, SECTORS
 
 import yfinance as yf
@@ -957,14 +958,8 @@ def get_best_contract(ticker: str, direction: str, price: float,
             return (datetime.strptime(e, "%Y-%m-%d").date() - today).days
 
         # Allow 0DTE during market hours (9:30–16:00 ET); exclude outside hours
-        try:
-            import zoneinfo
-            _now_et = datetime.now(zoneinfo.ZoneInfo("America/New_York"))
-        except ImportError:
-            import pytz
-            _now_et = datetime.now(pytz.timezone("America/New_York"))
-        _mins = _now_et.hour * 60 + _now_et.minute
-        _market_open = _now_et.weekday() < 5 and (9 * 60 + 30) <= _mins <= 16 * 60
+        # Holiday- and early-close-aware; weekday() < 5 called Thanksgiving a session.
+        _market_open = is_market_open()
         min_dte = 0 if _market_open else 1
         future = [e for e in exps if dte(e) >= min_dte]
 
@@ -1000,13 +995,12 @@ def get_best_contract(ticker: str, direction: str, price: float,
 
         for exp in cands[:3]:
             d = dte(exp)
-            # For 0DTE: use actual minutes remaining until 4 PM ET instead of arbitrary floor
+            # For 0DTE: real minutes left in the session, not an arbitrary floor.
+            # minutes_to_close honours the 13:00 ET half sessions — assuming a
+            # 16:00 close on those days overstates remaining time by 3 hours,
+            # which inflates every 0DTE time-value estimate.
             if d == 0:
-                close_et = _now_et.replace(hour=16, minute=0, second=0, microsecond=0)
-                try:
-                    mins_left = max(1.0, (close_et - _now_et).total_seconds() / 60)
-                except Exception:
-                    mins_left = 60.0
+                mins_left = max(1.0, minutes_to_close() or 60.0)
                 T = (mins_left / 1440.0) / 365.0
             else:
                 T = d / 365.0
@@ -1459,8 +1453,7 @@ def scan_options_flow(tickers: List[str], show_progress: bool = True,
     except ImportError:
         import pytz
         _et = datetime.now(pytz.timezone("America/New_York"))
-    _m = _et.hour * 60 + _et.minute
-    _market_open = _et.weekday() < 5 and (9 * 60 + 30) <= _m <= 16 * 60
+    _market_open = is_market_open()
 
     for i, ticker in enumerate(tickers, 1):
         if show_progress:
