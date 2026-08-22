@@ -56,6 +56,7 @@ from core.scanner import (
     apply_filter, apply_sort,
     FILTER_LABELS, SORT_LABELS,
     _TT_AVAILABLE,
+    get_flow_source,
 )
 from core.universe import get_universe, ANCHOR
 from core.market_calendar import is_market_open
@@ -374,20 +375,9 @@ def _serialize_flow(sig: Dict) -> Dict:
     }
 
 # Market helpers
-def _et_now():
-    try:
-        import zoneinfo
-        return datetime.now(zoneinfo.ZoneInfo("America/New_York"))
-    except ImportError:
-        import pytz
-        return datetime.now(pytz.timezone("America/New_York"))
-
-def is_market_open() -> bool:
-    et = _et_now()
-    if et.weekday() >= 5:
-        return False
-    mins = et.hour * 60 + et.minute
-    return (9 * 60 + 30) <= mins <= 16 * 60
+# is_market_open comes from core.market_calendar (imported above). A local
+# weekday()-based copy used to live here and silently shadowed that import,
+# putting every holiday and half session back to "open".
 
 # API endpoints
 
@@ -408,9 +398,15 @@ async def api_vix(req: Request):
 async def api_status(req: Request):
     _check_pin(req)
     _check_rate(req, "status", limit=30, window=60)
+    src = get_flow_source()
     return {
-        "flow_source": "tastytrade-live" if _TT_AVAILABLE else "yfinance-delayed",
-        "live": _TT_AVAILABLE,
+        # `live` describes the data served, not the configuration. TastyTrade can
+        # be fully configured and still fail every login.
+        "flow_source": src.get("source") or "unknown",
+        "flow_source_reason": src.get("reason", ""),
+        "flow_source_age_s": src.get("age_s"),
+        "live": src.get("live", False),
+        "tt_configured": _TT_AVAILABLE,
         "darkpool": _DARKPOOL_OK,
         "insider": _INSIDER_OK,
         "macro": _FRED_OK,
@@ -1657,17 +1653,24 @@ function _loadUniverse(attempt){
 }
 _loadVix(0);
 _loadUniverse(0);
-fetch(_pa('/api/status')).then(r=>r.ok?r.json():null).then(d=>{
+function _refreshSourceBadge(){
+ fetch(_pa('/api/status')).then(r=>r.ok?r.json():null).then(d=>{
   if(!d) return;
   const badge=document.getElementById('source-badge');
   if(d.live){
     badge.textContent='● LIVE — TastyTrade OPRA feed';
     badge.style.color='#00ff88';
+  } else if(d.flow_source==='unknown'){
+    badge.textContent='○ source unknown — no flow scan yet';
+    badge.style.color='#555';
   } else {
     badge.textContent='○ DELAYED — yfinance 15min';
     badge.style.color='#555';
+    if(d.flow_source_reason) badge.title=d.flow_source_reason;
   }
-}).catch(()=>{});
+ }).catch(()=>{});
+}
+_refreshSourceBadge();
 
 function renderVix(d){
   const el=document.getElementById('vix-chip');
@@ -1744,7 +1747,7 @@ function doFlowScan(retryCount){
       document.getElementById('pl').textContent=m.ticker+' . '+m.i+' of '+m.n;
       return;
     }
-    if(m.__done__||m.__error__){es.close();endFlowScan(m.__error__);return}
+    if(m.__done__||m.__error__){es.close();endFlowScan(m.__error__);_refreshSourceBadge();return}
     if(m.__signal__){
       const s=m.data;
       S.signals.push(s);

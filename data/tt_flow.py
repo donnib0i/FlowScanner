@@ -19,7 +19,11 @@ import os
 import time
 import math
 from collections import defaultdict
+import datetime as _dt
 from datetime import datetime, date
+from zoneinfo import ZoneInfo
+
+_ET = ZoneInfo("America/New_York")
 from typing import List, Dict, Optional, Any
 
 import httpx
@@ -39,6 +43,23 @@ TAS_FIELDS = [
     "aggressorSide", "spreadLeg", "extendedTradingHours", "validTick",
     "type", "buyer", "seller",
 ]
+
+
+# ── Failure reporting ─────────────────────────────────────────────────────────
+# A scan that returns [] is ambiguous: the market may simply be shut, or the
+# session may have failed to authenticate. Callers label their data from this,
+# so the difference has to survive the return.
+_LAST_ERROR: str = ""
+
+
+def last_error() -> str:
+    """Why the most recent scan produced nothing, or "" if nothing went wrong."""
+    return _LAST_ERROR
+
+
+def _set_error(msg: str) -> None:
+    global _LAST_ERROR
+    _LAST_ERROR = msg
 
 
 # ── Credentials ───────────────────────────────────────────────────────────────
@@ -133,6 +154,8 @@ class TTAuth:
                     if saved:
                         print("TTAuth: retrying with saved challenge token...")
                         return await self.login(challenge_token=saved)
+                    _set_error("device_challenge_required — TastyTrade emailed a "
+                               "verification token; save it to ~/.tt_challenge.txt")
                     print(
                         "TTAuth: device challenge required.\n"
                         "  1. Check your email for a TastyTrade verification message.\n"
@@ -142,6 +165,7 @@ class TTAuth:
                     )
                 return False
             if r.status_code not in (200, 201):
+                _set_error(f"login rejected (HTTP {r.status_code})")
                 return False
             data = r.json().get("data", {})
             self.session_tok = data.get("session-token", "")
@@ -169,7 +193,10 @@ async def fetch_chain(auth: TTAuth, ticker: str, max_dte: int = 14) -> List[Dict
     Fetch option chain contracts for ticker (≤ max_dte days to expiry).
     Returns list of dicts with: ticker, exp, dte, strike, type, streamer_symbol.
     """
-    today = date.today()
+    # DTE is measured against the exchange's date. date.today() is the host's,
+    # and Railway runs UTC — after 17:00 ET every contract would be labelled one
+    # day closer to expiry than it is.
+    today = _dt.datetime.now(_ET).date()
     contracts = []
 
     async with httpx.AsyncClient(base_url=TT_API, timeout=20) as c:
@@ -370,7 +397,12 @@ async def collect_prints(
 
                     # DXLink COMPACT: interleaved pairs of TypeName + values list
                     # ["TimeAndSale", [v,v,...], "TimeAndSale", [v,v,...], ...]
-                    n_fields = len(TAS_FIELDS)
+                    # Row width is whatever FEED_CONFIG actually delivered. The
+                    # server may not honour acceptEventFields exactly, and slicing
+                    # by the *requested* width silently misaligns every field of
+                    # every event after the first — wrong prices, wrong sizes, no
+                    # error anywhere.
+                    n_fields = len(field_index)
                     if n_fields == 0:
                         continue
                     i = 0
@@ -609,13 +641,16 @@ async def _async_scan(
     show_progress: bool = True,
 ) -> List[Dict]:
     auth = TTAuth(username, password)
+    _set_error("")
 
     if show_progress:
         print("  [TT] Authenticating... ", end="", flush=True)
 
     if not await auth.setup():
+        if not _LAST_ERROR:
+            _set_error("authentication failed — check TT_USERNAME / TT_PASSWORD")
         if show_progress:
-            print("FAILED — check TT_USERNAME / TT_PASSWORD")
+            print(f"FAILED — {_LAST_ERROR}")
         return []
 
     if show_progress:
@@ -652,6 +687,7 @@ async def _async_scan(
                 symbol_to_contract[sym] = c
 
     if not all_symbols:
+        _set_error("no near-money contracts returned by the chain endpoint")
         if show_progress:
             print("  [TT] No symbols to subscribe to — check chain fetch.")
         return []
@@ -686,6 +722,7 @@ def scan_options_flow_tt(
     if not u or not p:
         u, p = load_credentials()
     if not u or not p:
+        _set_error("no credentials — set TT_USERNAME / TT_PASSWORD")
         if show_progress:
             print("  [TT] No credentials found — set TT_USERNAME / TT_PASSWORD")
         return []
@@ -698,6 +735,7 @@ def scan_options_flow_tt(
                         show_progress=show_progress)
         )
     except Exception as e:
+        _set_error(f"{type(e).__name__}: {e}")
         if show_progress:
             print(f"  [TT] Error: {e}")
         return []

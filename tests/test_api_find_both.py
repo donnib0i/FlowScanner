@@ -1,5 +1,14 @@
+import datetime as dt
 import os
+from zoneinfo import ZoneInfo
+
 os.environ.pop("SCANNER_PIN", None)
+
+# The fixture is meant to be "a 2DTE expiry". Hardcoding the date made it 2DTE
+# only during the week it was written; by the next Monday the chain was five
+# days expired and three tests failed for reasons unrelated to what they test.
+_EXP = (dt.datetime.now(ZoneInfo("America/New_York")).date()
+        + dt.timedelta(days=2)).isoformat()
 
 from fastapi.testclient import TestClient
 
@@ -16,7 +25,7 @@ class _Chain:
 
 class _FakeTicker:
     """Minimal yfinance stand-in: one 2DTE expiry, two strikes a side."""
-    options = ["2026-08-17"]
+    options = [_EXP]
 
     class fast_info:
         last_price = 225.16
@@ -44,7 +53,7 @@ def _stub(monkeypatch):
 
 
 def _best(direction):
-    return {"exp": "2026-08-17", "dte": 2, "strike": 225.0,
+    return {"exp": _EXP, "dte": 2, "strike": 225.0,
             "type": "call" if direction == "up" else "put",
             "mid": 1.79, "delta": 0.5, "score": 71.4, "roi": 150.0}
 

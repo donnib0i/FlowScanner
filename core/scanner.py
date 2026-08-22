@@ -14,7 +14,7 @@ from colorama import Fore, Style
 from tabulate import tabulate
 import argparse, time, sys, csv, os, math, warnings
 from datetime import datetime
-from typing import Optional, List, Dict, Tuple
+from typing import Optional, List, Dict, Tuple, Any
 import pandas as pd
 
 warnings.filterwarnings("ignore")
@@ -22,12 +22,47 @@ colorama.init(autoreset=True)
 
 # ─── TastyTrade real flow (drop-in replacement for yfinance scan) ─────────────
 try:
-    from data.tt_flow import scan_options_flow_tt, load_credentials as _tt_load_creds
+    from data.tt_flow import (
+        scan_options_flow_tt,
+        load_credentials as _tt_load_creds,
+        last_error as _tt_last_error,
+    )
     _TT_USER, _TT_PASS = _tt_load_creds()
+    # Credentials being *present* says nothing about the session authenticating.
     _TT_AVAILABLE = bool(_TT_USER and _TT_PASS)
 except Exception:
     _TT_AVAILABLE = False
     scan_options_flow_tt = None
+    def _tt_last_error() -> str:
+        return "tt_flow module unavailable"
+
+# ─── Flow provenance ─────────────────────────────────────────────────────────
+# Which feed actually produced the flow the user is looking at. Recorded by the
+# scan that ran, never inferred from configuration: TastyTrade can be fully
+# configured and still fail every login, in which case the served flow is the
+# 15-minute-delayed yfinance fallback and must not be labelled live.
+_FLOW_SOURCE: Dict[str, Any] = {}
+
+
+def reset_flow_source() -> None:
+    _FLOW_SOURCE.clear()
+    _FLOW_SOURCE.update(source=None, reason="no flow scan has run yet", ts=None)
+
+
+reset_flow_source()
+
+
+def _set_flow_source(source: str, reason: str) -> None:
+    _FLOW_SOURCE.update(source=source, reason=reason, ts=time.time())
+
+
+def get_flow_source() -> Dict[str, Any]:
+    """Provenance of the most recent flow scan. `live` describes the data."""
+    src = dict(_FLOW_SOURCE)
+    src["live"] = src.get("source") == "tastytrade-live"
+    ts = src.get("ts")
+    src["age_s"] = round(time.time() - ts, 1) if ts else None
+    return src
 
 # ─── yfinance session (curl_cffi if available, else None) ─────────────────────
 try:
@@ -1410,18 +1445,11 @@ def scan_options_flow(tickers: List[str], show_progress: bool = True,
                       on_signal=None, on_progress=None) -> List[Dict]:
     """
     Detect unusual options activity per ticker.
-    Uses TastyTrade real flow if credentials are available, falls back to yfinance.
-    Enhanced vs CheddarFlow/Unusual Whales:
-      - Trade side classification (bid/ask aggression)
-      - Premium tiers: retail / institutional ($100K+) / block ($500K+) / whale ($1M+)
-      - Golden sweep: vol > OI×10, at ask, flow > $100K
-      - Stacked flow: 3+ unique unusual strikes = institutional position building
-      - IV skew: call vs put implied vol differential
-      - DTE breakdown: 0DTE / 1-7DTE / 8+DTE flow buckets
-      - Whale score: composite 0-100 signal strength
-    Sorted by whale_score descending.
+
+    Tries the TastyTrade OPRA stream first and falls back to yfinance. Whichever
+    one produced the returned signals is recorded via get_flow_source() so the
+    UI can label the data honestly instead of trusting that credentials exist.
     """
-    # TastyTrade real flow — actual trade prints from OPRA feed
     if _TT_AVAILABLE and scan_options_flow_tt is not None:
         try:
             if show_progress:
@@ -1433,13 +1461,46 @@ def scan_options_flow(tickers: List[str], show_progress: bool = True,
                 show_progress=show_progress,
             )
             if tt_signals:
+                _set_flow_source("tastytrade-live", "live OPRA trade prints")
                 return tt_signals
+            err = _tt_last_error()
+            if err:
+                reason = f"TastyTrade unavailable ({err})"
+            elif not is_market_open():
+                reason = "market closed — no live prints to collect"
+            else:
+                reason = "TastyTrade returned no prints"
             if show_progress:
-                sys.stdout.write("  [TT] No prints collected — falling back to yfinance\n")
+                sys.stdout.write(f"  [TT] {reason} — falling back to yfinance\n")
         except Exception as e:
+            reason = f"TastyTrade error: {e}"
             if show_progress:
-                sys.stdout.write(f"  [TT] Error ({e}) — falling back to yfinance\n")
+                sys.stdout.write(f"  [TT] {reason} — falling back to yfinance\n")
+    else:
+        reason = "TastyTrade credentials not configured"
 
+    signals = _scan_options_flow_yf(
+        tickers, show_progress=show_progress,
+        on_signal=on_signal, on_progress=on_progress,
+    )
+    _set_flow_source("yfinance-delayed", reason)
+    return signals
+
+
+def _scan_options_flow_yf(tickers: List[str], show_progress: bool = True,
+                          on_signal=None, on_progress=None) -> List[Dict]:
+    """
+    yfinance flow path: a 15-minute-delayed daily snapshot, not trade prints.
+    Enhanced vs CheddarFlow/Unusual Whales:
+      - Trade side classification (bid/ask aggression)
+      - Premium tiers: retail / institutional ($100K+) / block ($500K+) / whale ($1M+)
+      - Golden sweep: vol > OI×10, at ask, flow > $100K
+      - Stacked flow: 3+ unique unusual strikes = institutional position building
+      - IV skew: call vs put implied vol differential
+      - DTE breakdown: 0DTE / 1-7DTE / 8+DTE flow buckets
+      - Whale score: composite 0-100 signal strength
+    Sorted by whale_score descending.
+    """
     flow_signals: List[Dict] = []
     today = datetime.now().date()
 
