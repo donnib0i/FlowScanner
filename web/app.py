@@ -67,6 +67,7 @@ from data.sources import available_sources
 # Cache unusual flow results (expensive scan)
 _UOA_CACHE: dict = {"signals": [], "summary": {}, "ts": 0.0}
 _UOA_TTL = 600  # 10 min
+CARD_CONTRACTS = 4  # contracts serialized per side, per card
 
 PORT = int(os.environ.get("PORT", 8765))
 
@@ -316,24 +317,37 @@ def _serialize_flow(sig: Dict) -> Dict:
     top_s = sig.get("top_strike", tc.get("strike", 0))
     hits  = sum(1 for c in all_c if c.get("strike") == top_s) if top_s else 1
 
-    bias_contracts = sig.get(
-        "call_contracts" if sig["flow_bias"] == "call" else "put_contracts", []
-    )
-    top3 = sorted(bias_contracts, key=lambda c: c.get("flow", 0), reverse=True)[:3]
-    top3_out = [{
-        "strike":  c.get("strike", 0),
-        "exp":     c.get("exp", "")[-5:],
-        "dte":     c.get("dte", -1),
-        "type":    c.get("type", "call"),
-        "vol":     c.get("vol", 0),
-        "oi":      c.get("oi", 0),
-        "vol_oi":  round(c.get("vol_oi", 0), 1),
-        "mid":     round(c.get("mid", 0), 2),
-        "flow":    _fmt(c.get("flow", 0)),
-        "sweep":   c.get("sweep", False),
-        "golden":  c.get("golden_sweep", False),
-        "tier":    c.get("premium_tier", "retail"),
-    } for c in top3]
+    # Both sides, always. Serializing only the bias side meant a call-biased
+    # ticker rendered no puts at all, however much premium they carried.
+    def _contracts(key: str) -> List[Dict]:
+        ranked = sorted(sig.get(key, []) or [],
+                        key=lambda c: c.get("flow", 0), reverse=True)[:CARD_CONTRACTS]
+        return [{
+            "strike":  c.get("strike", 0),
+            "exp":     c.get("exp", "")[-5:],
+            "dte":     c.get("dte", -1),
+            "type":    c.get("type", "call"),
+            "vol":     c.get("vol", 0),
+            "oi":      c.get("oi", 0),
+            "vol_oi":  round(c.get("vol_oi", 0), 1),
+            "mid":     round(c.get("mid", 0), 2),
+            "bid":     c.get("bid", 0),
+            "ask":     c.get("ask", 0),
+            "flow":    _fmt(c.get("flow", 0)),
+            "flow_raw": c.get("flow", 0),
+            "sweep":   c.get("sweep", False),
+            "golden":  c.get("golden_sweep", False),
+            "tier":    c.get("premium_tier", "retail"),
+            # What it takes to enter, and what it needs to pay.
+            "breakeven":        c.get("breakeven"),
+            "pct_to_breakeven": c.get("pct_to_breakeven"),
+            "moneyness_pct":    c.get("moneyness_pct"),
+            "spread_pct":       c.get("spread_pct"),
+            "wide_spread":      bool(c.get("wide_spread", False)),
+        } for c in ranked]
+
+    top_calls = _contracts("call_contracts")
+    top_puts  = _contracts("put_contracts")
 
     score = sig.get("whale_score", 0)
     tier  = sig.get("premium_tier", "retail")
@@ -370,7 +384,14 @@ def _serialize_flow(sig: Dict) -> Dict:
         "vol_oi":     round(tc.get("vol_oi", 0), 1),
         "mid":        tc.get("mid", 0),
         "tier":       tier,
-        "top3":       top3_out,
+        "top_calls":  top_calls,
+        "top_puts":   top_puts,
+        "spot":       sig.get("spot", 0),
+        # Contracts the quality gate excluded. Reported rather than dropped in
+        # silence — an invisible filter is indistinguishable from an empty market.
+        "filtered_n":       sig.get("filtered_n", 0),
+        "filtered_fmt":     _fmt(sig.get("filtered_premium", 0)),
+        "filtered_reasons": sig.get("filtered_reasons", []),
         "institutional": is_institutional,
     }
 
@@ -1194,7 +1215,7 @@ body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
 .score-num.whale{color:var(--green)}.score-num.inst{color:var(--cyan)}.score-num.retail{color:var(--sub)}
 .contracts-row{display:flex;gap:6px;padding:8px 12px;overflow-x:auto;scrollbar-width:none}
 .contracts-row::-webkit-scrollbar{display:none}
-.cc{flex-shrink:0;background:var(--bg3);border:1px solid var(--border);
+.cc{flex-shrink:0;min-width:104px;background:var(--bg3);border:1px solid var(--border);
   border-radius:8px;padding:8px 11px;min-width:100px}
 .cc.top1{border-color:rgba(0,255,136,.2);background:rgba(0,255,136,.04)}
 .cc.golden-c{border-color:rgba(255,184,0,.2);background:rgba(255,184,0,.04)}
@@ -1204,6 +1225,17 @@ body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
 .cc-price{font-size:12px;font-weight:700;margin-top:4px}
 .cc-voi{font-size:9px;margin-top:1px}
 .cc-voi.hot{color:var(--red)}.cc-voi.warm{color:var(--amber)}.cc-voi.cool{color:var(--sub)}
+.contracts-wrap{padding:2px 0 6px}
+.cc-side-lbl{font-size:9px;font-weight:700;letter-spacing:1px;padding:6px 12px 2px}
+.cc-top{display:flex;align-items:center;gap:4px}
+.cc-mk{font-size:8px;font-weight:800;line-height:1;padding:2px 3px;border-radius:3px}
+.cc-mk.gold{background:rgba(255,184,0,.18);color:var(--gold)}
+.cc-mk.swp{background:rgba(0,212,255,.15);color:var(--cyan)}
+.cc-spread{font-size:9px;font-weight:600;color:var(--sub)}
+.cc-spread.wide{color:var(--amber)}
+.cc-be{font-size:9px;color:var(--sub);margin-top:2px;white-space:nowrap}
+.cc-be.through{color:var(--green)}
+.cc-filtered{font-size:9px;color:var(--sub);padding:4px 12px 0;font-style:italic}
 .card-detail{padding:10px 14px 12px;border-top:1px solid var(--border);
   display:none;background:rgba(255,255,255,.02)}
 .card-detail.open{display:block}
@@ -1752,7 +1784,7 @@ function doFlowScan(retryCount){
       const s=m.data;
       S.signals.push(s);
       S.callFlow+=s.call_flow||0;S.putFlow+=s.put_flow||0;
-      (s.top3||[]).forEach(function(c){S.hotContracts.push(Object.assign({},c,{ticker:s.ticker,badge:s.badge,cls:s.cls}))});
+      (s.top_calls||[]).concat(s.top_puts||[]).forEach(function(c){S.hotContracts.push(Object.assign({},c,{ticker:s.ticker,badge:s.badge,cls:s.cls}))});
       renderFlowCard(s);
       updateFlowBias();
       document.getElementById('flow-sort-bar').style.display='flex';
@@ -1820,6 +1852,7 @@ function badgeCls(b){
   return m[b]||'flow';
 }
 function voiCls(v){return v>=10?'hot':v>=3?'warm':'cool'}
+function fmtVol(v){v=v||0;return v>=1000?(v/1000).toFixed(v>=10000?0:1)+'k':String(v)}
 function scoreCls(s){return s>=70?'whale':s>=50?'inst':'retail'}
 
 function renderFlowCard(s){
@@ -1888,24 +1921,83 @@ function renderFlowCard(s){
     cs.appendChild(lbl);cs.appendChild(val);statsDiv.appendChild(cs);
   });
 
-  // contracts row
-  const contractsRow=document.createElement('div');contractsRow.className='contracts-row';
-  (s.top3||[]).forEach(function(c,i){
+  // contracts — both sides, each chip carrying what it costs and what it needs
+  const contractsWrap=document.createElement('div');
+  contractsWrap.className='contracts-wrap';
+
+  function buildChip(c,i){
     const cc=document.createElement('div');
     cc.className='cc '+(i===0?(c.golden?'golden-c':'top1'):'');
+
+    const top=document.createElement('div');top.className='cc-top';
     const strike=document.createElement('div');
     strike.className='cc-strike '+c.type;
-    strike.textContent='$'+c.strike.toFixed(0)+' '+(c.type==='call'?'C':'P');
+    strike.textContent='$'+c.strike.toFixed(0)+(c.type==='call'?'C':'P');
+    top.appendChild(strike);
+    if(c.golden||c.sweep){
+      const mk=document.createElement('span');
+      mk.className='cc-mk '+(c.golden?'gold':'swp');
+      mk.textContent=c.golden?'G':'S';
+      mk.title=c.golden?'Golden sweep':'Sweep';
+      top.appendChild(mk);
+    }
+    cc.appendChild(top);
+
     const meta=document.createElement('div');meta.className='cc-meta';
     const dLbl=c.dte===0?'0DTE':c.dte>=0?c.dte+'DTE':'-';
     meta.textContent=dLbl+' . '+c.exp;
+    cc.appendChild(meta);
+
     const price=document.createElement('div');price.className='cc-price';
     price.textContent=c.mid>0?'$'+c.mid.toFixed(2):'-';
+    if(c.spread_pct!==null&&c.spread_pct!==undefined){
+      const sp=document.createElement('span');
+      sp.className='cc-spread'+(c.wide_spread?' wide':'');
+      sp.textContent=' '+c.spread_pct.toFixed(0)+'%';
+      sp.title='Bid '+c.bid+' / Ask '+c.ask+(c.wide_spread?' — wide, expect slippage':'');
+      price.appendChild(sp);
+    }
+    cc.appendChild(price);
+
+    if(c.breakeven){
+      const be=document.createElement('div');be.className='cc-be';
+      let mv='';
+      if(c.pct_to_breakeven!==null&&c.pct_to_breakeven!==undefined){
+        mv=c.pct_to_breakeven<=0
+          ? ' (in)'
+          : ' ('+(c.type==='call'?'+':'-')+Math.abs(c.pct_to_breakeven).toFixed(1)+'%)';
+      }
+      be.textContent='BE '+c.breakeven.toFixed(2)+mv;
+      if(c.pct_to_breakeven!==null&&c.pct_to_breakeven<=0) be.classList.add('through');
+      be.title='Breakeven at expiry; move from spot needed to reach it';
+      cc.appendChild(be);
+    }
+
     const voi=document.createElement('div');voi.className='cc-voi '+voiCls(c.vol_oi);
-    voi.textContent=c.vol_oi>0?'x'+c.vol_oi.toFixed(1):'-';
-    cc.appendChild(strike);cc.appendChild(meta);cc.appendChild(price);cc.appendChild(voi);
-    contractsRow.appendChild(cc);
-  });
+    voi.textContent=(c.vol_oi>0?'x'+c.vol_oi.toFixed(1):'-')+' . '+fmtVol(c.vol);
+    voi.title='Volume / open interest';
+    cc.appendChild(voi);
+    return cc;
+  }
+
+  function buildSide(list,label,clr){
+    if(!list||!list.length) return;
+    const hdr=document.createElement('div');
+    hdr.className='cc-side-lbl';hdr.style.color=clr;hdr.textContent=label;
+    contractsWrap.appendChild(hdr);
+    const row=document.createElement('div');row.className='contracts-row';
+    list.forEach(function(c,i){row.appendChild(buildChip(c,i))});
+    contractsWrap.appendChild(row);
+  }
+  buildSide(s.top_calls,'CALLS','var(--green)');
+  buildSide(s.top_puts,'PUTS','var(--red)');
+
+  if(s.filtered_n>0){
+    const fn=document.createElement('div');fn.className='cc-filtered';
+    fn.textContent=s.filtered_n+' contract'+(s.filtered_n>1?'s':'')+' hidden . '+s.filtered_fmt;
+    if(s.filtered_reasons&&s.filtered_reasons.length) fn.title=s.filtered_reasons.join('; ');
+    contractsWrap.appendChild(fn);
+  }
 
   // detail
   const det=document.createElement('div');det.className='card-detail';
@@ -1936,7 +2028,7 @@ function renderFlowCard(s){
   det.appendChild(dg);det.appendChild(segs);
 
   card.appendChild(head);card.appendChild(sbWrap);card.appendChild(statsDiv);
-  if(s.top3&&s.top3.length) card.appendChild(contractsRow);
+  if(contractsWrap.childNodes.length) card.appendChild(contractsWrap);
   card.appendChild(det);
   feed.appendChild(card);
 }

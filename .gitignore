@@ -12,3 +12,6 @@ backtest_results/
 .tt_creds.json
 data/baselines/
 
+
+# Playwright MCP scratch output (snapshots, console logs)
+.playwright-mcp/

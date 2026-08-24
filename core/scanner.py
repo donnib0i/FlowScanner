@@ -1440,6 +1440,102 @@ def top_individual_laggard(sector_data: Dict[str, Dict], scan_n: int = 2) -> Opt
     return best
 
 
+# ─── Contract selection quality ──────────────────────────────────────────────
+# Premium alone ranks contracts by what they *cost*, so a deep-ITM contract with
+# no volume outranks genuine flow. These two helpers are pure so they can be
+# tested against real chain data rather than mocks.
+
+DEEP_ITM_PCT   = 15.0    # beyond this far in the money...
+DEEP_ITM_VOL   = 1_000   # ...volume must justify the depth
+MIN_OI         = 50
+MIN_VOL        = 250
+MIN_MID        = 0.05
+WIDE_SPREAD_PCT = 12.0   # flagged, never rejected
+
+
+def _itm_pct(strike: float, opt_type: str, spot: float) -> float:
+    """How far in the money, as a percentage of spot. 0.0 when out of the money."""
+    if spot <= 0:
+        return 0.0
+    intrinsic = (spot - strike) if opt_type == "call" else (strike - spot)
+    return max(0.0, intrinsic / spot * 100.0)
+
+
+def contract_quality(c: Dict, spot: float, market_open: bool = True) -> Tuple[bool, str]:
+    """
+    (ok, reason) — whether a contract represents tradeable directional flow.
+
+    Deliberately NOT an extrinsic-value test. Extrinsic ratio rejects the AMD
+    575P correctly and the TSLA 355P incorrectly: a stale mid can sit below
+    intrinsic on the most heavily traded contract of the day. Distance from
+    spot plus liquidity is the rule that holds up against real data.
+    """
+    if spot <= 0:
+        return True, ""   # nothing to judge against; dropping would hide real flow
+
+    dte = c.get("dte", -1)
+    if dte == 0 and not market_open:
+        return False, "expired — 0DTE after the close"
+
+    mid = float(c.get("mid", 0) or 0)
+    if mid <= MIN_MID:
+        return False, "no premium"
+
+    vol = int(c.get("vol", 0) or 0)
+    oi  = int(c.get("oi", 0) or 0)
+
+    # Depth is checked before liquidity: a junk contract usually trips both, and
+    # "deep ITM (26%) on 160 lots" explains why its premium looked large, which
+    # bare "illiquid" does not.
+    itm = _itm_pct(float(c.get("strike", 0) or 0), c.get("type", "call"), spot)
+    if itm > DEEP_ITM_PCT and vol < DEEP_ITM_VOL:
+        return False, f"deep ITM ({itm:.0f}%) on {vol} lots"
+
+    if oi < MIN_OI and vol < MIN_VOL:
+        return False, "illiquid"
+
+    return True, ""
+
+
+def contract_economics(c: Dict, spot: float) -> Dict:
+    """
+    What the contract needs in order to pay: breakeven, the move to reach it,
+    where the strike sits against spot, and how much of the price is spread.
+
+    pct_to_breakeven is signed against the *direction of the trade*: negative
+    means spot is already through breakeven, positive means it still has to get
+    there. A put's breakeven is below its strike, so the arithmetic differs.
+    """
+    strike = float(c.get("strike", 0) or 0)
+    mid    = float(c.get("mid", 0) or 0)
+    otype  = c.get("type", "call")
+    bid    = float(c.get("bid", 0) or 0)
+    ask    = float(c.get("ask", 0) or 0)
+
+    breakeven = strike + mid if otype == "call" else strike - mid
+
+    if spot > 0:
+        raw = (breakeven - spot) / spot * 100.0
+        # A call needs spot to rise to breakeven; a put needs it to fall.
+        pct_to_be = raw if otype == "call" else -raw
+        moneyness = (strike - spot) / spot * 100.0
+    else:
+        pct_to_be = None
+        moneyness = None
+
+    spread_pct = None
+    if bid > 0 and ask > 0 and mid > 0:
+        spread_pct = (ask - bid) / mid * 100.0
+
+    return {
+        "breakeven":        round(breakeven, 2),
+        "pct_to_breakeven": round(pct_to_be, 2) if pct_to_be is not None else None,
+        "moneyness_pct":    round(moneyness, 2) if moneyness is not None else None,
+        "spread_pct":       round(spread_pct, 2) if spread_pct is not None else None,
+        "wide_spread":      bool(spread_pct is not None and spread_pct >= WIDE_SPREAD_PCT),
+    }
+
+
 # ─── Options Flow Scanner (Enhanced) ─────────────────────────────────────────
 def scan_options_flow(tickers: List[str], show_progress: bool = True,
                       on_signal=None, on_progress=None) -> List[Dict]:
@@ -1534,6 +1630,9 @@ def _scan_options_flow_yf(tickers: List[str], show_progress: bool = True,
 
             call_flow = put_flow = 0.0
             dte0_flow = dte1_7_flow = dte8p_flow = 0.0
+            filtered_n = 0
+            filtered_premium = 0.0
+            filtered_reasons: List[str] = []
             top_call = top_put = None
             call_contracts: List[Dict] = []
             put_contracts:  List[Dict] = []
@@ -1619,12 +1718,29 @@ def _scan_options_flow_yf(tickers: List[str], show_progress: bool = True,
                             "oi":           oi_n,
                             "vol_oi":       round(float(row["vol_oi"]), 1),
                             "mid":          round(mid_v, 2),
+                            "bid":          round(bid_v, 2),
+                            "ask":          round(ask_v, 2),
                             "flow":         round(flow_v, 0),
                             "sweep":        is_sweep,
                             "golden_sweep": is_golden,
                             "trade_side":   trade_side,
                             "premium_tier": tier,
                         }
+                        entry.update(contract_economics(entry, cur_price))
+
+                        # Premium measures conviction only if the contract could
+                        # carry any. A deep-ITM contract nobody traded books
+                        # millions on its price alone and drags the bias with it,
+                        # so junk is excluded from the totals — but counted, and
+                        # reported, rather than silently dropped.
+                        ok, why = contract_quality(entry, cur_price, _market_open)
+                        if not ok:
+                            filtered_n += 1
+                            filtered_premium += flow_v
+                            if why not in filtered_reasons:
+                                filtered_reasons.append(why)
+                            continue
+
                         all_unusual_strikes.append(strike)
 
                         # DTE bucket
@@ -1687,6 +1803,12 @@ def _scan_options_flow_yf(tickers: List[str], show_progress: bool = True,
                 "dte1_7_flow":    dte1_7_flow,
                 "dte8p_flow":     dte8p_flow,
                 "whale_score":    0,  # computed below
+                # Spot travels with the signal so downstream consumers can place
+                # strikes against price without re-fetching a quote.
+                "spot":             round(cur_price, 2),
+                "filtered_n":       filtered_n,
+                "filtered_premium": round(filtered_premium, 0),
+                "filtered_reasons": filtered_reasons,
             }
             signal["whale_score"] = calc_whale_score(signal)
 
