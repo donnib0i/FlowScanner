@@ -5,6 +5,11 @@ import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core.universe import get_universe, ANCHOR, universe_summary
+from core.tv_universe import (
+    DEFAULT_CAP as TV_DEFAULT_CAP,
+    drop_report as tv_drop_report,
+    load_tradingview_csv,
+)
 from core.market_calendar import is_market_open, minutes_to_close
 from data.sector_constituents import constituents_for, SECTORS
 
@@ -12,7 +17,7 @@ import yfinance as yf
 import colorama
 from colorama import Fore, Style
 from tabulate import tabulate
-import argparse, time, sys, csv, os, math, warnings
+import argparse, time, sys, csv, os, math, json, warnings
 from datetime import datetime
 from typing import Optional, List, Dict, Tuple, Any
 import pandas as pd
@@ -83,6 +88,45 @@ def _yf_ticker(sym: str) -> str:
 def _yf(sym: str) -> yf.Ticker:
     """Let yfinance 1.2+ manage its own curl_cffi session internally."""
     return yf.Ticker(_yf_ticker(sym))
+
+
+# ─── Option chain cache ──────────────────────────────────────────────────────
+# One scan pass fetches the same chain more than once: scan_options_flow walks
+# the near expiries for its ticker list, then enrich_contracts fetches the same
+# expiries again for the overlapping top-N, and the IV-vs-HV adjustment right
+# after it fetches the front expiry a third time. Same URL, seconds apart.
+#
+# TTL is deliberately far below the 45s live refresh default, so a refresh
+# always re-hits the network and nothing on screen can go stale between passes.
+# This collapses duplicates *within* a pass only — it is not a data cache.
+_CHAIN_TTL_S = 20.0
+_CHAIN_CACHE_MAX = 512
+_chain_cache: Dict[Tuple[str, str], Tuple[float, Any]] = {}
+
+
+def _option_chain(t: yf.Ticker, symbol: str, exp: str,
+                  ttl: float = _CHAIN_TTL_S) -> Any:
+    """Fetch one expiry's chain, reusing a fetch made moments ago in this pass."""
+    key = (_yf_ticker(symbol), exp)
+    now = time.monotonic()
+    hit = _chain_cache.get(key)
+    if hit is not None and now - hit[0] < ttl:
+        return hit[1]
+    chain = t.option_chain(exp)
+    if len(_chain_cache) >= _CHAIN_CACHE_MAX:
+        # Cheap bound: drop everything already past its TTL, and if that frees
+        # nothing, drop the oldest. An unbounded dict in the live loop is a leak.
+        stale = [k for k, (ts, _) in _chain_cache.items() if now - ts >= ttl]
+        for k in stale:
+            del _chain_cache[k]
+        if not stale:
+            del _chain_cache[min(_chain_cache, key=lambda k: _chain_cache[k][0])]
+    _chain_cache[key] = (now, chain)
+    return chain
+
+
+def clear_chain_cache() -> None:
+    _chain_cache.clear()
 
 # ─── Sector ETFs & Ticker→Sector Map ─────────────────────────────────────────
 # Full, human-readable sector names — never show the ETF ticker to the user. The
@@ -512,12 +556,32 @@ def fmt_whale_score(score: int) -> str:
     return f"{c}{bar} {score:3d}{Style.RESET_ALL}"
 
 
+def grade_score(setup_q: float, opt_score: int, has_contract: bool) -> float:
+    """The composite behind the letter. Same weighting the a_grade filter uses."""
+    return setup_q * 50 + opt_score * 0.30 + (20 if has_contract else 0)
+
+
+def grade_letter(setup_q: float, opt_score: int, has_contract: bool) -> str:
+    """Plain A/B/C/D. The signal journal stores this — never the coloured form,
+    because ANSI escapes in a database column make every later filter wrong."""
+    score = grade_score(setup_q, opt_score, has_contract)
+    if score >= 75: return "A"
+    if score >= 55: return "B"
+    if score >= 35: return "C"
+    return "D"
+
+
+_GRADE_COLORS = {
+    "A": Fore.GREEN  + Style.BRIGHT,
+    "B": Fore.YELLOW,
+    "C": Fore.WHITE,
+    "D": Fore.RED,
+}
+
+
 def trade_grade(setup_q: float, opt_score: int, has_contract: bool) -> str:
-    score = setup_q * 50 + opt_score * 0.30 + (20 if has_contract else 0)
-    if score >= 75: return Fore.GREEN  + Style.BRIGHT + "A" + Style.RESET_ALL
-    if score >= 55: return Fore.YELLOW + "B" + Style.RESET_ALL
-    if score >= 35: return Fore.WHITE  + "C" + Style.RESET_ALL
-    return Fore.RED + "D" + Style.RESET_ALL
+    letter = grade_letter(setup_q, opt_score, has_contract)
+    return _GRADE_COLORS[letter] + letter + Style.RESET_ALL
 
 # ─── Options score ────────────────────────────────────────────────────────────
 def get_spread_tier(avg_vol: float) -> Tuple[str, int, float]:
@@ -1041,7 +1105,7 @@ def get_best_contract(ticker: str, direction: str, price: float,
                 T = d / 365.0
             T = max(T, 1.0 / (1440 * 365))   # absolute floor: 1 minute
             try:
-                chain = t.option_chain(exp)
+                chain = _option_chain(t, ticker, exp)
             except Exception:
                 continue
             df = chain.calls if direction == "up" else chain.puts
@@ -1649,7 +1713,7 @@ def _scan_options_flow_yf(tickers: List[str], show_progress: bool = True,
             for exp in near_exps[:3]:
                 d = dte_of(exp)
                 try:
-                    chain = t.option_chain(exp)
+                    chain = _option_chain(t, ticker, exp)
                 except Exception:
                     continue
 
@@ -2679,7 +2743,7 @@ def enrich_contracts(results: List[Dict], top_n: int = 20, vix: float = -1.0,
                         _near_exp = _e
                         break
                 if _near_exp:
-                    _chain = _t.option_chain(_near_exp)
+                    _chain = _option_chain(_t, r["ticker"], _near_exp)
                     _calls = _chain.calls
                     _px = r["price"]
                     _atm = _calls[
@@ -2727,12 +2791,13 @@ SORT_LABELS = {
     "gap":     "Gap %",
     "change":  "Change %",
     "lag":     "Lag Score",
+    "ev":      "Expected Value",
 }
 
 FILTER_MAP = {"1": "all", "2": "gap", "3": "inside", "4": "highvol",
               "5": "breakout", "6": "options", "7": "any", "8": "a_grade", "9": "laggard"}
 SORT_MAP   = {"s1": "setup", "s2": "options", "s3": "relvol",
-              "s4": "gap",   "s5": "change",  "s6": "lag"}
+              "s4": "gap",   "s5": "change",  "s6": "lag", "s7": "ev"}
 
 
 def apply_filter(results: List[Dict], f: str) -> List[Dict]:
@@ -2761,8 +2826,48 @@ def apply_sort(results: List[Dict], s: str) -> List[Dict]:
         "gap":     lambda r: abs(r["gap_pct"]),
         "change":  lambda r: abs(r["change_pct"]),
         "lag":     lambda r: r.get("lag_score", 0.0),
+        # EV is the right ranking key, but only when a calibrated model exists.
+        # Uncalibrated rows carry expected_value=None, so asking for --sort ev
+        # without one silently falls back to setup quality rather than ordering
+        # every row by a fabricated zero.
+        "ev":      lambda r: (r.get("expected_value") if r.get("expected_value")
+                              is not None else r["setup_q"] - 1e6),
     }
+    if s == "ev" and not any(r.get("expected_value") is not None for r in results):
+        s = "setup"
     return sorted(results, key=keys.get(s, keys["setup"]), reverse=True)
+
+
+# ─── Calibrated probability / expected value ─────────────────────────────────
+def annotate_calibration(results: List[Dict]) -> List[Dict]:
+    """
+    Attach win_prob / expected_value / calibration to each scan result.
+
+    Deliberately non-fatal: if the calibration module or its released model is
+    missing, every row is marked "uncalibrated" with None probabilities and the
+    order is left alone. The scanner must keep working — and keep telling the
+    truth about what it does not know — with no model on disk, which is the
+    state it is in today.
+    """
+    try:
+        from core import calibration
+    except Exception:
+        for r in results:
+            r.setdefault("win_prob", None)
+            r.setdefault("expected_value", None)
+            r.setdefault("calibration", "uncalibrated")
+        return results
+
+    model = calibration.load_model()
+    payoffs = None
+    if model is not None:
+        try:
+            with open(calibration.MODEL_PATH) as fh:
+                payoffs = json.load(fh).get("payoffs")
+        except Exception:
+            payoffs = None
+        payoffs = tuple(payoffs) if payoffs else None
+    return calibration.annotate(results, model, payoffs)
 
 # ─── Table Rendering ──────────────────────────────────────────────────────────
 def _gap_fill_pct(r: Dict) -> str:
@@ -2844,6 +2949,9 @@ def render_table(
     filter_by: str = "any",
 ) -> Tuple[str, List[Dict]]:
     filtered = apply_filter(results, filter_by)
+    # Annotate before sorting so --sort ev has something to sort on. With no
+    # released model this is a no-op that stamps every row "uncalibrated".
+    annotate_calibration(filtered)
     ordered  = apply_sort(filtered, sort_by)
 
     rows = []
@@ -2949,6 +3057,79 @@ def export_csv(results: List[Dict], filename: str = "scan_results.csv") -> None:
             writer.writerow(row)
     print(Fore.GREEN + f"\n  Exported → {filename}" + Style.RESET_ALL)
 
+
+# ─── Signal journal ───────────────────────────────────────────────────────────
+# The scan prints its ranking and then forgets it. Recording each emitted signal
+# is what makes "we tailed these plays — did they work?" answerable later. The
+# write is deliberately best-effort: a scanner that dies at the open because the
+# disk is full is strictly worse than one that drops a log line.
+
+def record_scan_signals(results: List[Dict], params: Dict,
+                        run_id: Optional[str] = None,
+                        journal=None, scan_kind: str = "scan",
+                        verbose: bool = True) -> Optional[str]:
+    """Persist a scan's signals. Returns the run id, or None if nothing was
+    written. Never raises — every failure path prints and returns None."""
+    try:
+        from data.signal_journal import SignalJournal, new_run_id
+        j = journal or SignalJournal()
+        rid = run_id or new_run_id()
+        j.start_run(rid, scan_kind, params)
+        n = j.record_signals(
+            rid, results,
+            grade_fn=lambda r: grade_letter(r.get("setup_q", 0.0),
+                                            r.get("opt_score", 0),
+                                            bool(r.get("contract"))),
+        )
+        if verbose:
+            print(f"  {Fore.CYAN}Journaled {n} signals → run {rid}{Style.RESET_ALL}")
+        return rid
+    except Exception as e:
+        # Non-fatal by design. Say so loudly enough to notice, then carry on.
+        print(f"  {Fore.YELLOW}Signal journal write failed ({e}) — scan continues."
+              f"{Style.RESET_ALL}")
+        return None
+
+
+def print_signal_history(start: Optional[str] = None, end: Optional[str] = None,
+                         symbol: Optional[str] = None, grade: Optional[str] = None,
+                         limit: int = 50, journal=None) -> None:
+    """Dump recorded signal history as a table. The read side of the journal."""
+    try:
+        from data.signal_journal import SignalJournal
+        j = journal or SignalJournal()
+        rows = j.query(start=start, end=end, symbol=symbol, grade=grade, limit=limit)
+    except Exception as e:
+        print(Fore.RED + f"  Could not read the signal journal: {e}" + Style.RESET_ALL)
+        return
+
+    if not rows:
+        print(f"  {Fore.YELLOW}No signals recorded for that query.{Style.RESET_ALL}")
+        return
+
+    table = []
+    for r in rows:
+        if r["contract_expiry"]:
+            ctype = "C" if r["contract_type"] == "call" else "P"
+            contract = f"{r['contract_expiry'][5:]} ${r['contract_strike']:.0f}{ctype}"
+            quote = f"{r['contract_bid'] or 0:.2f}/{r['contract_ask'] or 0:.2f}"
+        else:
+            contract, quote = "—", "—"
+        table.append([
+            r["emitted_at"][:19], r["symbol"], r["direction"], r["grade"] or "—",
+            f"{r['setup_q']:.2f}" if r["setup_q"] is not None else "—",
+            r["opt_score"] if r["opt_score"] is not None else "—",
+            r["whale_score"] if r["whale_score"] is not None else "—",
+            f"${r['underlying_px']:.2f}" if r["underlying_px"] is not None else "—",
+            contract, quote, r["run_id"],
+        ])
+    print()
+    print(tabulate(table,
+                   headers=["EMITTED (UTC)", "SYM", "DIR", "GR", "SETUP",
+                            "OPT", "WHALE", "PX", "CONTRACT", "BID/ASK", "RUN"],
+                   tablefmt="simple"))
+    print(f"\n  {len(rows)} signal(s).\n")
+
 _TIER_COLORS = {
     "whale":         Fore.RED   + Style.BRIGHT,
     "block":         Fore.YELLOW + Style.BRIGHT,
@@ -3050,6 +3231,10 @@ def merge_whale_scores(results: List[Dict], flow_signals: List[Dict]) -> None:
     whale_map = {f["ticker"]: f.get("whale_score", 0) for f in flow_signals}
     for r in results:
         ws = whale_map.get(r["ticker"], 0)
+        # Keep the raw score on the result. Previously it was consumed here and
+        # discarded, which meant the whale read that pushed a ticker up the
+        # rankings was invisible to anything downstream — including the journal.
+        r["whale_score"] = ws
         if ws >= 60:
             r["opt_score"] = min(100, r.get("opt_score", 0) + 15)
             r["setup_q"]   = min(1.0, r.get("setup_q",   0) + 0.12)
@@ -3233,6 +3418,41 @@ def interactive_loop(results: List[Dict], args: argparse.Namespace,
             sort_by = SORT_MAP[cmd]
 
 # ─── Entry Point ──────────────────────────────────────────────────────────────
+def load_tv_universe(path: str, cap: int = TV_DEFAULT_CAP):
+    """
+    Load a TradingView screener export as the universe, reporting what it found.
+
+    Exits on an unreadable or unusable file rather than falling back to the
+    built-in universe: the user asked for *his* list, and quietly scanning a
+    different one is worse than telling him the file did not work.
+    """
+    try:
+        tv = load_tradingview_csv(path, cap=cap if cap and cap > 0 else None)
+    except OSError as exc:
+        print(Fore.RED + f"  Could not read TradingView CSV: {exc}" + Style.RESET_ALL)
+        sys.exit(1)
+
+    if not tv.symbols:
+        print(Fore.RED + f"  No symbols found in {path}." + Style.RESET_ALL)
+        print(Fore.YELLOW + "  Expected a TradingView screener export with a "
+                            "'Symbol' or 'Ticker' column." + Style.RESET_ALL)
+        sys.exit(1)
+
+    print(f"  {Fore.CYAN}TradingView universe:{Style.RESET_ALL} {tv.summary()}")
+    for line in tv.detail_lines():
+        print(f"    {Fore.YELLOW}{line}{Style.RESET_ALL}")
+    return tv
+
+
+def print_tv_drops(tv, requested: List[str], survived: List[str], reason: str) -> None:
+    """Print a drop report if the TradingView universe lost symbols. No-op otherwise."""
+    if tv is None:
+        return
+    note = tv_drop_report(requested, survived, reason)
+    if note:
+        print(f"  {Fore.YELLOW}{note}{Style.RESET_ALL}")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Elite market scanner — gap fills, key levels, options contracts."
@@ -3241,6 +3461,12 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Specific tickers to scan")
     parser.add_argument("--watchlist",  metavar="FILE",
                         help="Text file with one ticker per line")
+    parser.add_argument("--tradingview", "--tv", metavar="FILE", dest="tradingview",
+                        help="TradingView screener CSV export — use its symbols, "
+                             "in its order, as the universe")
+    parser.add_argument("--tv-limit",   type=int, default=TV_DEFAULT_CAP, metavar="N",
+                        help=f"Max symbols to take from a TradingView export, from the "
+                             f"top of its ordering (default: {TV_DEFAULT_CAP}, 0 = no cap)")
     parser.add_argument("--csv",        action="store_true",
                         help="Print table, export CSV, and exit")
     parser.add_argument("--no-enrich",  action="store_true",
@@ -3257,12 +3483,37 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Launch the live FlowDeck terminal dashboard")
     parser.add_argument("--interval",   type=int, default=45,
                         help="Live refresh interval in seconds (default: 45)")
+    # Signal-journal inspection. Expressed as flags rather than an argparse
+    # subparser because this CLI has always been flat — adding subcommands now
+    # would break every existing `scanner.py --tickers ...` invocation.
+    parser.add_argument("--signals",       action="store_true",
+                        help="Dump recorded signal history and exit")
+    parser.add_argument("--signals-since", metavar="ISO",
+                        help="Only signals emitted on/after this UTC date or timestamp")
+    parser.add_argument("--signals-until", metavar="ISO",
+                        help="Only signals emitted on/before this UTC date or timestamp")
+    parser.add_argument("--signals-symbol", metavar="TICKER",
+                        help="Only signals for this symbol")
+    parser.add_argument("--signals-grade", metavar="GRADE",
+                        choices=["A", "B", "C", "D"],
+                        help="Only signals with this letter grade")
+    parser.add_argument("--signals-limit", type=int, default=50,
+                        help="Max signal rows to print (default: 50)")
+    parser.add_argument("--no-journal",    action="store_true",
+                        help="Do not record this scan's signals to the journal")
     return parser
 
 
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
+
+    # Reading history touches no market data — answer it before any network work.
+    if getattr(args, "signals", False):
+        print_signal_history(start=args.signals_since, end=args.signals_until,
+                             symbol=args.signals_symbol, grade=args.signals_grade,
+                             limit=args.signals_limit)
+        return
 
     if getattr(args, "live", False):
         from core.live_flow import run as run_live
@@ -3271,8 +3522,16 @@ def main() -> None:
                  min_score=35)
         return
 
+    # Held across the scan so that, when the universe came from TradingView, we
+    # can account for every symbol the user handed us instead of just showing
+    # him a shorter table than the list he exported.
+    tv_universe = None
+
     if args.tickers:
         tickers = [t.upper() for t in args.tickers]
+    elif getattr(args, "tradingview", None):
+        tv_universe = load_tv_universe(args.tradingview, cap=getattr(args, "tv_limit", TV_DEFAULT_CAP))
+        tickers = tv_universe.symbols
     elif args.watchlist:
         try:
             with open(args.watchlist) as f:
@@ -3304,6 +3563,9 @@ def main() -> None:
         print(Fore.RED + "  No data fetched. Check tickers or internet connection." + Style.RESET_ALL)
         sys.exit(1)
 
+    print_tv_drops(tv_universe, tickers, [r["ticker"] for r in results],
+                   "no price data from the scanner's feed")
+
     # Step 2: apply forward-looking direction using sector context
     apply_forward_directions(results, sector_data)
 
@@ -3314,11 +3576,35 @@ def main() -> None:
     flow_results: List[Dict] = []
     if not args.no_enrich:
         enrich_contracts(results, top_n=args.enrich_top, vix=vix)
+        # Only the enriched subset was ever asked for a chain, so that subset —
+        # not the whole universe — is the honest denominator here.
+        _enriched = [r for r in results if "contract" in r]
+        print_tv_drops(tv_universe,
+                       [r["ticker"] for r in _enriched],
+                       [r["ticker"] for r in _enriched if r.get("contract")],
+                       "no options chain")
         flow_tickers = [r["ticker"] for r in
                         sorted(results, key=lambda x: x["opt_score"], reverse=True)[:15]]
         print(f"  {Fore.CYAN}Scanning options flow ({len(flow_tickers)} tickers)...{Style.RESET_ALL}")
         flow_results = scan_options_flow(flow_tickers, show_progress=True)
         merge_whale_scores(results, flow_results)
+
+    # Step 5: journal what this scan just decided, before anything is printed or
+    # the interactive loop starts mutating scores. Recorded for the whole result
+    # set, not only the rows the current filter happens to show — the filter is a
+    # view, and an attribution pass needs the population the scanner actually saw.
+    if not args.no_journal:
+        record_scan_signals(results, params={
+            "tickers":     len(tickers),
+            "enrich_top":  args.enrich_top,
+            "no_enrich":   args.no_enrich,
+            "dynamic":     args.dynamic,
+            "filter":      args.filter,
+            "sort":        args.sort,
+            "vix":         vix,
+            "watchlist":   args.watchlist,
+            "explicit_tickers": bool(args.tickers),
+        })
 
     if args.csv:
         print_sector_heatmap(sector_data)

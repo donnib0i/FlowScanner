@@ -5,12 +5,18 @@ __pycache__/
 *.png
 *.jpg
 *.csv
+# ...except test fixtures, which are source. The rule above is aimed at scanner
+# exports and backtest output; the TradingView parser tests cannot run without
+# their sample exports being checked in.
+!tests/fixtures/*.csv
 .env
 .DS_Store
 .gradio/
 backtest_results/
 .tt_creds.json
 data/baselines/
+# Signal journal — locally accumulated scan history, not source.
+data/*.db
 
 
 # Playwright MCP scratch output (snapshots, console logs)
