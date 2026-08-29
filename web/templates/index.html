@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0a0a0f">
+<meta name="apple-mobile-web-app-title" content="Scanner">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="manifest" href="/manifest.json">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<title>Scanner Pro</title>
+<style>
+{{APP_CSS}}</style>
+</head>
+<body>
+<div id="app">
+<div id="topbar">
+  <div class="tb-row1">
+    <div class="app-name">SCANNER<span>PRO</span></div>
+    <div class="vix-pill" id="vix-chip">VIX ...</div>
+  </div>
+  <div class="bias-row">
+    <span class="bias-calls" id="bc">CALLS -</span>
+    <span class="bias-sep"> . </span>
+    <span class="bias-puts" id="bp">PUTS -</span>
+    <span class="bias-sep"> . </span>
+    <span class="bias-dir neut" id="bd">-</span>
+  </div>
+  <div class="flow-bar-wrap" id="flow-bar">
+    <div class="flow-bar-fill" id="flow-fill" style="width:50%"></div>
+    <div class="flow-bar-put"></div>
+  </div>
+</div>
+<div id="content">
+  <div class="tab-pane active" id="tab-flow">
+    <div class="filter-bar">
+      <button class="chip" id="c-dte" onclick="tDte()">0DTE</button>
+      <button class="chip" id="c-whale" onclick="tWhale()">WHALE+</button>
+      <button class="chip" id="c-scope" onclick="tScope()">QUICK</button>
+      <button class="scan-btn" id="scan-btn" onclick="doFlowScan()">SCAN</button>
+    </div>
+    <div class="sort-bar" id="flow-sort-bar" style="display:none">
+      <span class="sort-lbl">SORT</span>
+      <select class="sel" id="flow-sort" onchange="setFlowSort(this.value)">
+        <option value="premium">PREMIUM $</option>
+        <option value="score">WHALE SCORE</option>
+        <option value="vol">VOLUME</option>
+        <option value="oi">OPEN INTEREST</option>
+        <option value="voloi">VOL / OI</option>
+        <option value="dte">DTE</option>
+        <option value="pc">P/C RATIO</option>
+      </select>
+      <button class="dir-toggle" id="flow-dir" onclick="toggleFlowDir()" title="Ascending / descending">&#9660;</button>
+    </div>
+    <div class="prog-wrap" id="pw" style="display:none"><div class="prog-bar" id="pb"></div></div>
+    <div class="prog-lbl" id="pl" style="display:none"></div>
+    <div class="view-toggle" id="view-toggle" style="display:none">
+      <button class="vt-btn on" id="vt-sig" onclick="setView('signals')">SIGNALS</button>
+      <button class="vt-btn" id="vt-hot" onclick="setView('hot')">HOT CONTRACTS</button>
+    </div>
+    <div id="flow-feed">
+      <div class="empty-st">
+        <div class="icon">&#9889;</div>
+        <h3>Ready to scan flow</h3>
+        <p>Hit SCAN to pull live options flow.<br>Institutional only - no retail noise.</p>
+      </div>
+    </div>
+    <div id="hot-feed" style="display:none"></div>
+  </div>
+  <div class="tab-pane" id="tab-scan">
+    <div class="scan-controls">
+      <select class="sel" id="scan-filter" onchange="updateScanFilter()">
+        <option value="any">ALL SETUPS</option>
+        <option value="gap">GAP FILLS</option>
+        <option value="hv">HIGH VOL</option>
+        <option value="inside">INSIDE DAY</option>
+        <option value="breakout">BREAKOUT</option>
+        <option value="laggard">LAGGARDS</option>
+      </select>
+      <select class="sel" id="scan-sort" onchange="updateScanSort()">
+        <option value="setup">BY SETUP</option>
+        <option value="opt">BY OPT SCORE</option>
+        <option value="vol">BY REL VOL</option>
+        <option value="chg">BY CHANGE%</option>
+      </select>
+      <select class="sel" id="scan-dte">
+        <option value="0dte">0DTE</option>
+        <option value="weekly">WEEKLY</option>
+        <option value="all">ALL</option>
+      </select>
+      <span class="scan-stat" id="scan-stat"></span>
+    </div>
+    <div style="padding:0 14px 6px">
+      <button class="load-btn" id="scan-run-btn" onclick="runFullScan()">RUN FULL SCAN (232 tickers)</button>
+    </div>
+    <div id="scan-table-wrap">
+      <div class="empty-st" id="scan-empty">
+        <div class="icon">&#128202;</div>
+        <h3>Full ticker scan</h3>
+        <p>232 tickers ranked by setup quality,<br>options score, and contract fit.</p>
+      </div>
+    </div>
+  </div>
+  <div class="tab-pane" id="tab-sectors">
+    <div id="sectors-feed">
+      <button class="load-btn" onclick="loadSectors()">LOAD SECTOR MAP</button>
+    </div>
+  </div>
+  <div class="tab-pane" id="tab-intel">
+    <div style="padding:12px 16px 6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <input id="intel-tickers" placeholder="AAPL,MSFT,NVDA (blank = full scan)" style="flex:1;min-width:160px;background:#111;border:1px solid #222;color:#e0e0e0;padding:8px 10px;border-radius:6px;font-size:12px;font-family:inherit">
+      <button class="load-btn" onclick="loadIntel()">LOAD INTEL</button>
+    </div>
+    <div style="padding:0 16px 60px">
+      <div style="font-size:9px;letter-spacing:.8px;color:var(--sub);margin:8px 0 4px">MACRO REGIME</div>
+      <div id="intel-macro" style="font-size:12px;color:var(--sub)">— press LOAD INTEL —</div>
+      <div style="font-size:9px;letter-spacing:.8px;color:var(--sub);margin:14px 0 4px">DARK POOL ANOMALIES</div>
+      <div id="intel-dp" style="font-size:12px;color:var(--sub)">— press LOAD INTEL —</div>
+      <div style="font-size:9px;letter-spacing:.8px;color:var(--sub);margin:14px 0 4px">INSIDER ACTIVITY (30 DAYS)</div>
+      <div id="intel-ins" style="font-size:12px;color:var(--sub)">— press LOAD INTEL —</div>
+    </div>
+  </div>
+
+  <div class="tab-pane" id="tab-find">
+    <div class="finder">
+      <input class="find-input" id="ft" placeholder="NVDA" maxlength="6"
+             autocorrect="off" autocapitalize="characters" spellcheck="false"
+             autocomplete="off" inputmode="text"
+             oninput="this.value=this.value.toUpperCase()"
+             onkeydown="if(event.key==='Enter')doFind()">
+      <div class="dir-row">
+        <button class="dir-btn up on" id="d-up" onclick="setDir('up')">&#9650; CALLS</button>
+        <button class="dir-btn dn" id="d-dn" onclick="setDir('down')">&#9660; PUTS</button>
+      </div>
+      <div class="dte-row">
+        <button class="dte-btn on" id="dt-0dte" onclick="setDteMode('0dte')">
+          0DTE<span class="dte-sub">Today only</span>
+        </button>
+        <button class="dte-btn" id="dt-weekly" onclick="setDteMode('weekly')">
+          WEEKLY<span class="dte-sub">7 days</span>
+        </button>
+        <button class="dte-btn" id="dt-all" onclick="setDteMode('all')">
+          ALL<span class="dte-sub">Best fit</span>
+        </button>
+      </div>
+      <button class="find-go" id="find-btn" onclick="doFind()">FIND TOP 3 CONTRACTS</button>
+      <button class="find-go" id="both-btn" onclick="doFindBoth()" style="margin-top:6px;color:var(--amber)">&#9654; CALLS vs PUTS LADDER</button>
+      <div id="find-result"></div>
+      <div id="both-result"></div>
+    </div>
+  </div>
+
+  <div class="tab-pane" id="tab-uoa">
+    <div style="padding:14px 12px 0">
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px">
+        <button class="ctrl-btn" id="uoa-run-btn" onclick="loadUOA(false)"
+          style="flex:1;background:rgba(255,80,80,.12);color:#ff5050;border:1px solid rgba(255,80,80,.25)">
+          &#9654; SCAN UNUSUAL FLOW
+        </button>
+        <button class="ctrl-btn" onclick="loadUOA(true)"
+          style="width:60px;font-size:9px;color:var(--sub);border:1px solid #333">
+          FORCE
+        </button>
+      </div>
+      <div id="uoa-sector-bar" style="display:none;margin-bottom:10px"></div>
+      <div id="uoa-status" style="font-size:10px;color:var(--sub);text-align:center;padding:20px 0">
+        Press SCAN to detect unusual options activity across all sectors.
+      </div>
+      <div id="uoa-table-wrap" style="overflow-x:auto"></div>
+    </div>
+  </div>
+</div>
+<div id="source-badge" style="text-align:center;padding:4px 0 0;font-size:9px;letter-spacing:.8px;color:#444">LOADING...</div>
+<div id="tabbar">
+  <button class="tab-btn active" onclick="showTab('flow',this)">
+    <svg viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>FLOW
+  </button>
+  <button class="tab-btn" onclick="showTab('scan',this)">
+    <svg viewBox="0 0 24 24"><polyline points="3 6 10 6 10 18"/><polyline points="14 6 21 6 21 18"/><line x1="3" y1="12" x2="21" y2="12"/></svg>SCAN
+  </button>
+  <button class="tab-btn" onclick="showTab('sectors',this)">
+    <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>SECTORS
+  </button>
+  <button class="tab-btn" onclick="showTab('find',this)">
+    <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>FIND
+  </button>
+  <button class="tab-btn" onclick="showTab('intel',this)">
+    <svg viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>INTEL
+  </button>
+  <button class="tab-btn" onclick="showTab('uoa',this)">
+    <svg viewBox="0 0 24 24"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>UOA
+  </button>
+</div>
+</div>
+<div id="toast"></div>
+<script>
+{{APP_JS}}</script>
+</body>
+</html>

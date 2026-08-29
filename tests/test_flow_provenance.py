@@ -14,6 +14,9 @@ Provenance is therefore recorded by the scan itself, not inferred from config.
 import pytest
 
 import core.scanner as sc
+# scan_options_flow lives in core.flow and resolves these names there, so
+# that is where they have to be patched -- core.scanner only re-exports them.
+import core.flow as scflow
 
 
 @pytest.fixture(autouse=True)
@@ -30,8 +33,8 @@ def test_no_scan_yet_reports_unknown_not_live():
 
 
 def test_tastytrade_prints_record_live(monkeypatch):
-    monkeypatch.setattr(sc, "_TT_AVAILABLE", True)
-    monkeypatch.setattr(sc, "scan_options_flow_tt",
+    monkeypatch.setattr(scflow, "_TT_AVAILABLE", True)
+    monkeypatch.setattr(scflow, "scan_options_flow_tt",
                         lambda *a, **k: [{"ticker": "NVDA", "whale_score": 50}])
     out = sc.scan_options_flow(["NVDA"], show_progress=False)
     assert out
@@ -42,10 +45,10 @@ def test_tastytrade_prints_record_live(monkeypatch):
 
 def test_tastytrade_auth_failure_records_delayed(monkeypatch):
     """No prints + a login failure must not be reported as live."""
-    monkeypatch.setattr(sc, "_TT_AVAILABLE", True)
-    monkeypatch.setattr(sc, "scan_options_flow_tt", lambda *a, **k: [])
-    monkeypatch.setattr(sc, "_tt_last_error", lambda: "device_challenge_required")
-    monkeypatch.setattr(sc, "_scan_options_flow_yf", lambda *a, **k: [])
+    monkeypatch.setattr(scflow, "_TT_AVAILABLE", True)
+    monkeypatch.setattr(scflow, "scan_options_flow_tt", lambda *a, **k: [])
+    monkeypatch.setattr(scflow, "_tt_last_error", lambda: "device_challenge_required")
+    monkeypatch.setattr(scflow, "_scan_options_flow_yf", lambda *a, **k: [])
 
     sc.scan_options_flow(["NVDA"], show_progress=False)
     src = sc.get_flow_source()
@@ -55,11 +58,11 @@ def test_tastytrade_auth_failure_records_delayed(monkeypatch):
 
 
 def test_tastytrade_exception_records_delayed(monkeypatch):
-    monkeypatch.setattr(sc, "_TT_AVAILABLE", True)
+    monkeypatch.setattr(scflow, "_TT_AVAILABLE", True)
     def _boom(*a, **k):
         raise RuntimeError("websocket died")
-    monkeypatch.setattr(sc, "scan_options_flow_tt", _boom)
-    monkeypatch.setattr(sc, "_scan_options_flow_yf", lambda *a, **k: [])
+    monkeypatch.setattr(scflow, "scan_options_flow_tt", _boom)
+    monkeypatch.setattr(scflow, "_scan_options_flow_yf", lambda *a, **k: [])
 
     sc.scan_options_flow(["NVDA"], show_progress=False)
     src = sc.get_flow_source()
@@ -73,11 +76,11 @@ def test_status_endpoint_reports_recorded_source(monkeypatch):
     from fastapi.testclient import TestClient
     import web.app as webapp
 
-    monkeypatch.setattr(sc, "_TT_AVAILABLE", True)
+    monkeypatch.setattr(scflow, "_TT_AVAILABLE", True)
     monkeypatch.setattr(webapp, "_TT_AVAILABLE", True)
-    monkeypatch.setattr(sc, "scan_options_flow_tt", lambda *a, **k: [])
-    monkeypatch.setattr(sc, "_tt_last_error", lambda: "device_challenge_required")
-    monkeypatch.setattr(sc, "_scan_options_flow_yf", lambda *a, **k: [])
+    monkeypatch.setattr(scflow, "scan_options_flow_tt", lambda *a, **k: [])
+    monkeypatch.setattr(scflow, "_tt_last_error", lambda: "device_challenge_required")
+    monkeypatch.setattr(scflow, "_scan_options_flow_yf", lambda *a, **k: [])
     sc.scan_options_flow(["NVDA"], show_progress=False)
 
     body = TestClient(webapp.app).get("/api/status").json()

@@ -1,5 +1,7 @@
 from core.scanner import classify_breakout, rank_breakout_constituents
 import core.scanner as sc
+# The sector scans resolve these names in core.sectors; patch them there.
+import core.sectors as scsec
 
 
 # ─── classify_breakout ────────────────────────────────────────────────────────
@@ -64,8 +66,8 @@ def test_rank_empty_when_no_breakout():
 # ─── sector_breakout_plays ─────────────────────────────────────────────────────
 def test_breakout_plays_none_skips_network(monkeypatch):
     called = {"q": 0, "c": 0}
-    monkeypatch.setattr(sc, "_quotes_for", lambda *a, **k: called.__setitem__("q", called["q"] + 1) or {})
-    monkeypatch.setattr(sc, "get_best_contract", lambda *a, **k: called.__setitem__("c", called["c"] + 1))
+    monkeypatch.setattr(scsec, "_quotes_for", lambda *a, **k: called.__setitem__("q", called["q"] + 1) or {})
+    monkeypatch.setattr(scsec, "get_best_contract", lambda *a, **k: called.__setitem__("c", called["c"] + 1))
     out = sc.sector_breakout_plays("Technology", {"Technology": {"change_pct": 0.1, "breakout": "none"}})
     assert out == {"sector": "Technology", "breakout": "none", "plays": []}
     assert called == {"q": 0, "c": 0}
@@ -74,11 +76,11 @@ def test_breakout_plays_none_skips_network(monkeypatch):
 def test_breakout_plays_builds_contracts(monkeypatch):
     sc._PLAYS_CACHE.clear()
     sd = {"Technology": {"change_pct": 1.5, "breakout": "up"}}
-    monkeypatch.setattr(sc, "constituents_for", lambda *a, **k: ["AAA", "BBB"])
-    monkeypatch.setattr(sc, "_quotes_for", lambda *a, **k: {
+    monkeypatch.setattr(scsec, "constituents_for", lambda *a, **k: ["AAA", "BBB"])
+    monkeypatch.setattr(scsec, "_quotes_for", lambda *a, **k: {
         "AAA": {"change_pct": 0.1, "dollar_vol": 1e6, "price": 10.0},
         "BBB": {"change_pct": 1.8, "dollar_vol": 2e6, "price": 20.0}})
-    monkeypatch.setattr(sc, "get_best_contract",
+    monkeypatch.setattr(scsec, "get_best_contract",
                         lambda tk, d, *a, **k: {"label": f"{tk} {d}", "strike": 1})
     out = sc.sector_breakout_plays("Technology", sd, dte_mode="0dte", n_laggards=1, n_leaders=1)
     assert out["breakout"] == "up"

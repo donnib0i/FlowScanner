@@ -64,7 +64,7 @@ def _stub_quotes(mapping):
 
 
 def test_laggard_is_red_name_in_green_sector(monkeypatch):
-    import core.scanner as scn
+    import core.sectors as scn   # top_individual_laggard resolves names here
     monkeypatch.setattr(scn, "constituents_for",
                         lambda name, fallback_map=None: ["XOM", "CVX", "MP"])
     monkeypatch.setattr(scn, "_quotes_for",
@@ -78,7 +78,7 @@ def test_laggard_is_red_name_in_green_sector(monkeypatch):
 
 
 def test_laggard_is_green_name_in_red_sector(monkeypatch):
-    import core.scanner as scn
+    import core.sectors as scn   # top_individual_laggard resolves names here
     monkeypatch.setattr(scn, "constituents_for",
                         lambda name, fallback_map=None: ["AAPL", "MSFT", "NVDA"])
     monkeypatch.setattr(scn, "_quotes_for",

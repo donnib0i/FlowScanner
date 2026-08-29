@@ -134,7 +134,7 @@ def test_get_best_contract_0dte_branch_has_no_undefined_names():
     # that defined it was replaced. Only reachable when a 0DTE expiry exists, so
     # no weekend test would ever catch it — it would raise NameError mid-session.
     import ast
-    import core.scanner as scanner
+    import core.options as scanner   # get_best_contract's module
     tree = ast.parse(open(scanner.__file__).read())
     fn = next(n for n in ast.walk(tree)
               if isinstance(n, ast.FunctionDef) and n.name == "get_best_contract")
