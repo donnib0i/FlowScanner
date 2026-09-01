@@ -36,10 +36,13 @@ try:
         scan_options_flow_tt,
         load_credentials as _tt_load_creds,
         last_error as _tt_last_error,
+        _load_remember_token as _tt_remember,
     )
     _TT_USER, _TT_PASS = _tt_load_creds()
     # Credentials being *present* says nothing about the session authenticating.
-    _TT_AVAILABLE = bool(_TT_USER and _TT_PASS)
+    # A remember-token logs in without the password, so either one is enough to
+    # be worth attempting -- provenance is still recorded from the scan result.
+    _TT_AVAILABLE = bool(_TT_USER and (_TT_PASS or _tt_remember()))
 except Exception:
     _TT_AVAILABLE = False
     scan_options_flow_tt = None

@@ -183,3 +183,6 @@ Single screen, two stacked panels + a status bar. Neon-on-black (`#00ff88` bull 
 - Push alerts / notifications (deliberately omitted — constant pings can feed overtrading).
 - `textual serve` to browser/phone (free once the Textual app exists; not built now).
 - Time-of-day-normalized intraday volume baseline (v1 compares to prior full-day averages).
+
+
+> **Correction (2026-08-31):** the Tradier notes above are wrong. Tradier serves real-time data only to Tradier *brokerage* account holders; a free developer.tradier.com token is delayed. Live flow comes from the TastyTrade OPRA path (`data/tt_flow.py`), not Tradier.

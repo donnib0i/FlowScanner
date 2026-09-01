@@ -97,8 +97,16 @@ python3 core/scanner.py --live                 # 45s refresh, single stocks only
 python3 core/scanner.py --live --interval 30
 ```
 Single-stock volume + unusual options flow, refreshed continuously. No ETFs.
-Optional real-time options data: `export TRADIER_TOKEN=…` (free, developer.tradier.com).
-Without it, data is ~15 min delayed and the status bar shows `DELAYED`.
+Live options flow needs a TastyTrade brokerage account (free to open):
+```bash
+export TT_USERNAME=… TT_PASSWORD=…
+python3 -m data.tt_flow --check     # prove the session authenticates
+```
+Without it, flow is ~15 min delayed yfinance and the status bar shows `DELAYED`.
+
+Tradier's `TRADIER_TOKEN` is supported for chains but **is not a real-time
+source without a Tradier brokerage account** — a bare developer token returns
+delayed data only.
 
 **Backtest:**
 ```bash

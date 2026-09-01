@@ -9,6 +9,9 @@ Why this beats yfinance:
 
 Data source: Tastytrade API → dxFeed OPRA feed
 Credentials: env vars TT_USERNAME / TT_PASSWORD, or ~/.tt_creds.json
+             TT_CHALLENGE_TOKEN / TT_REMEMBER_TOKEN cover hosts with no
+             writable home and no way to answer a device challenge.
+Check auth:  python3 -m data.tt_flow --check
 """
 
 from __future__ import annotations
@@ -98,8 +101,18 @@ def save_credentials(username: str, password: str, path: Optional[str] = None) -
 
 # ── Auth client ───────────────────────────────────────────────────────────────
 _CHALLENGE_PATH = os.path.expanduser("~/.tt_challenge.txt")
+_SESSION_PATH   = os.path.expanduser("~/.tt_session.json")
+
 
 def _load_challenge_token() -> str:
+    """
+    Device-challenge token. Env var first: a Railway container has no shell to
+    `echo` a file into and a filesystem that is wiped on every redeploy, so
+    ~/.tt_challenge.txt is a local-only mechanism.
+    """
+    tok = os.environ.get("TT_CHALLENGE_TOKEN", "").strip()
+    if tok:
+        return tok
     try:
         if os.path.exists(_CHALLENGE_PATH):
             return open(_CHALLENGE_PATH).read().strip()
@@ -107,10 +120,47 @@ def _load_challenge_token() -> str:
         pass
     return ""
 
+
 def _clear_challenge_token() -> None:
+    # Only the file is ours to clear; the env var is the operator's to rotate.
     try:
         if os.path.exists(_CHALLENGE_PATH):
             os.remove(_CHALLENGE_PATH)
+    except Exception:
+        pass
+
+
+# ── Remember-token store ──────────────────────────────────────────────────────
+# A password login is what triggers the device challenge. A remember-token login
+# does not, so once one challenge has been cleared the token carries the session
+# forward indefinitely. Tastytrade rotates it on every use, so it is stored back
+# after each login and the env var only seeds the first login after a redeploy.
+def _load_remember_token() -> str:
+    try:
+        if os.path.exists(_SESSION_PATH):
+            tok = json.loads(open(_SESSION_PATH).read()).get("remember-token", "")
+            if tok:
+                return tok
+    except Exception:
+        pass
+    return os.environ.get("TT_REMEMBER_TOKEN", "").strip()
+
+
+def _save_remember_token(token: str) -> None:
+    if not token:
+        return
+    try:
+        with open(_SESSION_PATH, "w") as f:
+            json.dump({"remember-token": token}, f)
+        os.chmod(_SESSION_PATH, 0o600)
+    except Exception:
+        pass
+
+
+def _clear_remember_token() -> None:
+    try:
+        if os.path.exists(_SESSION_PATH):
+            os.remove(_SESSION_PATH)
     except Exception:
         pass
 
@@ -125,9 +175,10 @@ class TTAuth:
     def __init__(self, username: str, password: str):
         self.username    = username
         self.password    = password
-        self.session_tok = ""
-        self.dx_token    = ""
-        self.dx_url      = ""
+        self.session_tok  = ""
+        self.remember_tok = ""
+        self.dx_token     = ""
+        self.dx_url       = ""
 
     def _headers(self) -> dict:
         return {
@@ -136,42 +187,93 @@ class TTAuth:
             "Accept":        "application/json",
         }
 
-    async def login(self, challenge_token: str = "") -> bool:
+    async def _post_session(self, payload: dict, challenge_token: str = "") -> Any:
         headers = {"Content-Type": "application/json"}
         if challenge_token:
             headers["X-Tastyworks-Challenge-Token"] = challenge_token
         async with httpx.AsyncClient(base_url=TT_API, timeout=15) as c:
-            r = await c.post(
-                "/sessions",
-                json={"login": self.username, "password": self.password},
-                headers=headers,
+            return await c.post("/sessions", json=payload, headers=headers)
+
+    def _consume(self, r) -> bool:
+        """Record the session and the rotated remember-token from a 2xx /sessions."""
+        data = r.json().get("data", {})
+        self.session_tok = data.get("session-token", "")
+        if not self.session_tok:
+            return False
+        self.remember_tok = data.get("remember-token", "")
+        _save_remember_token(self.remember_tok)
+        _clear_challenge_token()
+        return True
+
+    async def login(self) -> bool:
+        """
+        Remember-token first, password second.
+
+        Only a password login triggers the device challenge, and a Railway
+        container can never answer one interactively. So once a challenge has
+        been cleared anywhere, the rotating remember-token is what keeps the
+        session alive across restarts without ever sending the password again.
+        """
+        remember = _load_remember_token()
+        if remember:
+            r = await self._post_session(
+                {"login": self.username, "remember-token": remember,
+                 "remember-me": True}
             )
-            if r.status_code == 403:
-                body = r.json().get("error", {})
-                if body.get("code") == "device_challenge_required":
-                    # TastyTrade emailed a challenge token — check ~/.tt_challenge.txt
-                    saved = _load_challenge_token()
-                    if saved:
-                        print("TTAuth: retrying with saved challenge token...")
-                        return await self.login(challenge_token=saved)
-                    _set_error("device_challenge_required — TastyTrade emailed a "
-                               "verification token; save it to ~/.tt_challenge.txt")
-                    print(
-                        "TTAuth: device challenge required.\n"
-                        "  1. Check your email for a TastyTrade verification message.\n"
-                        "  2. Copy the token from the link (the 'token' query param).\n"
-                        "  3. Save it: echo 'TOKEN' > ~/.tt_challenge.txt\n"
-                        "  4. Re-run."
-                    )
-                return False
-            if r.status_code not in (200, 201):
-                _set_error(f"login rejected (HTTP {r.status_code})")
-                return False
-            data = r.json().get("data", {})
-            self.session_tok = data.get("session-token", "")
-            # Clear used challenge token
-            _clear_challenge_token()
-            return bool(self.session_tok)
+            if r.status_code in (200, 201) and self._consume(r):
+                return True
+            # Stale or already-consumed token: drop it and fall through to
+            # password, otherwise every future login retries the same dead token.
+            _clear_remember_token()
+
+        return await self._password_login()
+
+    async def _password_login(self, challenge_token: str = "") -> bool:
+        if not self.password:
+            _set_error("no remember-token and no password — set TT_PASSWORD")
+            return False
+
+        r = await self._post_session(
+            {"login": self.username, "password": self.password, "remember-me": True},
+            challenge_token=challenge_token,
+        )
+
+        if r.status_code == 403:
+            try:
+                code = r.json().get("error", {}).get("code")
+            except Exception:
+                code = None
+            if code == "device_challenge_required":
+                # Retry once. Re-reading the token on a second failure would
+                # hand back the same rejected value and recurse forever.
+                saved = "" if challenge_token else _load_challenge_token()
+                if saved:
+                    print("TTAuth: retrying with saved challenge token...")
+                    return await self._password_login(challenge_token=saved)
+                _set_error("device_challenge_required — TastyTrade emailed a "
+                           "verification token; set TT_CHALLENGE_TOKEN (or write "
+                           "~/.tt_challenge.txt) and retry")
+                print(
+                    "TTAuth: device challenge required.\n"
+                    "  1. Check your email for a TastyTrade verification message.\n"
+                    "  2. Copy the token from the link (the 'token' query param).\n"
+                    "  3. Local:   echo 'TOKEN' > ~/.tt_challenge.txt\n"
+                    "     Railway: railway variables --set TT_CHALLENGE_TOKEN=TOKEN\n"
+                    "  4. Re-run. On success a remember-token is stored and the\n"
+                    "     challenge is not asked again."
+                )
+            else:
+                _set_error(f"login rejected (HTTP 403{f', {code}' if code else ''})")
+            return False
+
+        if r.status_code not in (200, 201):
+            _set_error(f"login rejected (HTTP {r.status_code})")
+            return False
+
+        if not self._consume(r):
+            _set_error("login returned no session-token")
+            return False
+        return True
 
     async def get_quote_tokens(self) -> bool:
         async with httpx.AsyncClient(base_url=TT_API, timeout=15) as c:
@@ -630,6 +732,36 @@ def _calc_whale_score(signal: Dict) -> int:
     return min(100, max(0, score))
 
 
+# ── Session cache ─────────────────────────────────────────────────────────────
+# `--live` re-scans every 45s. Authenticating per scan is ~80 POST /sessions an
+# hour, which is how an account earns a rate-limit and a fresh device challenge.
+# Sessions are good for hours, so one is held for the process and reused.
+_AUTH_CACHE:    Optional[TTAuth] = None
+_AUTH_EXPIRES:  float = 0.0
+_AUTH_TTL_SECS: int   = 20 * 60
+
+
+def invalidate_auth() -> None:
+    """Force the next scan to re-authenticate."""
+    global _AUTH_CACHE, _AUTH_EXPIRES
+    _AUTH_CACHE, _AUTH_EXPIRES = None, 0.0
+
+
+async def _get_auth(username: str, password: str) -> Optional[TTAuth]:
+    global _AUTH_CACHE, _AUTH_EXPIRES
+    now = time.monotonic()
+    if (_AUTH_CACHE is not None and now < _AUTH_EXPIRES
+            and _AUTH_CACHE.username == username):
+        return _AUTH_CACHE
+
+    auth = TTAuth(username, password)
+    if not await auth.setup():
+        invalidate_auth()
+        return None
+    _AUTH_CACHE, _AUTH_EXPIRES = auth, now + _AUTH_TTL_SECS
+    return auth
+
+
 # ── Main async scanner ────────────────────────────────────────────────────────
 async def _async_scan(
     tickers:      List[str],
@@ -640,13 +772,13 @@ async def _async_scan(
     moneyness:    float = 0.15,   # ±15% of spot price
     show_progress: bool = True,
 ) -> List[Dict]:
-    auth = TTAuth(username, password)
     _set_error("")
 
     if show_progress:
         print("  [TT] Authenticating... ", end="", flush=True)
 
-    if not await auth.setup():
+    auth = await _get_auth(username, password)
+    if auth is None:
         if not _LAST_ERROR:
             _set_error("authentication failed — check TT_USERNAME / TT_PASSWORD")
         if show_progress:
@@ -745,7 +877,31 @@ def scan_options_flow_tt(
 if __name__ == "__main__":
     import sys
 
-    tickers = sys.argv[1:] if len(sys.argv) > 1 else ["SPY", "QQQ", "NVDA", "TSLA"]
+    argv = sys.argv[1:]
+
+    # `--check` answers the only question that matters when the FLOW tab says
+    # DELAYED: did the session authenticate, and did dxFeed hand back a feed?
+    if "--check" in argv:
+        u, p = load_credentials()
+        print(f"username         : {u or '(unset)'}")
+        print(f"password         : {'set' if p else '(unset)'}")
+        print(f"remember-token   : {'set' if _load_remember_token() else '(unset)'}")
+        print(f"challenge-token  : {'set' if _load_challenge_token() else '(unset)'}")
+        if not u:
+            print("\nresult           : FAIL — no username; set TT_USERNAME")
+            sys.exit(1)
+
+        auth = TTAuth(u, p)
+        ok = asyncio.run(auth.setup())
+        print(f"session-token    : {'ok' if auth.session_tok else 'FAILED'}")
+        print(f"dxlink feed      : {auth.dx_url or 'FAILED'}")
+        if ok:
+            print("\nresult           : LIVE — flow will stream from OPRA")
+            sys.exit(0)
+        print(f"\nresult           : FAIL — {last_error() or 'unknown'}")
+        sys.exit(1)
+
+    tickers = argv or ["SPY", "QQQ", "NVDA", "TSLA"]
     u, p = load_credentials()
     if not u:
         u = input("Tastytrade username: ").strip()

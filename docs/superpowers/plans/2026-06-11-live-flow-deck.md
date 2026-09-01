@@ -1253,3 +1253,6 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 **Type consistency:** `score_contract` emits `ticker_oi_vs_avg`, `ticker_optvol_rvol`, `intra_chain_z` (Task 5); the app reads `ticker_oi_vs_avg` and the leader rollup reads `optvol_rvol` from `gather_frame` (Task 7) — consistent. `aggregate_by_ticker` keys (`opt_vol`, `opt_oi`, `call_notional`, `put_notional`) match between Tasks 6 and 7. `available_sources`/`scan_unusual_flow(exclude_etfs=)` signatures match Task 5 changes.
 
 **Note for executor:** Task 5 also touches the deployed web app's data (universe loses ETFs) — intended per spec §5.5. Do not push to `master` (Railway auto-deploys); work stays on `feat/live-flow-deck` until Dante approves a merge.
+
+
+> **Correction (2026-08-31):** the Tradier notes above are wrong. Tradier serves real-time data only to Tradier *brokerage* account holders; a free developer.tradier.com token is delayed. Live flow comes from the TastyTrade OPRA path (`data/tt_flow.py`), not Tradier.
