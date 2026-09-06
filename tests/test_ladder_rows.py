@@ -33,9 +33,9 @@ def test_deep_itm_does_not_outrank_atm_whale_strike():
 def test_illiquid_strike_is_dropped():
     rows = ladder_rows([
         _row(240.0, 1997, 1, bid=15.20, ask=15.30),     # OI=1 -> noise
-        _row(227.5, 7862, 562, bid=3.00, ask=3.04),
+        _row(222.0, 7862, 562, bid=3.00, ask=3.04),
     ], "put", PRICE, DTE)
-    assert [r["strike"] for r in rows] == [227.5]
+    assert [r["strike"] for r in rows] == [222.0]
 
 
 def test_low_volume_strike_is_dropped():
@@ -56,9 +56,9 @@ def test_delta_is_black_scholes_not_moneyness_proxy():
 
 def test_delta_band_excludes_lotto_and_deep_itm():
     rows = ladder_rows([
-        _row(300.0, 5000, 4000, bid=0.01, ask=0.03),    # ~0 delta lotto
-        _row(150.0, 5000, 4000, bid=75.0, ask=75.4),    # ~1.0 delta deep ITM
-        _row(228.0, 5000, 4000, bid=1.50, ask=1.60),    # tradeable
+        _row(300.0, 9000, 4000, bid=0.01, ask=0.03),    # ~0 delta lotto
+        _row(150.0, 9000, 4000, bid=75.0, ask=75.4),    # ~1.0 delta deep ITM
+        _row(228.0, 9000, 4000, bid=1.50, ask=1.60),    # tradeable
     ], "call", PRICE, DTE)
     assert [r["strike"] for r in rows] == [228.0]
 
@@ -88,15 +88,32 @@ def test_handles_nan_and_missing_fields():
     rows = ladder_rows([
         {"strike": float("nan"), "volume": 100, "openInterest": 100},
         {"strike": 225.0},
-        _row(226.0, 5000, 4000, bid=1.50, ask=1.60),
+        _row(226.0, 9000, 4000, bid=1.50, ask=1.60),
     ], "call", PRICE, DTE)
     assert [r["strike"] for r in rows] == [226.0]
 
 
 def test_respects_top_n():
-    raw = [_row(220.0 + i, 5000 + i, 4000, bid=1.50, ask=1.60) for i in range(12)]
+    raw = [_row(220.0 + i, 9000 + i, 4000, bid=1.50, ask=1.60) for i in range(12)]
     assert len(ladder_rows(raw, "call", PRICE, DTE, top_n=5)) == 5
 
 
 def test_empty_chain_returns_empty():
     assert ladder_rows([], "call", PRICE, DTE) == []
+
+
+def test_strike_not_being_accumulated_is_dropped():
+    """Volume must clear VOL_OI_ACTIVE x OI: size alone is not today's buying."""
+    rows = ladder_rows([
+        _row(226.0, 5000, 4000, bid=1.50, ask=1.60),    # 1.25x -- already held
+        _row(227.0, 9000, 4000, bid=1.50, ask=1.60),    # 2.25x -- bought today
+    ], "call", PRICE, DTE)
+    assert [r["strike"] for r in rows] == [227.0]
+    assert rows[0]["vol_oi"] == pytest.approx(2.25)
+
+
+def test_at_the_money_strike_survives_the_delta_cap():
+    """A 0.50 cap drops the ATM row (delta ~.52) -- the one row that must stay."""
+    rows = ladder_rows([_row(225.0, 46805, 6260, bid=1.77, ask=1.81)],
+                       "call", PRICE, DTE)
+    assert [r["strike"] for r in rows] == [225.0]

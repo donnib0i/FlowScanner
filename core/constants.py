@@ -32,7 +32,7 @@ SECTOR_ETFS: Dict[str, str] = {
 RS_THRESH = 0.5   # sector must out/under-perform SPY by >= this many points
 
 
-RS_VOL    = 1.1   # elevated relative-volume gate
+RS_VOL    = 1.5   # elevated relative-volume gate
 
 
 TICKER_SECTOR: Dict[str, str] = {
@@ -51,22 +51,23 @@ TICKER_SECTOR: Dict[str, str] = {
     "C":"Financials","WFC":"Financials","V":"Financials","MA":"Financials",
     "SCHW":"Financials","IBKR":"Financials","SQ":"Financials","PYPL":"Financials",
     "AFRM":"Financials","UPST":"Financials","HOOD":"Financials","COIN":"Financials",
-    "SOFI":"Financials",
+    "SOFI":"Financials", "OPEN":"Financials","LMND":"Financials","ROOT":"Financials",
     # Energy
-    "XOM":"Energy","CVX":"Energy","USO":"Energy","CPER":"Materials",
+    "XOM":"Energy","CVX":"Energy","USO":"Energy","CPER":"Materials", "OXY":"Energy","SLB":"Energy","HAL":"Energy","DVN":"Energy",
     # Health / Biotech
     "HIMS":"Health Care","MRNA":"Health Care","PFE":"Health Care","BNTX":"Health Care",
     "LABU":"Health Care","LABD":"Health Care",
     # Drones / Defense Tech
-    "ONDS":"Technology",
+    "ONDS":"Technology","DPRO":"Technology","AVAV":"Technology","KTOS":"Technology","CACI":"Technology",
     # CommSvcs / consumer
     "META":"Communication Services","GOOGL":"Communication Services","GOOG":"Communication Services","SNAP":"Communication Services",
     "PINS":"Communication Services","RBLX":"Communication Services","ABNB":"Communication Services","BKNG":"Communication Services",
     "EBAY":"Communication Services","ETSY":"Communication Services","UBER":"Communication Services","LYFT":"Communication Services",
     "DASH":"Communication Services","GME":"Communication Services","AMC":"Communication Services",
-    "BABA":"Communication Services","JD":"Communication Services","PDD":"Communication Services","KWEB":"Communication Services","FXI":"Communication Services",
+    "BABA":"Communication Services","JD":"Communication Services","PDD":"Communication Services","KWEB":"Communication Services","FXI":"Communication Services", "BIDU":"Communication Services","TME":"Communication Services",
     # Industrials
-    "F":"Industrials","GM":"Industrials",
+    "F":"Industrials","GM":"Industrials", "BLNK":"Industrials","CHPT":"Industrials","WKHS":"Industrials","JOBY":"Industrials",
+    "ASTS":"Industrials","LUNR":"Industrials","RDW":"Industrials","RKLB":"Industrials","MNTS":"Industrials",
     # Materials / metals
     "GLD":"Materials","SLV":"Materials","CPER":"Materials",
     # Broad index (no sector)
@@ -132,16 +133,34 @@ UNIVERSE = [
 # ─── Ladder (calls vs puts) row selection ─────────────────────────────────────
 # Floors that keep untradeable strikes out of the ladder. A strike with OI=1 or
 # 3 contracts of volume is noise, not flow.
-LADDER_MIN_OI    = 50
+LADDER_MIN_OI    = 250
 
 
-LADDER_MIN_VOL   = 25
+LADDER_MIN_VOL   = 500
 
 
 LADDER_DELTA_MIN = 0.10   # below: lottery tickets
 
 
-LADDER_DELTA_MAX = 0.90   # above: deep ITM, priced like stock
+LADDER_DELTA_MAX = 0.65   # above: deep ITM, priced like stock
+# NOT 0.50. An at-the-money strike prices at delta ~0.52, so a 0.50 cap drops
+# the at-the-money row -- the one the ladder exists to show. 0.65 is the point
+# where a contract starts tracking the underlying instead of leveraging it.
+
+
+# Volume must exceed open interest by this multiple for a strike to count as
+# *being accumulated today* rather than merely already held. Raw volume alone
+# cannot tell those apart: 5,000 contracts against 50,000 OI is position
+# churn, 5,000 against 500 OI is new money arriving.
+VOL_OI_ACTIVE    = 2.0
+
+
+# Floors for `_score_contract` (choosing what to trade), kept separate from the
+# ladder floors above (choosing what to display). They were hardcoded inside the
+# scorer, so raising the ladder numbers silently did nothing to contract picks.
+CONTRACT_MIN_OI   = 50
+CONTRACT_MIN_VOL  = 25
+CONTRACT_DELTA_MAX = 0.65   # above: paying for intrinsic, not leverage
 
 
 _GRADE_COLORS = {

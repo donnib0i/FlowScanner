@@ -22,6 +22,10 @@ from core.constants import (
     LADDER_MIN_VOL,
     MIN_MID,
     MIN_OI,
+    VOL_OI_ACTIVE,
+    CONTRACT_MIN_OI,
+    CONTRACT_MIN_VOL,
+    CONTRACT_DELTA_MAX,
     MIN_VOL,
     WIDE_SPREAD_PCT,
 )
@@ -88,6 +92,11 @@ def ladder_rows(raw, opt_type: str, price: float, dte: int,
         oi  = int(_num(r.get("openInterest")))
         if vol < LADDER_MIN_VOL or oi < LADDER_MIN_OI:
             continue
+        # Volume floors alone rank strikes that are merely *large*. The ladder is
+        # meant to show what is being bought today, so require today's volume to
+        # exceed the standing position by VOL_OI_ACTIVE.
+        if vol < oi * VOL_OI_ACTIVE:
+            continue
 
         bid, ask = _num(r.get("bid")), _num(r.get("ask"))
         # Outside RTH yfinance zeroes bid/ask — fall back to the last print.
@@ -108,6 +117,7 @@ def ladder_rows(raw, opt_type: str, price: float, dte: int,
             "mid": round(mid, 2),
             "iv": round(iv * 100, 1),
             "dollar_flow": round(vol * mid * 100, 0),
+            "vol_oi": round(vol / max(oi, 1), 2),
             "ddoi": round(delta * oi, 0),
             "delta": round(delta, 3),
         })
@@ -319,7 +329,7 @@ def _score_contract(row: pd.Series, S: float, T: float, direction: str,
             return -1.0
 
         # Hard reject illiquid contracts — no point scoring zero-OI junk
-        if oi < 50 and cvol < 25:
+        if oi < CONTRACT_MIN_OI and cvol < CONTRACT_MIN_VOL:
             return -1.0
 
         # Penalize stale quotes (market closed / no live bid-ask) — still score but discount
@@ -335,9 +345,9 @@ def _score_contract(row: pd.Series, S: float, T: float, direction: str,
         otype = "call" if direction == "up" else "put"
         delta = abs(bs_delta(S, K, T, iv, otype))
 
-        # Hard reject deep ITM contracts — delta > 0.65 means the contract moves
-        # like the stock. You're paying for intrinsic value, not leverage.
-        if delta > 0.65:
+        # Hard reject deep ITM contracts — past CONTRACT_DELTA_MAX the contract
+        # moves like the stock. You're paying for intrinsic value, not leverage.
+        if delta > CONTRACT_DELTA_MAX:
             return -1.0
 
         # Expected 1-sigma move (annualised IV → daily move for this DTE window)
@@ -351,7 +361,15 @@ def _score_contract(row: pd.Series, S: float, T: float, direction: str,
 
         # Liquidity: OI + volume (log-scaled). Heavy OI at a level = institutional agreement.
         vol_oi_ratio = cvol / max(oi, 1)
-        voi_score    = min(1.0, math.log10(max(vol_oi_ratio, 1.0)) / math.log10(50))
+        # Scaled so VOL_OI_ACTIVE is the halfway mark rather than an arbitrary
+        # point on a log curve topping out at 50x -- a 2x strike should already
+        # read as a strong signal, not a third of one.
+        voi_score    = min(1.0, math.log10(max(vol_oi_ratio, 1.0))
+                                / (2 * math.log10(VOL_OI_ACTIVE)))
+        # Deliberately a boost, not a gate. A liquid SPY strike carrying 20k OI
+        # and 15k volume is heavily traded at a ratio of 0.75; rejecting it the
+        # way the ladder does would throw away the most tradeable contracts.
+        active_boost = 1.15 if vol_oi_ratio >= VOL_OI_ACTIVE else 1.0
         delta_score  = max(0.0, 1.0 - abs(delta - target_delta) / 0.15)
         liq_score    = min(1.0, math.log10(max(oi + cvol + 1, 1)) / 5.5)
         # Soft OI penalty — thin contracts still score, just lower
@@ -390,7 +408,7 @@ def _score_contract(row: pd.Series, S: float, T: float, direction: str,
             return (target_score * 40 + heavy_oi_score * 30 +
                     spread_score * 15 + liq_score * 15) * stale_penalty * price_penalty * strike_gravity
 
-        return (roi_score * 20 + delta_score * 15 + liq_score * 35 + spread_score * 15 + voi_score * 15) * stale_penalty * price_penalty * strike_gravity
+        return (roi_score * 20 + delta_score * 15 + liq_score * 35 + spread_score * 15 + voi_score * 15) * stale_penalty * price_penalty * strike_gravity * active_boost
     except Exception:
         return -1.0
 
@@ -453,8 +471,8 @@ def get_best_contract(ticker: str, direction: str, price: float,
             cands = list(exps[:2])
 
         # Base delta target varies by DTE mode; VIX further adjusts within each mode
-        _mode_delta = {"0dte": 0.45, "weekly": 0.38, "monthly": 0.30, "all": 0.38}
-        target_delta = _mode_delta.get(dte_mode, 0.45)
+        _mode_delta = {"0dte": 0.20, "weekly": 0.25, "monthly": 0.30, "all": 0.35}
+        target_delta = _mode_delta.get(dte_mode, 0.35)
         # Apply VIX overlay only if VIX is known and moves the target further OTM
         vix_dt = vix_delta_target(vix)
         if vix > 0:

@@ -1,3 +1,4 @@
+from core.constants import RS_VOL
 from core.scanner import classify_breakout, rank_breakout_constituents
 import core.scanner as sc
 # The sector scans resolve these names in core.sectors; patch them there.
@@ -11,7 +12,7 @@ def test_classify_breakout_up():
 
 
 def test_classify_breakout_down():
-    rs, b = classify_breakout(change_pct=-1.0, spy_chg=0.2, rel_vol=1.3)
+    rs, b = classify_breakout(change_pct=-1.0, spy_chg=0.2, rel_vol=RS_VOL + 0.2)
     assert rs == -1.2 and b == "down"
 
 
@@ -21,12 +22,12 @@ def test_classify_breakout_below_rs_threshold():
 
 
 def test_classify_breakout_low_volume():
-    _, b = classify_breakout(change_pct=1.2, spy_chg=0.0, rel_vol=1.0)
-    assert b == "none"  # rel_vol 1.0 < 1.1
+    _, b = classify_breakout(change_pct=1.2, spy_chg=0.0, rel_vol=RS_VOL - 0.1)
+    assert b == "none"  # under the elevated-volume gate
 
 
 def test_classify_breakout_spy_zero_fallback():
-    rs, b = classify_breakout(change_pct=0.8, spy_chg=0.0, rel_vol=1.2)
+    rs, b = classify_breakout(change_pct=0.8, spy_chg=0.0, rel_vol=RS_VOL + 0.1)
     assert rs == 0.8 and b == "up"  # rs falls back to change_pct
 
 
