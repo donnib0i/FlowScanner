@@ -338,3 +338,15 @@ th.sortable .arr{font-size:8px;margin-left:2px}
   border:1px solid var(--border);border-radius:8px;padding:9px 11px;margin-bottom:14px}
 .gex-prov b{color:var(--amber);font-weight:700}
 .gex-prov .warn{color:var(--gold)}
+
+/* ─── Per-tab data freshness ────────────────────────────────────────────────
+   Every tab states what its data actually is. Nothing is labelled real-time
+   unless it is: on the deployed app the quote feed is delayed and the flow
+   feed is a 15-minute snapshot, and a badge that overstates either is worse
+   than no badge. */
+.freshness{display:flex;align-items:center;gap:6px;font-size:8.5px;letter-spacing:.5px;
+  color:var(--sub);padding:7px 12px 0;line-height:1.5}
+.freshness .dot{width:5px;height:5px;border-radius:50%;background:#555;flex:0 0 auto}
+.freshness.is-live{color:var(--green)}
+.freshness.is-live .dot{background:var(--green);box-shadow:0 0 5px var(--green)}
+.freshness.is-lagged .dot{background:var(--gold)}

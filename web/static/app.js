@@ -110,6 +110,7 @@ function _refreshSourceBadge(){
     badge.style.color='#555';
     if(d.flow_source_reason) badge.title=d.flow_source_reason;
   }
+  _updateFlowFreshness(d);
  }).catch(()=>{});
 }
 _refreshSourceBadge();
@@ -1548,3 +1549,48 @@ async function loadGEX(){
     btn.disabled=false; btn.innerHTML='&#9654; BUILD GAMMA SURFACE';
   }
 }
+
+// ─── Per-tab data freshness ─────────────────────────────────────────────────
+// Every tab says what its data actually is. Nothing is called real-time unless
+// it is -- on the deployed app the quote feed is delayed and the flow feed is a
+// 15-minute snapshot, so a badge claiming otherwise would be a lie the user
+// sizes positions against.
+const FRESHNESS = {
+  flow:    {t:'Quotes delayed ~15m (yfinance). This deployment cannot stream OPRA — run locally with TastyTrade for that.', c:'is-lagged'},
+  scan:    {t:'Quotes and history delayed ~15m (yfinance).', c:'is-lagged'},
+  sectors: {t:'Sector quotes delayed ~15m (yfinance).', c:'is-lagged'},
+  find:    {t:'Chains and quotes delayed ~15m (yfinance).', c:'is-lagged'},
+  uoa:     {t:'Built on delayed chains (~15m). Not a live tape.', c:'is-lagged'},
+  gex:     {t:'Open interest is prior-session settle. Spot delayed ~15m. Not intraday OI.', c:'is-lagged'},
+  intel:   {t:'Dark pool is a volume-based proxy, not off-exchange prints. Insider = SEC filings (days behind). Macro = FRED (monthly series lag weeks).', c:'is-lagged'},
+};
+
+function _mountFreshness(){
+  Object.keys(FRESHNESS).forEach(k=>{
+    const pane=document.getElementById('tab-'+k);
+    if(!pane || pane.querySelector('.freshness')) return;
+    const f=FRESHNESS[k];
+    const el=document.createElement('div');
+    el.className='freshness '+f.c;
+    el.id='freshness-'+k;
+    el.innerHTML='<span class="dot"></span><span class="txt">'+f.t+'</span>';
+    pane.insertBefore(el, pane.firstChild);
+  });
+}
+
+// The FLOW tab is the one that can genuinely be live, so it reflects the real
+// provenance rather than a fixed string.
+function _updateFlowFreshness(d){
+  const el=document.getElementById('freshness-flow');
+  if(!el) return;
+  const txt=el.querySelector('.txt');
+  if(d && d.live){
+    el.className='freshness is-live';
+    txt.textContent='LIVE — TastyTrade OPRA. Real-time prints with exchange-reported side.';
+  } else {
+    el.className='freshness is-lagged';
+    txt.textContent=FRESHNESS.flow.t;
+  }
+}
+
+_mountFreshness();
