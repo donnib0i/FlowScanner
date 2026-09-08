@@ -244,6 +244,7 @@ _TIER_COLORS = {
 # docs/superpowers/specs/2026-09-06-dealer-gamma-exposure-design.md
 GEX_EXPIRIES            = 3      # near expiries included, plus front monthly OPEX
 GEX_CONCENTRATION_FLAG  = 0.50   # one strike holding this share of the surface is flagged
+GEX_MIN_OI_COVERAGE     = 0.10   # min share of strikes carrying OI for a usable surface
 GEX_INFER_MIN_CONTRACTS = 250    # absolute classified-volume floor for sign inference
 GEX_INFER_MIN_SHARE     = 0.60   # classified share of strike volume required to infer
 GEX_GRID_PCT            = 0.05   # flip search spans +/-5% around spot

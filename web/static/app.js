@@ -1520,6 +1520,13 @@ async function loadGEX(){
       return;
     }
     const d=await r.json();
+    if(!d.provenance.oi_usable){
+      st.style.display='block';
+      st.innerHTML='<b style="color:var(--gold)">No open interest in this chain.</b><br>'+
+        'The feed returned none, so there is no surface to draw. This is a missing '+
+        'reading, not a zero one — nothing here is safe to trade off.';
+      return;
+    }
     st.style.display='none';
     const net=d.net_gex;
     document.getElementById('gex-head').innerHTML='<div class="gex-head">'+

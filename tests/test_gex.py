@@ -339,3 +339,53 @@ def test_a_rows_own_time_to_expiry_wins_over_the_default():
 def test_rows_without_a_t_fall_back_to_the_default():
     prof = G.build_profile([row(100.0, "call")], SPOT, T=0.03)
     assert prof[0]["T"] == pytest.approx(0.03)
+
+
+# ── No open interest: the feed failure that looks like an answer ──────────────
+def zero_oi_chain():
+    return [row(k, "call", oi=0) for k in (95.0, 100.0, 105.0)] + \
+           [row(k, "put", oi=0) for k in (95.0, 100.0, 105.0)]
+
+
+def test_a_chain_with_no_open_interest_is_reported_unusable():
+    """
+    Observed 2026-09-07: yfinance returns zero OI across SPX/SPY/QQQ near
+    expiries. OI is the entire input, so the result is noise -- and noise shaped
+    like an answer is worse than no answer.
+    """
+    out = G.compute(zero_oi_chain(), SPOT, 0.03)
+    assert out["provenance"]["oi_usable"] is False
+    assert out["provenance"]["oi_total"] == 0
+
+
+def test_no_walls_are_invented_without_open_interest():
+    out = G.compute(zero_oi_chain(), SPOT, 0.03)
+    assert out["call_wall"] is None and out["put_wall"] is None
+
+
+def test_no_flip_is_invented_without_open_interest():
+    out = G.compute(zero_oi_chain(), SPOT, 0.03)
+    assert out["flip"] is None and out["flips"] == []
+
+
+def test_a_handful_of_stray_contracts_do_not_become_walls():
+    """
+    The real SPX chain on 2026-09-07: 8 contracts of open interest spread over
+    four strikes out of 1,070. That summed to "more than zero" and produced a
+    call wall 24% above spot. Coverage is the test, not the total.
+    """
+    chain = [row(90.0 + i, "call", oi=0) for i in range(40)] + [row(150.0, "call", oi=1)]
+    out = G.compute(chain, SPOT, 0.03)
+    assert out["provenance"]["oi_usable"] is False
+    assert out["call_wall"] is None
+
+
+def test_coverage_is_reported():
+    out = G.compute(balanced_chain(), SPOT, 0.03)
+    assert out["provenance"]["oi_coverage"] == pytest.approx(1.0)
+
+
+def test_real_open_interest_is_still_reported_usable():
+    out = G.compute(balanced_chain(), SPOT, 0.03)
+    assert out["provenance"]["oi_usable"] is True
+    assert out["provenance"]["oi_total"] == 4000

@@ -24,6 +24,7 @@ import math
 
 from core.constants import (
     GEX_CONCENTRATION_FLAG,
+    GEX_MIN_OI_COVERAGE,
     GEX_EXPIRIES,            # noqa: F401  (re-exported for callers)
     GEX_FLIP_TOLERANCE,
     GEX_GRID_PCT,
@@ -213,6 +214,20 @@ def compute(rows: List[Dict], spot: float, T: float,
 
     dropped = len(usable) - len(profile)
 
+    # Open interest is the entire input. When the feed returns none -- observed
+    # 2026-09-07: yfinance reports zero OI across SPX/SPY/QQQ near expiries --
+    # every notional is zero and the walls degenerate to whichever wing strike
+    # happens to hold a single contract. That surface is noise wearing the shape
+    # of an answer, so it is reported as unusable rather than rendered.
+    # Coverage, not the total: a chain can report 8 contracts spread over four
+    # strikes out of eleven hundred and still sum to "more than zero". A surface
+    # needs open interest across the strike range, so the test is what share of
+    # strikes carry any at all.
+    total_oi = sum(r["oi"] for r in profile)
+    with_oi = sum(1 for r in profile if r["oi"] > 0)
+    oi_coverage = (with_oi / len(profile)) if profile else 0.0
+    usable_oi = oi_coverage >= GEX_MIN_OI_COVERAGE
+
     total_mag = sum(abs(r["gamma_notional"]) for r in profile)
     inferred_mag = sum(abs(r["gamma_notional"]) for r in profile
                        if r["src"] == "inferred")
@@ -229,8 +244,11 @@ def compute(rows: List[Dict], spot: float, T: float,
     calls = [r for r in profile if r["gamma_notional"] > 0]
     puts  = [r for r in profile if r["gamma_notional"] < 0]
 
-    flips = _find_flips(usable, spot, T, flow)
-    flip = min(flips, key=lambda f: abs(f - spot)) if flips else None
+    if usable_oi:
+        flips = _find_flips(usable, spot, T, flow)
+        flip = min(flips, key=lambda f: abs(f - spot)) if flips else None
+    else:
+        flips, flip = [], None
 
     return {
         "spot":      spot,
@@ -238,12 +256,17 @@ def compute(rows: List[Dict], spot: float, T: float,
         "net_gex":   net_gex(profile),
         "flip":      flip,
         "flips":     flips,
-        "call_wall": max(calls, key=lambda r: r["gamma_notional"])["strike"] if calls else None,
-        "put_wall":  min(puts, key=lambda r: r["gamma_notional"])["strike"] if puts else None,
+        "call_wall": (max(calls, key=lambda r: r["gamma_notional"])["strike"]
+                      if calls and usable_oi else None),
+        "put_wall":  (min(puts, key=lambda r: r["gamma_notional"])["strike"]
+                      if puts and usable_oi else None),
         "provenance": {
             "oi_source":       oi_source,
             "oi_asof":         oi_asof,
             "oi_stale":        True,
+            "oi_total":        int(total_oi),
+            "oi_coverage":     oi_coverage,
+            "oi_usable":       usable_oi,
             "strikes_total":   len(usable),
             "strikes_dropped": dropped,
             "max_strike_share": max_share,

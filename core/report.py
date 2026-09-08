@@ -499,6 +499,10 @@ def print_gex_levels(symbol: str = "SPX") -> None:
 
     p = out["provenance"]
     print(f"\n{symbol}  spot {spot:.2f}")
+    if not p["oi_usable"]:
+        print("  no open interest in the chain — the feed returned none, so there")
+        print("  is no gamma surface to report. Not a zero reading; a missing one.")
+        return
     print("KEY LEVELS")
     print(f"  Gamma:       flip {flip} | call wall {cw} | put wall {pw} | net {net_s}/1%")
     print(f"  (OI {p['oi_asof']}; {p['inferred_pct']*100:.0f}% of sign observed, "
