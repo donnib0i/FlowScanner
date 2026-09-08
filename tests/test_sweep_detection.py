@@ -75,3 +75,35 @@ def test_golden_sweep_is_independent_of_this_rule():
     src = inspect.getsource(tt_flow.aggregate_flow)
     assert "is_golden = (max_single_premium" in src
     assert "is_sweep" not in src.split("is_golden = (")[1].split("\n")[0]
+
+
+# ── Contract stats coercion ───────────────────────────────────────────────────
+def test_nan_string_from_the_feed_is_rejected():
+    """
+    dxFeed sends dayVolume as the literal string "NaN" for illiquid contracts.
+    int("NaN") raises, and float("NaN") silently becomes a number that poisons
+    any ratio computed from it.
+    """
+    assert tt_flow._num_or_none("NaN") is None
+    assert tt_flow._num_or_none(float("nan")) is None
+    assert tt_flow._num_or_none(None) is None
+    assert tt_flow._num_or_none("junk") is None
+
+
+def test_real_numbers_survive_coercion():
+    assert tt_flow._num_or_none(1967.0) == 1967.0
+    assert tt_flow._num_or_none(0) == 0.0
+    assert tt_flow._num_or_none("413") == 413.0
+
+
+def test_booleans_are_not_treated_as_numbers():
+    assert tt_flow._num_or_none(True) is None
+
+
+def test_feed_config_reads_each_event_separately():
+    """One FEED_CONFIG can describe several events; each needs its own layout."""
+    msg = {"eventFields": {"Summary": ["eventSymbol", "openInterest"],
+                           "Trade": ["eventSymbol", "dayVolume"]}}
+    assert tt_flow.parse_feed_config(msg, "Summary") == {"eventSymbol": 0, "openInterest": 1}
+    assert tt_flow.parse_feed_config(msg, "Trade") == {"eventSymbol": 0, "dayVolume": 1}
+    assert tt_flow.parse_feed_config(msg, "TimeAndSale") == {}

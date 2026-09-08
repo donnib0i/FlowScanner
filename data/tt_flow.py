@@ -450,6 +450,145 @@ class DXPrint:
         return self.price * self.size * 100
 
 
+def _num_or_none(v) -> Optional[float]:
+    """float() that rejects None, NaN and dxFeed's literal "NaN" string."""
+    if v is None or isinstance(v, bool):
+        return None
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return None
+    return None if f != f else f
+
+
+def parse_feed_config(data: dict, event: str = "TimeAndSale") -> Dict[str, int]:
+    """
+    Field positions for `event`, from whichever FEED_CONFIG shape arrives.
+
+    dxLink sends a mapping -- {"TimeAndSale": ["eventSymbol", ...]} -- which is
+    what the live feed was observed to send on 2026-09-07. The list form
+    [{"eventType": ..., "eventFieldsList": [...]}] appears in dxFeed's own docs
+    and older servers. Iterating the mapping as a list yields strings and raises
+    AttributeError on `.get`, which would kill a scan mid-way, so both are
+    handled rather than guessed at.
+    """
+    fields = data.get("eventFields")
+    names = []
+    if isinstance(fields, dict):
+        names = fields.get(event) or []
+    elif isinstance(fields, list):
+        for item in fields:
+            if isinstance(item, dict) and item.get("eventType") == event:
+                names = item.get("eventFieldsList", []) or []
+                break
+    return {f: i for i, f in enumerate(names)}
+
+
+async def collect_contract_stats(auth: TTAuth, symbols: List[str],
+                                 timeout_secs: float = 20.0) -> Dict[str, Dict[str, int]]:
+    """
+    Open interest and day volume per streamer symbol.
+
+    Two events, because dxFeed splits them: Summary carries `openInterest`,
+    Trade carries `dayVolume`. Subscribing to Summary alone returns dayVolume
+    as 0 for every contract, which is what a first pass here did.
+
+    TimeAndSale carries no open interest, so the flow path had `oi: 0` on every
+    contract and `vol_oi` was permanently 0.0 -- which silently disabled the
+    vol/OI term in calc_whale_score and every unusual-activity gate keyed on it.
+    Summary carries it and needs no extra entitlement: measured live on
+    2026-09-08, 300/300 subscribed SPY symbols returned a value.
+
+    Returns {} on any failure. Open interest is an enrichment; losing it must
+    never cost the caller its prints.
+    """
+    out: Dict[str, Dict[str, int]] = {}
+    if not symbols:
+        return out
+    # dayVolume matters as much as openInterest: `vol` on a flow signal is the
+    # volume seen inside the collection window, so vol/OI off it is ~1000x
+    # smaller than the same ratio in the yfinance path and the vol_oi >= 10
+    # unusual-activity gate could never fire. Day volume makes the two
+    # comparable, which is what the threshold was calibrated against.
+    want = {"Summary": ["eventSymbol", "openInterest"],
+            "Trade":   ["eventSymbol", "dayVolume"]}
+    try:
+        async with httpx.AsyncClient(timeout=None) as http_client:
+            async with aconnect_ws(auth.dx_url, client=http_client) as ws:
+                await ws.send_json({
+                    "type": "SETUP", "channel": 0, "version": DXLINK_VERSION,
+                    "keepaliveTimeout": 60, "acceptKeepaliveTimeout": 60,
+                })
+                fmaps: Dict[str, List[str]] = {}
+                deadline = time.time() + timeout_secs
+                next_keepalive = time.time() + 25
+                while time.time() < deadline:
+                    if time.time() >= next_keepalive:
+                        next_keepalive = time.time() + 25
+                        await ws.send_json({"type": "KEEPALIVE", "channel": 0})
+                    try:
+                        msg = await asyncio.wait_for(ws.receive_json(), timeout=5.0)
+                    except asyncio.TimeoutError:
+                        continue
+                    except Exception:
+                        break
+                    mtype = msg.get("type")
+                    if mtype == "SETUP":
+                        await ws.send_json({"type": "AUTH", "channel": 0,
+                                            "token": auth.dx_token})
+                    elif mtype == "AUTH_STATE" and msg.get("state") == "AUTHORIZED":
+                        await ws.send_json({"type": "CHANNEL_REQUEST", "channel": 1,
+                                            "service": "FEED",
+                                            "parameters": {"contract": "AUTO"}})
+                    elif mtype == "CHANNEL_OPENED" and msg.get("channel") == 1:
+                        await ws.send_json({
+                            "type": "FEED_SETUP", "channel": 1,
+                            "acceptAggregationPeriod": 0,
+                            "acceptDataFormat": "COMPACT",
+                            "acceptEventFields": want,
+                        })
+                        for ev in want:
+                            for i in range(0, len(symbols), 200):
+                                await ws.send_json({
+                                    "type": "FEED_SUBSCRIPTION", "channel": 1,
+                                    "add": [{"type": ev, "symbol": s}
+                                            for s in symbols[i:i + 200]],
+                                })
+                    elif mtype == "FEED_CONFIG":
+                        for ev in want:
+                            parsed = parse_feed_config(msg, event=ev)
+                            if parsed:
+                                fmaps[ev] = sorted(parsed, key=parsed.get)
+                    elif mtype == "FEED_DATA" and fmaps:
+                        data = msg.get("data", [])
+                        for i in range(0, len(data) - 1, 2):
+                            ev, values = data[i], data[i + 1]
+                            fm = fmaps.get(ev)
+                            if not fm or not isinstance(values, list):
+                                continue
+                            n = len(fm)
+                            for j in range(0, len(values), n):
+                                row = dict(zip(fm, values[j:j + n]))
+                                sym = row.get("eventSymbol")
+                                if not sym:
+                                    continue
+                                rec = out.setdefault(sym, {})
+                                # Illiquid contracts report dayVolume as the
+                                # string "NaN", which int() would raise on.
+                                oi = _num_or_none(row.get("openInterest"))
+                                dv = _num_or_none(row.get("dayVolume"))
+                                if oi is not None:
+                                    rec["oi"] = int(oi)
+                                if dv is not None:
+                                    rec["day_volume"] = int(dv)
+                        if len(out) >= len(symbols) and all(
+                                "oi" in r and "day_volume" in r for r in out.values()):
+                            break
+    except Exception:
+        return out
+    return out
+
+
 async def collect_prints(
     auth: TTAuth,
     symbols: List[str],
@@ -468,28 +607,6 @@ async def collect_prints(
     collect_start = 0.0
 
     # Track field positions delivered by FEED_CONFIG
-    def parse_feed_config(data: dict, event: str = "TimeAndSale") -> Dict[str, int]:
-        """
-        Field positions for `event`, from whichever FEED_CONFIG shape arrives.
-
-        dxLink sends a mapping -- {"TimeAndSale": ["eventSymbol", ...]} -- which
-        is what the live feed was observed to send on 2026-09-07. The list form
-        [{"eventType": ..., "eventFieldsList": [...]}] appears in dxFeed's own
-        docs and older servers. Iterating the mapping as a list yields strings
-        and raises AttributeError on `.get`, which would kill the scan mid-way,
-        so both are handled rather than guessed at.
-        """
-        fields = data.get("eventFields")
-        names = []
-        if isinstance(fields, dict):
-            names = fields.get(event) or []
-        elif isinstance(fields, list):
-            for item in fields:
-                if isinstance(item, dict) and item.get("eventType") == event:
-                    names = item.get("eventFieldsList", []) or []
-                    break
-        return {f: i for i, f in enumerate(names)}
-
     def parse_compact_tas(values: list, fmap: Dict[str, int]) -> Optional[DXPrint]:
         try:
             def g(name, default=None):
@@ -722,6 +839,11 @@ def aggregate_flow(
         ticker = contract["ticker"]
         if ticker not in ticker_buckets:
             continue
+        # Populated after the collection window by collect_open_interest; 0 when
+        # the Summary fetch failed or the contract is newly listed.
+        contract_oi = int(contract.get("oi") or 0)
+        # Day volume, not window volume: see collect_open_interest.
+        contract_day_vol = int(contract.get("day_volume") or 0)
 
         # Filter out spread legs (multi-leg orders obscure true directional flow)
         all_spread = all(p.spread_leg for p in symbol_prints if p.size > 0)
@@ -765,8 +887,10 @@ def aggregate_flow(
             "strike":       strike,
             "type":         otype,
             "vol":          total_vol,
-            "oi":           0,           # OI not in T&S; fetch separately if needed
-            "vol_oi":       0.0,
+            "oi":           contract_oi,
+            "day_volume":   contract_day_vol,
+            "vol_oi":       (round(contract_day_vol / contract_oi, 2)
+                             if contract_oi and contract_day_vol else 0.0),
             "mid":          round(avg_price, 2),
             "flow":         round(total_premium, 0),
             "sweep":        is_sweep,
@@ -962,6 +1086,21 @@ async def _async_scan(
     n_prints = sum(len(v) for v in raw.values())
     if show_progress:
         print(f"  [TT] Collected {n_prints} prints from {len(raw)} contracts", flush=True)
+
+    # Open interest, for the contracts that actually printed. Fetched after the
+    # window rather than before so it costs nothing when the tape is quiet, and
+    # only for symbols that matter rather than the whole subscription.
+    traded = [s for s in raw if raw[s]]
+    if traded:
+        oi_map = await collect_contract_stats(auth, traded)
+        for sym, rec in oi_map.items():
+            c = symbol_to_contract.get(sym)
+            if c is not None:
+                c["oi"] = rec.get("oi", 0)
+                c["day_volume"] = rec.get("day_volume", 0)
+        if show_progress and oi_map:
+            print(f"  [TT] Open interest for {len(oi_map)}/{len(traded)} traded "
+                  f"contracts", flush=True)
 
     return aggregate_flow(raw, symbol_to_contract, tickers)
 
