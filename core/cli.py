@@ -35,6 +35,7 @@ from core.report import (
     print_inline_laggards,
     print_sector_heatmap,
     print_sector_laggards,
+    print_gex_levels,
     print_signal_history,
     print_summary,
     print_unusual_flow,
@@ -208,6 +209,9 @@ def build_parser() -> argparse.ArgumentParser:
     # Signal-journal inspection. Expressed as flags rather than an argparse
     # subparser because this CLI has always been flat — adding subcommands now
     # would break every existing `scanner.py --tickers ...` invocation.
+    parser.add_argument("--gex",           metavar="SYMBOL", nargs="?", const="SPX",
+                        help="Print the dealer gamma levels for SYMBOL (default SPX) "
+                             "in KEY LEVELS form, and exit")
     parser.add_argument("--signals",       action="store_true",
                         help="Dump recorded signal history and exit")
     parser.add_argument("--signals-since", metavar="ISO",
@@ -235,6 +239,10 @@ def main() -> None:
         print_signal_history(start=args.signals_since, end=args.signals_until,
                              symbol=args.signals_symbol, grade=args.signals_grade,
                              limit=args.signals_limit)
+        return
+
+    if getattr(args, "gex", None):
+        print_gex_levels(args.gex)
         return
 
     if getattr(args, "live", False):

@@ -196,3 +196,22 @@ def test_endpoint_is_pin_protected():
     import inspect
     src = inspect.getsource(webapp.api_gex)
     assert "_check_pin" in src and "_check_rate" in src
+
+
+# ── UI wiring ─────────────────────────────────────────────────────────────────
+def test_index_serves_the_gex_tab():
+    html = client.get("/").text
+    assert 'id="tab-gex"' in html
+    assert "showTab('gex'" in html
+
+
+def test_app_js_ships_the_gex_renderer():
+    js = open("web/static/app.js").read()
+    for fn in ("function loadGEX", "function renderGexChart", "function renderGexProv"):
+        assert fn in js, fn
+
+
+def test_ui_never_labels_open_interest_live():
+    """Provenance must state staleness; the tab must not imply intraday OI."""
+    js = open("web/static/app.js").read()
+    assert "oi_asof" in js and "not intraday" in js

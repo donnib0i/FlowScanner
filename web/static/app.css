@@ -324,3 +324,17 @@ th.sortable .arr{font-size:8px;margin-left:2px}
   color:var(--sub);font-size:11px;font-weight:700;cursor:pointer;
   font-family:var(--font);letter-spacing:.3px;transition:all .15s}
 .vt-btn.on{background:var(--bg2);color:var(--text)}
+
+/* ─── GEX tab ───────────────────────────────────────────────────────────────
+   Hand-rolled SVG, no chart library, matching the rest of the app. */
+.gex-head{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px}
+.gex-stat{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:9px 11px}
+.gex-stat .k{font-size:8.5px;letter-spacing:.8px;color:var(--sub);margin-bottom:3px}
+.gex-stat .v{font-size:15px;font-weight:700;letter-spacing:-.3px}
+.gex-stat .u{font-size:9px;color:var(--sub);font-weight:400;margin-left:3px}
+.gex-pos{color:var(--green)}.gex-neg{color:var(--red)}
+.gex-chart-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;margin-bottom:10px}
+.gex-prov{font-size:9px;line-height:1.65;color:var(--sub);background:var(--bg2);
+  border:1px solid var(--border);border-radius:8px;padding:9px 11px;margin-bottom:14px}
+.gex-prov b{color:var(--amber);font-weight:700}
+.gex-prov .warn{color:var(--gold)}

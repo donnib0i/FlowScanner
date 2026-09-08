@@ -172,6 +172,26 @@
       </div>
       <div id="uoa-table-wrap" style="overflow-x:auto"></div>
     </div>
+  <div class="tab-pane" id="tab-gex">
+    <div style="padding:14px 12px 0">
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px">
+        <input id="gex-sym" value="SPX" maxlength="12" autocapitalize="characters"
+          autocorrect="off" spellcheck="false"
+          style="width:86px;padding:8px 10px;font-family:var(--font);font-size:12px;
+                 font-weight:700;background:var(--bg3);border:1px solid var(--border);
+                 border-radius:6px;color:var(--text);text-align:center">
+        <button class="ctrl-btn" id="gex-run-btn" onclick="loadGEX()"
+          style="flex:1;background:rgba(168,85,247,.12);color:#a855f7;border:1px solid rgba(168,85,247,.25)">
+          &#9654; BUILD GAMMA SURFACE
+        </button>
+      </div>
+      <div id="gex-status" style="font-size:10px;color:var(--sub);text-align:center;padding:20px 0">
+        Dealer gamma by strike. Measured from open interest &mdash; not a forecast.
+      </div>
+      <div id="gex-head"></div>
+      <div id="gex-chart"></div>
+      <div id="gex-prov"></div>
+    </div>
   </div>
 </div>
 <div id="source-badge" style="text-align:center;padding:4px 0 0;font-size:9px;letter-spacing:.8px;color:#444">LOADING...</div>
@@ -190,6 +210,9 @@
   </button>
   <button class="tab-btn" onclick="showTab('intel',this)">
     <svg viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>INTEL
+  </button>
+  <button class="tab-btn" onclick="showTab('gex',this)">
+    <svg viewBox="0 0 24 24"><path d="M3 18c3-9 6-9 9 0s6 9 9 0"/><line x1="12" y1="3" x2="12" y2="21"/></svg>GEX
   </button>
   <button class="tab-btn" onclick="showTab('uoa',this)">
     <svg viewBox="0 0 24 24"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>UOA

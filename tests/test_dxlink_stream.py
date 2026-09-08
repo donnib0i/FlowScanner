@@ -65,6 +65,18 @@ TAS = ["eventSymbol", "time", "price", "size", "aggressorSide",
 
 
 def feed_config(fields=TAS):
+    """
+    The shape the live dxLink server actually sends -- a mapping -- captured
+    from the wire on 2026-09-07. The earlier fake here used dxFeed's documented
+    list form, so these tests passed while the real feed raised AttributeError
+    on the first config. Both shapes are now handled; both are tested.
+    """
+    return {"type": "FEED_CONFIG", "channel": 1,
+            "eventFields": {"TimeAndSale": fields}}
+
+
+def feed_config_list_form(fields=TAS):
+    """dxFeed's documented shape, still accepted."""
     return {"type": "FEED_CONFIG", "channel": 1,
             "eventFields": [{"eventType": "TimeAndSale",
                              "eventFieldsList": fields}]}
@@ -211,4 +223,35 @@ def test_a_malformed_row_does_not_kill_the_scan(monkeypatch):
         {"type": "FEED_DATA", "channel": 1,
          "data": ["TimeAndSale", tas_row(".SPXW260907C6500", 1, 4.25, 30)]},
     ]))
+    assert len(run(ws, monkeypatch).get(".SPXW260907C6500", [])) == 1
+
+
+# ── FEED_CONFIG shapes ────────────────────────────────────────────────────────
+def test_the_documented_list_shape_is_still_accepted(monkeypatch):
+    ws = FakeWS([
+        {"type": "SETUP", "channel": 0},
+        {"type": "AUTH_STATE", "channel": 0, "state": "AUTHORIZED"},
+        {"type": "CHANNEL_OPENED", "channel": 1},
+        feed_config_list_form(),
+        {"type": "FEED_DATA", "channel": 1,
+         "data": ["TimeAndSale", tas_row(".SPXW260907C6500", 1, 4.25, 30)]},
+    ])
+    assert len(run(ws, monkeypatch).get(".SPXW260907C6500", [])) == 1
+
+
+def test_an_ack_config_without_fields_does_not_start_the_window(monkeypatch):
+    """
+    The server sends a bare FEED_CONFIG acknowledging setup, then a second with
+    the fields. Accepting the first burns the collection window on an empty
+    field layout, so every print that follows is discarded.
+    """
+    ws = FakeWS([
+        {"type": "SETUP", "channel": 0},
+        {"type": "AUTH_STATE", "channel": 0, "state": "AUTHORIZED"},
+        {"type": "CHANNEL_OPENED", "channel": 1},
+        {"type": "FEED_CONFIG", "channel": 1, "dataFormat": "COMPACT"},   # no eventFields
+        feed_config(),
+        {"type": "FEED_DATA", "channel": 1,
+         "data": ["TimeAndSale", tas_row(".SPXW260907C6500", 1, 4.25, 30)]},
+    ])
     assert len(run(ws, monkeypatch).get(".SPXW260907C6500", [])) == 1

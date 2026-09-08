@@ -1406,3 +1406,133 @@ async function loadUOA(force){
     btn.disabled=false; btn.textContent='▶ SCAN UNUSUAL FLOW';
   }
 }
+
+// ─── GEX: dealer gamma exposure ─────────────────────────────────────────────
+// Measured quantities only. Nothing here says where price is going, because
+// the endpoint deliberately does not report that.
+function gexMoney(v){
+  const a=Math.abs(v), sign=v<0?'-':'';
+  if(a>=1e9) return sign+'$'+(a/1e9).toFixed(2)+'B';
+  if(a>=1e6) return sign+'$'+(a/1e6).toFixed(1)+'M';
+  if(a>=1e3) return sign+'$'+(a/1e3).toFixed(0)+'K';
+  return sign+'$'+a.toFixed(0);
+}
+
+function gexStat(k,v,cls,unit){
+  return '<div class="gex-stat"><div class="k">'+k+'</div><div class="v '+(cls||'')+'">'+
+         v+(unit?'<span class="u">'+unit+'</span>':'')+'</div></div>';
+}
+
+function renderGexChart(d){
+  // Aggregate both option types into one bar per strike: the reader is asking
+  // where dealers are long or short gamma, not how it splits by contract type.
+  const byStrike={};
+  d.profile.forEach(r=>{
+    const e=byStrike[r.strike]||(byStrike[r.strike]={n:0,inferred:0,total:0});
+    e.n+=r.gamma_notional;
+    e.total+=Math.abs(r.gamma_notional);
+    if(r.src==='inferred') e.inferred+=Math.abs(r.gamma_notional);
+  });
+  const strikes=Object.keys(byStrike).map(Number).sort((a,b)=>a-b);
+  if(!strikes.length) return '<div style="font-size:11px;color:var(--sub);text-align:center;padding:16px">No strikes with usable data.</div>';
+
+  const maxMag=Math.max(...strikes.map(k=>Math.abs(byStrike[k].n)))||1;
+  const rowH=15, padT=10, padB=10, midX=150, halfW=132;
+  const h=padT+padB+strikes.length*rowH;
+  const w=midX+halfW+58;
+
+  const yOf=k=>padT+(strikes.length-1-strikes.indexOf(k))*rowH+rowH/2;
+
+  let svg='<svg width="'+w+'" height="'+h+'" viewBox="0 0 '+w+' '+h+'" style="display:block">';
+  svg+='<line x1="'+midX+'" y1="0" x2="'+midX+'" y2="'+h+'" stroke="rgba(255,255,255,.14)" stroke-width="1"/>';
+
+  strikes.forEach(k=>{
+    const e=byStrike[k], y=yOf(k);
+    const len=Math.abs(e.n)/maxMag*halfW;
+    const pos=e.n>=0;
+    const x=pos?midX:midX-len;
+    // Observed sign is drawn solid; assumed sign is drawn hollow, so the
+    // reader can see how much of the surface is inference vs convention.
+    const share=e.total?e.inferred/e.total:0;
+    const col=pos?'#00ff88':'#ff3355';
+    svg+='<rect x="'+x+'" y="'+(y-5)+'" width="'+Math.max(len,0.6)+'" height="10" rx="1.5" fill="'+col+'" opacity="'+(0.30+0.65*share)+'"/>';
+    svg+='<text x="'+(midX+(pos?-6:6))+'" y="'+(y+3.4)+'" text-anchor="'+(pos?'end':'start')+
+         '" font-size="8.5" fill="#6b6b80" font-family="var(--font)">'+k+'</text>';
+  });
+
+  const priceToY=p=>{
+    // Position the spot/flip rule against the strike axis by interpolation.
+    if(p<=strikes[0]) return yOf(strikes[0]);
+    if(p>=strikes[strikes.length-1]) return yOf(strikes[strikes.length-1]);
+    for(let i=0;i<strikes.length-1;i++){
+      const a=strikes[i], b=strikes[i+1];
+      if(p>=a&&p<=b){const t=(p-a)/(b-a);return yOf(a)+(yOf(b)-yOf(a))*t;}
+    }
+    return yOf(strikes[0]);
+  };
+
+  const rule=(p,col,lbl,dash)=>{
+    const y=priceToY(p);
+    return '<line x1="4" y1="'+y+'" x2="'+(midX+halfW)+'" y2="'+y+'" stroke="'+col+
+           '" stroke-width="1"'+(dash?' stroke-dasharray="3 3"':'')+' opacity=".85"/>'+
+           '<text x="'+(midX+halfW+4)+'" y="'+(y+3.4)+'" font-size="8" fill="'+col+
+           '" font-family="var(--font)">'+lbl+'</text>';
+  };
+  svg+=rule(d.spot,'#00d4ff','SPOT '+d.spot.toFixed(2));
+  if(d.flip!=null) svg+=rule(d.flip,'#ffb800','FLIP '+d.flip.toFixed(2),true);
+  svg+='</svg>';
+  return '<div class="gex-chart-wrap">'+svg+'</div>';
+}
+
+function renderGexProv(d){
+  const p=d.provenance;
+  const pct=x=>(x*100).toFixed(0)+'%';
+  let out='<div class="gex-prov">';
+  out+='<b>Open interest is '+p.oi_asof+'</b> — not intraday. The surface is least '+
+       'accurate on days with heavy overnight repositioning.<br>';
+  out+='Sign: '+pct(p.inferred_pct)+' observed from today\'s flow, '+
+       pct(p.assumed_pct)+' assumed (dealers long calls / short puts).<br>';
+  out+='Strikes: '+p.strikes_total+' total, '+p.strikes_dropped+' dropped for no usable IV. ';
+  out+='Expiries: '+(p.expiries||[]).join(', ')+'.';
+  if(p.concentrated){
+    out+='<br><span class="warn">One strike holds '+pct(p.max_strike_share)+
+         ' of the surface — near expiry the flip means less.</span>';
+  }
+  out+='</div>';
+  return out;
+}
+
+async function loadGEX(){
+  const btn=document.getElementById('gex-run-btn');
+  const st=document.getElementById('gex-status');
+  const sym=(document.getElementById('gex-sym').value||'SPX').trim().toUpperCase();
+  btn.disabled=true; btn.textContent='BUILDING...';
+  st.style.display='block'; st.textContent='Fetching chains for '+sym+'...';
+  document.getElementById('gex-head').innerHTML='';
+  document.getElementById('gex-chart').innerHTML='';
+  document.getElementById('gex-prov').innerHTML='';
+  try{
+    const r=await fetch(_pa('/api/gex?symbol='+encodeURIComponent(sym)));
+    if(_handleAuth(r)) return;
+    if(!r.ok){
+      const msg=await r.json().catch(()=>({}));
+      st.textContent=(msg.detail||('Request failed ('+r.status+')'));
+      return;
+    }
+    const d=await r.json();
+    st.style.display='none';
+    const net=d.net_gex;
+    document.getElementById('gex-head').innerHTML='<div class="gex-head">'+
+      gexStat('NET GAMMA',gexMoney(net),net>=0?'gex-pos':'gex-neg','/1%')+
+      gexStat('ZERO-GAMMA FLIP',d.flip!=null?d.flip.toFixed(2):'none in range','')+
+      gexStat('CALL WALL',d.call_wall!=null?d.call_wall:'—','')+
+      gexStat('PUT WALL',d.put_wall!=null?d.put_wall:'—','')+
+      '</div>';
+    document.getElementById('gex-chart').innerHTML=renderGexChart(d);
+    document.getElementById('gex-prov').innerHTML=renderGexProv(d);
+  }catch(e){
+    st.textContent='Could not build the surface.';
+  }finally{
+    btn.disabled=false; btn.innerHTML='&#9654; BUILD GAMMA SURFACE';
+  }
+}

@@ -458,13 +458,27 @@ async def collect_prints(
     collect_start = 0.0
 
     # Track field positions delivered by FEED_CONFIG
-    def parse_feed_config(data: dict) -> Dict[str, int]:
-        fields_map = {}
-        for item in data.get("eventFields", []):
-            if item.get("eventType") == "TimeAndSale":
-                for i, f in enumerate(item.get("eventFieldsList", [])):
-                    fields_map[f] = i
-        return fields_map
+    def parse_feed_config(data: dict, event: str = "TimeAndSale") -> Dict[str, int]:
+        """
+        Field positions for `event`, from whichever FEED_CONFIG shape arrives.
+
+        dxLink sends a mapping -- {"TimeAndSale": ["eventSymbol", ...]} -- which
+        is what the live feed was observed to send on 2026-09-07. The list form
+        [{"eventType": ..., "eventFieldsList": [...]}] appears in dxFeed's own
+        docs and older servers. Iterating the mapping as a list yields strings
+        and raises AttributeError on `.get`, which would kill the scan mid-way,
+        so both are handled rather than guessed at.
+        """
+        fields = data.get("eventFields")
+        names = []
+        if isinstance(fields, dict):
+            names = fields.get(event) or []
+        elif isinstance(fields, list):
+            for item in fields:
+                if isinstance(item, dict) and item.get("eventType") == event:
+                    names = item.get("eventFieldsList", []) or []
+                    break
+        return {f: i for i, f in enumerate(names)}
 
     def parse_compact_tas(values: list, fmap: Dict[str, int]) -> Optional[DXPrint]:
         try:
@@ -577,7 +591,14 @@ async def collect_prints(
                               flush=True)
 
                 elif mtype == "FEED_CONFIG" and channel_ready:
-                    field_index = parse_feed_config(msg)
+                    # The server sends one FEED_CONFIG acknowledging the setup and
+                    # a second carrying eventFields. Starting the window on the
+                    # first would burn the collection time with no field layout,
+                    # so an empty parse is ignored rather than accepted.
+                    parsed = parse_feed_config(msg)
+                    if not parsed:
+                        continue
+                    field_index = parsed
                     # Start collection timer once we know the field layout
                     if not collecting:
                         collecting       = True
