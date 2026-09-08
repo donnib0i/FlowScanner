@@ -59,7 +59,7 @@ from core.scanner import (
     get_flow_source,
 )
 from core.universe import get_universe, ANCHOR
-from core.market_calendar import is_market_open
+from core.market_calendar import exchange_today, is_market_open
 from data.unusual_flow import scan_unusual_flow, sector_flow_summary
 from data.etf_filter import filter_etfs, is_etf
 from data.sources import available_sources
@@ -824,7 +824,7 @@ async def api_find_both(
         except Exception:
             price = 0.0
 
-        today = datetime.now().date()
+        today = exchange_today()
         def dte(e):
             return (datetime.strptime(e, "%Y-%m-%d").date() - today).days
 

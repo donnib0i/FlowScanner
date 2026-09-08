@@ -153,3 +153,26 @@ def test_get_best_contract_0dte_branch_has_no_undefined_names():
         if isinstance(node, ast.comprehension):
             known |= {n.id for n in ast.walk(node.target) if isinstance(n, ast.Name)}
     assert not (loaded - known), f"undefined in get_best_contract: {sorted(loaded - known)}"
+
+
+# ── Exchange date ─────────────────────────────────────────────────────────────
+def test_exchange_today_is_new_york_not_the_host(monkeypatch):
+    """
+    The bug this exists to prevent: a host west of ET (or Railway on UTC) whose
+    local date has already rolled past New York's. DTE measured on the host's
+    date labels every contract a day closer to expiry than it is.
+    """
+    import datetime as _d
+    from zoneinfo import ZoneInfo
+
+    # 00:30 UTC on the 7th == 20:30 ET on the 6th. The exchange date is the 6th.
+    fixed = _d.datetime(2026, 1, 7, 0, 30, tzinfo=_d.timezone.utc)
+
+    class _FixedDatetime(_d.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return fixed.astimezone(tz) if tz else fixed.replace(tzinfo=None)
+
+    from core import market_calendar as mc
+    monkeypatch.setattr(mc._dt, "datetime", _FixedDatetime)
+    assert mc.exchange_today() == _d.date(2026, 1, 6)

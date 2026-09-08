@@ -7,7 +7,7 @@ Part of the scanner core; `core.scanner` re-exports everything here.
 from core import runtime as _runtime  # noqa: F401  (warnings/colorama setup)
 
 from colorama import Fore, Style
-from core.market_calendar import is_market_open, minutes_to_close
+from core.market_calendar import exchange_today, is_market_open, minutes_to_close
 from datetime import datetime
 from typing import Optional, List, Dict, Tuple
 import math
@@ -438,7 +438,7 @@ def get_best_contract(ticker: str, direction: str, price: float,
         if not exps:
             return None
 
-        today = datetime.now().date()
+        today = exchange_today()
 
         def dte(e: str) -> int:
             return (datetime.strptime(e, "%Y-%m-%d").date() - today).days

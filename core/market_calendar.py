@@ -98,6 +98,18 @@ def early_closes(year: int) -> Dict[_dt.date, _dt.time]:
     return {d: t for d, t in out.items() if d not in hols and d.weekday() < 5}
 
 
+def exchange_today() -> _dt.date:
+    """
+    Today's date *at the exchange*, never the host's.
+
+    DTE is measured against this. `date.today()` is the machine's: Railway runs
+    UTC and a developer may sit on Pacific, so after the local date rolls past
+    New York's, every contract gets labelled one day closer to expiry than it
+    is -- silently turning 1DTE into 0DTE.
+    """
+    return _dt.datetime.now(_ET).date()
+
+
 def is_trading_day(day: _dt.date) -> bool:
     """True if the NYSE holds a session (full or half) on `day`."""
     if isinstance(day, _dt.datetime):
