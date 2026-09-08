@@ -37,13 +37,17 @@ try:
         load_credentials as _tt_load_creds,
         last_error as _tt_last_error,
         _load_session as _tt_session,
+        oauth_configured as _tt_oauth,
     )
     _TT_USER, _TT_PASS = _tt_load_creds()
     # Credentials being *present* says nothing about the session authenticating.
     # A cached session logs in without the password or an SMS code, so either
     # one is enough to be worth attempting -- provenance is still recorded from
     # the scan result.
-    _TT_AVAILABLE = bool(_TT_USER and (_TT_PASS or _tt_session()[0]))
+    # An OAuth grant needs neither a username nor an SMS, so it is on its own
+    # sufficient -- and it is the only path a container can complete.
+    _TT_AVAILABLE = bool(_tt_oauth()
+                         or (_TT_USER and (_TT_PASS or _tt_session()[0])))
 except Exception:
     _TT_AVAILABLE = False
     scan_options_flow_tt = None

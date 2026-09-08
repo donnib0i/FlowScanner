@@ -50,6 +50,17 @@ DXLINK_VERSION = "0.1-DXF-JS/23.11.0"
 SWEEP_MIN_ISO_PRINTS = 5
 SWEEP_WINDOW_MS      = 500
 
+# OAuth2 personal grant. The only auth path a container can complete: the
+# password flow requires an SMS device challenge, which Railway can never
+# answer. A grant's refresh token does not expire and is not rotated by
+# refreshing; it buys a 15-minute access token with no challenge.
+TT_OAUTH_TOKEN_URL = "https://api.tastyworks.com/oauth/token"
+# Refresh this many seconds before the stated expiry, so a token cannot die
+# in the middle of a scan.
+OAUTH_MARGIN_S     = 120
+# Tastytrade requires a User-Agent in product/version form on every request.
+USER_AGENT         = "flowscanner/1.0"
+
 # TimeAndSale fields in the order model_fields defines them (must match from_stream)
 TAS_FIELDS = [
     "eventSymbol", "eventTime",
@@ -101,6 +112,24 @@ def load_credentials() -> tuple[str, str]:
                 pass
 
     return "", ""
+
+
+def _load_oauth() -> tuple[str, str, str]:
+    """
+    (client_secret, refresh_token, client_id) for an OAuth2 personal grant.
+
+    client_id is optional: the server infers it from the refresh token, and
+    sending a wrong one fails the exchange, so it is only forwarded when set.
+    """
+    return (os.environ.get("TT_CLIENT_SECRET", "").strip(),
+            os.environ.get("TT_REFRESH_TOKEN", "").strip(),
+            os.environ.get("TT_CLIENT_ID", "").strip())
+
+
+def oauth_configured() -> bool:
+    """True when a personal grant is available. Both halves are required."""
+    secret, refresh, _ = _load_oauth()
+    return bool(secret and refresh)
 
 
 def save_credentials(username: str, password: str, path: Optional[str] = None) -> None:
@@ -217,14 +246,22 @@ class TTAuth:
         self.username    = username
         self.password    = password
         self.session_tok = ""
+        self.access_tok  = ""      # OAuth2 bearer token
+        self.access_exp  = 0.0     # monotonic deadline for access_tok
         self.dx_token    = ""
         self.dx_url      = ""
 
     def _headers(self) -> dict:
+        # OAuth sends a Bearer token; the session flow sends the raw session
+        # token with no prefix. Using the wrong form for either is a 401 that
+        # looks like a credential problem.
+        authorization = (f"Bearer {self.access_tok}" if self.access_tok
+                         else self.session_tok)
         return {
-            "Authorization": self.session_tok,
+            "Authorization": authorization,
             "Content-Type":  "application/json",
             "Accept":        "application/json",
+            "User-Agent":    USER_AGENT,
         }
 
     async def _post_session(self, payload: dict, challenge_token: str = "",
@@ -254,8 +291,64 @@ class TTAuth:
         _save_session(self.session_tok, data.get("session-expiration", ""))
         return True
 
+    async def _post_oauth_token(self, payload: dict) -> Any:
+        async with httpx.AsyncClient(timeout=15) as c:
+            return await c.post(TT_OAUTH_TOKEN_URL, data=payload,
+                                headers={"User-Agent": USER_AGENT})
+
+    async def _oauth_login(self) -> bool:
+        """Exchange the personal grant's refresh token for an access token."""
+        if self.access_tok and time.monotonic() < self.access_exp:
+            return True
+
+        secret, refresh, client_id = _load_oauth()
+        payload = {"grant_type": "refresh_token", "refresh_token": refresh,
+                   "client_secret": secret}
+        if client_id:
+            payload["client_id"] = client_id
+
+        try:
+            r = await self._post_oauth_token(payload)
+        except Exception as e:
+            _set_error(f"oauth token request failed: {type(e).__name__}")
+            return False
+
+        if r.status_code != 200:
+            # Never echo the body: it can contain the submitted secret.
+            _set_error(f"oauth refresh rejected (HTTP {r.status_code}) — check "
+                       "TT_CLIENT_SECRET and TT_REFRESH_TOKEN")
+            return False
+        try:
+            data = r.json()
+        except Exception:
+            _set_error("oauth refresh returned an unreadable body")
+            return False
+
+        self.access_tok = data.get("access_token", "")
+        if not self.access_tok:
+            _set_error("oauth refresh returned no access_token")
+            return False
+        # Refreshing does not rotate the refresh token -- none is returned and
+        # the held one stays valid, so nothing is written back.
+        ttl = float(data.get("expires_in") or 900)
+        # No floor: if what is left is shorter than the safety margin, the
+        # deadline lands in the past and the next call refreshes rather than
+        # handing out a token that may die mid-request.
+        self.access_exp = time.monotonic() + (ttl - OAUTH_MARGIN_S)
+        return True
+
     async def login(self) -> bool:
-        """Cached session first, password + device challenge second."""
+        """
+        OAuth grant, then a cached session, then password + device challenge.
+
+        A grant needs no SMS and no writable home, so it is preferred wherever
+        it is configured. A configured-but-failing grant is NOT retried on the
+        password path: that would trigger an SMS nobody is waiting for, and on a
+        container it would hang the scan instead of reporting the real fault.
+        """
+        if oauth_configured():
+            return await self._oauth_login()
+
         tok, _ = _load_session()
         if tok:
             self.session_tok = tok
@@ -342,10 +435,16 @@ class TTAuth:
         async with httpx.AsyncClient(base_url=TT_API, timeout=15) as c:
             r = await c.get("/api-quote-tokens", headers=self._headers())
             if r.status_code == 401:
-                # The cached session died early. Drop it so the next attempt
-                # re-authenticates instead of failing the same way forever.
-                _clear_session()
-                _set_error("session expired — re-run to authenticate again")
+                if self.access_tok:
+                    # Access tokens are cheap to replace; force a refresh rather
+                    # than discarding a session the OAuth path never used.
+                    self.access_tok, self.access_exp = "", 0.0
+                    _set_error("access token expired — retry to refresh it")
+                else:
+                    # The cached session died early. Drop it so the next attempt
+                    # re-authenticates instead of failing the same way forever.
+                    _clear_session()
+                    _set_error("session expired — re-run to authenticate again")
                 return False
             if r.status_code != 200:
                 _set_error(f"quote tokens unavailable (HTTP {r.status_code})")
@@ -1121,10 +1220,14 @@ def scan_options_flow_tt(
     p = password or os.environ.get("TT_PASSWORD", "")
     if not u or not p:
         u, p = load_credentials()
-    if not u or not p:
-        _set_error("no credentials — set TT_USERNAME / TT_PASSWORD")
+    # An OAuth grant authenticates on its own; a username is only needed for
+    # the password path.
+    if not oauth_configured() and (not u or not p):
+        _set_error("no credentials — set TT_USERNAME / TT_PASSWORD, or an "
+                   "OAuth grant (TT_CLIENT_SECRET / TT_REFRESH_TOKEN)")
         if show_progress:
-            print("  [TT] No credentials found — set TT_USERNAME / TT_PASSWORD")
+            print("  [TT] No credentials found — set TT_USERNAME / TT_PASSWORD "
+                  "or an OAuth grant")
         return []
 
     try:
@@ -1151,12 +1254,19 @@ if __name__ == "__main__":
     # DELAYED: did the session authenticate, and did dxFeed hand back a feed?
     if "--check" in argv:
         u, p = load_credentials()
-        print(f"username         : {u or '(unset)'}")
-        print(f"password         : {'set' if p else '(unset)'}")
-        _tok, _exp = _load_session()
-        print(f"cached session   : {'valid until ' + _exp if _tok else '(none)'}")
-        if not u:
-            print("\nresult           : FAIL — no username; set TT_USERNAME")
+        _oauth = oauth_configured()
+        print(f"auth mode        : {'oauth2 personal grant' if _oauth else 'password + SMS'}")
+        if _oauth:
+            print(f"client secret    : set")
+            print(f"refresh token    : set (does not expire)")
+        else:
+            print(f"username         : {u or '(unset)'}")
+            print(f"password         : {'set' if p else '(unset)'}")
+            _tok, _exp = _load_session()
+            print(f"cached session   : {'valid until ' + _exp if _tok else '(none)'}")
+        if not _oauth and not u:
+            print("\nresult           : FAIL — no username; set TT_USERNAME, "
+                  "or configure an OAuth grant")
             sys.exit(1)
 
         auth = TTAuth(u, p)
