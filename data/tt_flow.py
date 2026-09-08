@@ -498,8 +498,23 @@ async def collect_prints(
     async with httpx.AsyncClient(timeout=None) as http_client:
         async with aconnect_ws(auth.dx_url, client=http_client) as ws:
 
+            # DXLink is client-initiated: the server says nothing until it
+            # receives a SETUP. Waiting for one instead of sending it meant the
+            # handshake never started, the 30s deadline expired, and the scan
+            # returned {} -- indistinguishable from a quiet tape.
+            await ws.send_json({
+                "type": "SETUP", "channel": 0,
+                "version": DXLINK_VERSION,
+                "keepaliveTimeout": 60,
+                "acceptKeepaliveTimeout": 60,
+            })
+
             setup_deadline = time.time() + 30  # 30s to complete handshake
             collect_deadline = 0.0             # set once collection starts
+            # Both sides must speak within keepaliveTimeout. Answering the
+            # server's KEEPALIVE is not enough on a long window: send our own
+            # while collecting, well inside the 60s the SETUP negotiated.
+            next_keepalive = time.time() + 25
 
             while True:
                 now = time.time()
@@ -509,6 +524,13 @@ async def collect_prints(
                 # Stop after collection window
                 if collecting and now >= collect_deadline:
                     break
+                if now >= next_keepalive:
+                    next_keepalive = now + 25
+                    try:
+                        await ws.send_json({"type": "KEEPALIVE", "channel": 0})
+                    except Exception:
+                        break
+
                 try:
                     msg = await asyncio.wait_for(ws.receive_json(), timeout=5.0)
                 except asyncio.TimeoutError:
