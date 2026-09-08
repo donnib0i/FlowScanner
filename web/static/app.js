@@ -1,6 +1,20 @@
 // PIN never injected into HTML — stored in localStorage only
 let PIN = localStorage.getItem('scanner_pin') || '';
-const _pa = p => PIN ? (p.includes('?') ? p+'&pin='+encodeURIComponent(PIN) : p+'?pin='+encodeURIComponent(PIN)) : p;
+
+// The PIN travels in a header, never the query string. As ?pin= it was written
+// into Railway's access logs, the CDN edge's logs, the Referer of any outbound
+// request and the browser's own history — none of which are places a shared
+// secret survives. _pa is kept as a no-op so every call site stays unchanged.
+const _pa = p => p;
+
+const _origFetch = window.fetch.bind(window);
+window.fetch = (input, init) => {
+  init = init || {};
+  if (PIN && typeof input === 'string' && input.startsWith('/api/')) {
+    init.headers = Object.assign({}, init.headers || {}, {'X-Pin': PIN});
+  }
+  return _origFetch(input, init);
+};
 
 function _promptPin(msg){
   const p = prompt(msg || 'Enter access PIN:');
