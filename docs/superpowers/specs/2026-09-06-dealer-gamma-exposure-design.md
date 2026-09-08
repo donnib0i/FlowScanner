@@ -1,7 +1,8 @@
 # Dealer Gamma Exposure — Full Greeks Engine + Measured GEX Surface
 
 **Date:** 2026-09-06
-**Status:** Approved design, pending spec review
+**Status:** Components 1–7 implemented 2026-09-07. Blocked on an open-interest
+source — see the amendment before Component 3.
 
 ## Goal
 
@@ -219,6 +220,21 @@ Longer-dated open interest contributes little gamma and a lot of fetch latency.
 Configurable via `GEX_EXPIRIES`.
 
 ---
+
+> **Amended 2026-09-07 during implementation — the data assumption was wrong.**
+> This spec asserted that yfinance supplies strike-level OI and that this is
+> "exactly what SpotGamma/MenthorQ feed their GEX models". Measured against the
+> live feed: yfinance returns **zero open interest** on every near expiry for
+> SPX, SPY and QQQ, and 17 of 612 strikes on the front monthly, while volume is
+> fully populated. Open interest is the entire input to a gamma profile, so
+> nothing usable can be built on this path. Components 1–7 are implemented and
+> tested, and `compute()` now refuses to render a surface when OI coverage falls
+> below `GEX_MIN_OI_COVERAGE`, reporting a missing reading rather than a zero
+> one. The likely real source is dxFeed's `Summary` event, which does carry
+> `openInterest` and which the TastyTrade session can now reach — but a
+> Sunday-night probe cannot distinguish "no OI" from "not published outside
+> market hours", so it is **untested and must be verified during a live
+> session** before being built on.
 
 ## Component 3: `core/market_data.py` — full-chain fetch
 
