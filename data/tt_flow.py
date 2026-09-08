@@ -40,6 +40,16 @@ import yfinance as yf
 TT_API         = "https://api.tastytrade.com"
 DXLINK_VERSION = "0.1-DXF-JS/23.11.0"
 
+# Sweep detection. OPRA marks Intermarket Sweep Orders with condition 'I', but
+# ISO is ubiquitous rather than rare: measured live on 2026-09-08, 73% of SPY
+# 0DTE prints carried it, and treating any ISO print as a sweep flagged 72% of
+# contracts -- a badge that fires on three contracts in four says nothing.
+# What the term actually denotes is one order split across exchanges and filled
+# in rapid succession, so detection requires ISO prints *clustered in time*.
+# At these thresholds the same sample flags 20%.
+SWEEP_MIN_ISO_PRINTS = 5
+SWEEP_WINDOW_MS      = 500
+
 # TimeAndSale fields in the order model_fields defines them (must match from_stream)
 TAS_FIELDS = [
     "eventSymbol", "eventTime",
@@ -665,19 +675,25 @@ def _classify_side(prints: List[DXPrint]) -> str:
 
 def _is_sweep(prints: List[DXPrint]) -> bool:
     """
-    True if exchange sweep condition is set OR ≥10 prints within 500ms.
-    The time-based threshold is intentionally tight — 3 prints/sec is normal
-    retail activity; true sweeps are rapid multi-exchange fills.
+    True when ISO prints cluster in time: one order worked across exchanges.
+
+    Both halves of the previous rule were broken. It returned True for any
+    single print carrying OPRA's 'I' (ISO) condition, which fires on 73% of
+    prints, so 72% of contracts were flagged. And its time check compared the
+    first and last print across the whole collection window, so requiring ten
+    prints inside 500ms could only pass if the contract traded exactly ten
+    times in the entire scan -- measured at 0% on live data. It also tested for
+    condition 'F', which never appears.
+
+    A sliding window is what the docstring always claimed to do.
     """
-    # Condition-based: exchange marks ISO intermarket sweeps with 'I' or 'F'
-    for p in prints:
-        if "I" in p.conditions or "F" in p.conditions:
-            return True
-    # Time-based: ≥10 distinct prints in 500ms = rapid multi-exchange sweep
-    times = sorted(p.ts for p in prints if p.ts > 0)
-    if len(times) >= 10 and (times[-1] - times[0]) < 500:
-        return True
-    return False
+    times = sorted(p.ts for p in prints
+                   if p.ts > 0 and "I" in (p.conditions or ""))
+    n = SWEEP_MIN_ISO_PRINTS
+    if len(times) < n:
+        return False
+    return any(times[i + n - 1] - times[i] < SWEEP_WINDOW_MS
+               for i in range(len(times) - n + 1))
 
 
 def aggregate_flow(
