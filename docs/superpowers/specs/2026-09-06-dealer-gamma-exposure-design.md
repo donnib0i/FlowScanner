@@ -79,6 +79,19 @@ calibrated deltas shift underneath signals that were tuned against them. For
 
 ### Near-expiry gamma handling
 
+> **Amended 2026-09-07 during implementation.** The clamp described below does
+> not survive contact and was replaced. At one minute to expiry every strike
+> more than a few points from the money has gamma that underflows to exactly
+> zero, so the median of non-zero magnitudes *is* the outlier and the clamp
+> never fires. Cluster the strikes and the opposite happens: the median becomes
+> a near-zero wing and the clamp crushes a genuinely dominant ATM strike. At
+> 0DTE that strike really does carry the surface -- that is the shape of the
+> book, not an artifact -- so suppressing it is the module editorialising its
+> own input, which the prime directive forbids. Shipped instead:
+> `max_strike_share` and a `concentrated` flag in provenance, so the reader can
+> discount the flip themselves. Points 1 and 2 below (the T and sigma floors)
+> still apply and are what keep gamma finite.
+
 `bs_delta` already handles `T → 0` by switching to the digital limit below
 `T < 0.0001`. Gamma has the opposite pathology: it diverges to infinity at the
 money rather than converging to a limit.
@@ -253,7 +266,8 @@ provenance = {
   expiries:         [...],
   strikes_total:    int,
   strikes_dropped:  int,   # no usable IV from feed or solver
-  strikes_clamped:  int,   # near-expiry gamma ceiling applied
+  max_strike_share: float, # largest single strike's share of |gamma notional|
+  concentrated:     bool,  # that share is at or above GEX_CONCENTRATION_FLAG
   inferred_pct:     float, # share of |gamma notional| with an observed sign
   assumed_pct:      float,
   ts:               float,
@@ -310,7 +324,7 @@ tunables:
 | Constant | Default | Purpose |
 |---|---|---|
 | `GEX_EXPIRIES` | `3` | Near expiries included, plus front monthly OPEX |
-| `GEX_GAMMA_CLAMP_X` | `20.0` | Per-strike gamma notional ceiling, as a multiple of chain median |
+| `GEX_CONCENTRATION_FLAG` | `0.50` | One strike holding this share of the surface is flagged |
 | `GEX_INFER_MIN_CONTRACTS` | `250` | Absolute classified-volume floor for sign inference |
 | `GEX_INFER_MIN_SHARE` | `0.60` | Classified share of strike volume required to infer |
 | `GEX_GRID_PCT` | `0.05` | Flip search spans ±5% around spot |
@@ -349,7 +363,8 @@ TDD — tests written before implementation.
 - Both inference gates independently reject: high share with low contract count,
   and high count with a split share.
 - Strikes with no usable IV are excluded and counted, not silently zeroed.
-- Clamping engages on a 0DTE ATM strike and increments the count.
+- A 0DTE chain reports a high `max_strike_share` and the dominant strike's
+  notional is left intact, not rewritten.
 - `inferred_pct` and `assumed_pct` are weighted by gamma notional, not by
   strike count.
 
@@ -388,5 +403,6 @@ Recorded here so they are not rediscovered as bugs:
 - Dealer hedging is an inference about behaviour, not an observation. Inventory
   does not obligate a price path.
 - Index gamma ignores hedging that occurs in ES futures or correlated products.
-- Clamping trades a small bias for stability on 0DTE. The count is surfaced so
-  the trade-off stays visible.
+- Near expiry the surface concentrates into the ATM strike and the flip
+  becomes correspondingly less meaningful. `concentrated` surfaces that rather
+  than hiding it behind a smoothed number.

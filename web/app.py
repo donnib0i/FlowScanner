@@ -59,7 +59,10 @@ from core.scanner import (
     get_flow_source,
 )
 from core.universe import get_universe, ANCHOR
+from core.constants import GEX_EXPIRIES
+from core.gex import compute as gex_compute
 from core.market_calendar import exchange_today, is_market_open
+from core.market_data import _yf, full_chain
 from data.unusual_flow import scan_unusual_flow, sector_flow_summary
 from data.etf_filter import filter_etfs, is_etf
 from data.sources import available_sources
@@ -647,6 +650,75 @@ async def api_scan(
     }
     _cache.set(cache_key, result, ttl_secs=300)
     return JSONResponse(content=result)
+
+@app.get("/api/gex")
+async def api_gex(req: Request, symbol: str = "SPX"):
+    """
+    Dealer gamma exposure. Measured quantities only -- net gamma notional in
+    dollars per 1% move, the zero-gamma flip in index points, and the walls.
+    No verdict: the response deliberately carries nothing that says where price
+    is going, and tests assert it stays that way.
+    """
+    _check_pin(req)
+    _check_rate(req, "gex", limit=10, window=60)
+    symbol = _validate_ticker(symbol)
+
+    loop = asyncio.get_event_loop()
+
+    def _build():
+        t = _yf(symbol)
+        try:
+            price = float(t.fast_info.last_price or 0)
+        except Exception:
+            price = 0.0
+        if price <= 0:
+            raise HTTPException(503, f"No spot price for {symbol}")
+
+        today = exchange_today()
+        # Near expiries plus the front monthly OPEX: longer-dated open interest
+        # contributes little gamma and a lot of fetch latency.
+        all_exps = list(getattr(t, "options", []) or [])
+        dated = []
+        for e in all_exps:
+            try:
+                d = datetime.strptime(e, "%Y-%m-%d").date()
+            except ValueError:
+                continue
+            if d >= today:
+                dated.append((e, (d - today).days, d))
+        dated.sort(key=lambda x: x[1])
+        chosen = dated[:GEX_EXPIRIES]
+        monthly = next((x for x in dated if x[2].weekday() == 4 and 15 <= x[2].day <= 21), None)
+        if monthly and monthly not in chosen:
+            chosen.append(monthly)
+        if not chosen:
+            raise HTTPException(503, f"No expiries available for {symbol}")
+
+        rows = full_chain(symbol, [e for e, _, _ in chosen])
+        dte_by_exp = {e: d for e, d, _ in chosen}
+        for r in rows:
+            # 0DTE still has intraday life left; a flat zero would price every
+            # strike at the one-minute floor.
+            dte = dte_by_exp.get(r.get("expiry"), 1)
+            r["T"] = max(dte, 0.5) / 365.0
+
+        out = gex_compute(rows, price, T=max(chosen[0][1], 0.5) / 365.0)
+        out["symbol"] = symbol
+        out["expiries"] = [e for e, _, _ in chosen]
+        out["provenance"]["expiries"] = out["expiries"]
+        return out
+
+    with contextlib.redirect_stdout(io.StringIO()):
+        try:
+            data = await asyncio.wait_for(
+                loop.run_in_executor(None, _build), timeout=60.0
+            )
+        except asyncio.TimeoutError:
+            raise HTTPException(504, "GEX build timed out")
+
+    data["last_updated"] = datetime.now().strftime("%H:%M:%S")
+    return data
+
 
 @app.get("/api/sectors")
 async def api_sectors(req: Request):

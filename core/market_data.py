@@ -102,6 +102,44 @@ def _option_chain(t: yf.Ticker, symbol: str, exp: str,
     return chain
 
 
+def full_chain(symbol: str, expiries: List[str]) -> List[Dict[str, Any]]:
+    """
+    Every strike of every named expiry, normalized to plain dicts.
+
+    Other call sites slice near the money; a gamma profile needs the whole
+    strike range, because the wings are where the open interest that anchors
+    the surface actually sits. Reuses the per-pass `_option_chain` cache, so a
+    GEX request during a flow scan costs no extra fetches.
+
+    Rows carry only what the aggregation layer consumes, so nothing downstream
+    has to know about DataFrames or yfinance's column names.
+    """
+    t = _yf(symbol)
+    rows: List[Dict[str, Any]] = []
+    for exp in expiries:
+        try:
+            chain = _option_chain(t, symbol, exp)
+        except Exception:
+            continue
+        for opt_type, frame in (("call", getattr(chain, "calls", None)),
+                                ("put", getattr(chain, "puts", None))):
+            if frame is None or getattr(frame, "empty", True):
+                continue
+            for rec in frame.to_dict("records"):
+                rows.append({
+                    "expiry":      exp,
+                    "type":        opt_type,
+                    "strike":      rec.get("strike"),
+                    "oi":          rec.get("openInterest"),
+                    "volume":      rec.get("volume"),
+                    "iv":          rec.get("impliedVolatility"),
+                    "bid":         rec.get("bid"),
+                    "ask":         rec.get("ask"),
+                    "last":        rec.get("lastPrice"),
+                })
+    return rows
+
+
 def clear_chain_cache() -> None:
     _chain_cache.clear()
 

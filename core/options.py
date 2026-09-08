@@ -29,33 +29,9 @@ from core.constants import (
     MIN_VOL,
     WIDE_SPREAD_PCT,
 )
+from core.greeks import bs_delta, bs_greeks, norm_cdf, norm_pdf  # noqa: F401  (re-exported)
 from core.market_data import _option_chain, _yf, vix_delta_target
 from core.fmt import fmt_flow, fmt_num
-
-
-def norm_cdf(x: float) -> float:
-    """Abramowitz & Stegun approximation (max error 7.5e-8)."""
-    t = 1.0 / (1.0 + 0.2316419 * abs(x))
-    p = t * (0.319381530 + t * (-0.356563782 + t * (1.781477937 + t * (-1.821255978 + t * 1.330274429))))
-    c = 1.0 - (1.0 / math.sqrt(2 * math.pi)) * math.exp(-0.5 * x * x) * p
-    return c if x >= 0 else 1.0 - c
-
-
-def bs_delta(S: float, K: float, T: float, sigma: float, opt_type: str = "call") -> float:
-    """Black-Scholes delta without scipy."""
-    T     = max(T, 1.0 / (365 * 1440))   # floor: 1 minute
-    sigma = max(sigma, 0.05)
-    if S <= 0 or K <= 0:
-        return (1.0 if opt_type == "call" else -1.0) if S > K else 0.0
-    # Near expiry: d1 → ±∞ and delta collapses to 0/1. Use limit directly.
-    if T < 0.0001:   # < ~52 minutes — digital payoff regime
-        if opt_type == "call":
-            return 1.0 if S >= K else 0.0
-        else:
-            return -1.0 if S <= K else 0.0
-    d1 = (math.log(S / K) + 0.5 * sigma ** 2 * T) / (sigma * math.sqrt(T))
-    d  = norm_cdf(d1)
-    return d if opt_type == "call" else d - 1.0
 
 
 def _num(v, default=0.0) -> float:
