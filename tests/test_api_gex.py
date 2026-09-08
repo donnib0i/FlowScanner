@@ -15,6 +15,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import web.app as webapp
+from core import market_calendar, market_data
 from core.greeks import bs_greeks
 
 
@@ -36,9 +37,12 @@ def chain_rows(exps=None):
     for e in (exps or EXPS):
         for k in (90.0, 95.0, 100.0, 105.0, 110.0):
             for kind in ("call", "put"):
+                # Priced near the ask with volume above the inference floor,
+                # so the derived dealer sign has something to work with. A mid
+                # print at volume 100 exercises only the fallback.
                 rows.append({"expiry": e, "type": kind, "strike": k,
-                             "oi": 1000, "volume": 100, "iv": 0.20,
-                             "bid": 1.0, "ask": 1.1, "last": 1.05})
+                             "oi": 1000, "volume": 600, "iv": 0.20,
+                             "bid": 1.00, "ask": 2.00, "last": 1.95})
     return rows
 
 
@@ -48,9 +52,13 @@ def _stub(monkeypatch):
     # often than a human would. Clear the window per test rather than raising
     # the limit -- the limit is doing its job.
     webapp._rl._windows.clear()
-    monkeypatch.setattr(webapp, "_yf", lambda s: _FakeTicker())
-    monkeypatch.setattr(webapp, "exchange_today", lambda: TODAY)
-    monkeypatch.setattr(webapp, "full_chain", lambda sym, exps: chain_rows(exps))
+    # Patch at the source modules, not on web.app: the fetch lives in
+    # core.gex.surface_for, which imports these directly. Patching the endpoint's
+    # namespace silently stopped stubbing anything and sent the suite to the
+    # live network.
+    monkeypatch.setattr(market_data, "_yf", lambda s: _FakeTicker())
+    monkeypatch.setattr(market_data, "full_chain", lambda sym, exps: chain_rows(exps))
+    monkeypatch.setattr(market_calendar, "exchange_today", lambda: TODAY)
 
 
 client = TestClient(webapp.app, raise_server_exceptions=False)
@@ -171,7 +179,7 @@ def test_no_spot_price_is_a_503_not_a_zeroed_surface(monkeypatch):
         options = EXPS
         class fast_info:
             last_price = 0.0
-    monkeypatch.setattr(webapp, "_yf", lambda s: _Dead())
+    monkeypatch.setattr(market_data, "_yf", lambda s: _Dead())
     assert client.get("/api/gex?symbol=SPX").status_code == 503
 
 
@@ -179,7 +187,7 @@ def test_no_expiries_is_a_503(monkeypatch):
     class _Empty:
         options = []
         fast_info = _FakeInfo()
-    monkeypatch.setattr(webapp, "_yf", lambda s: _Empty())
+    monkeypatch.setattr(market_data, "_yf", lambda s: _Empty())
     assert client.get("/api/gex?symbol=SPX").status_code == 503
 
 
@@ -187,7 +195,7 @@ def test_past_expiries_are_ignored(monkeypatch):
     class _Stale:
         options = ["2020-01-17"] + EXPS
         fast_info = _FakeInfo()
-    monkeypatch.setattr(webapp, "_yf", lambda s: _Stale())
+    monkeypatch.setattr(market_data, "_yf", lambda s: _Stale())
     assert "2020-01-17" not in get()["expiries"]
 
 
@@ -215,3 +223,27 @@ def test_ui_never_labels_open_interest_live():
     """Provenance must state staleness; the tab must not imply intraday OI."""
     js = open("web/static/app.js").read()
     assert "oi_asof" in js and "not intraday" in js
+
+
+def test_the_endpoint_and_the_cli_share_one_implementation():
+    """
+    Both previously carried their own copy of expiry selection and time-to-
+    expiry handling. Two copies drift, and the drift is invisible until the two
+    disagree about which strikes are in the surface.
+    """
+    import inspect
+    from core import gex
+
+    api = inspect.getsource(webapp.api_gex)
+    cli = inspect.getsource(__import__("core.report", fromlist=["x"]).print_gex_levels)
+    assert "surface_for" in api and "surface_for" in cli
+    for dup in ("GEX_EXPIRIES", "full_chain", "weekday()"):
+        assert dup not in api, f"{dup} should live in gex.surface_for only"
+        assert dup not in cli, f"{dup} should live in gex.surface_for only"
+
+
+def test_dealer_sign_is_inferred_from_the_chain_by_default():
+    """flow_from_chain must actually reach the endpoint, not sit unused."""
+    d = get()
+    assert d["provenance"]["inferred_pct"] > 0, \
+        "sign inference is wired but produced nothing"

@@ -1494,6 +1494,11 @@ function renderGexProv(d){
        pct(p.assumed_pct)+' assumed (dealers long calls / short puts).<br>';
   out+='Strikes: '+p.strikes_total+' total, '+p.strikes_dropped+' dropped for no usable IV. ';
   out+='Expiries: '+(p.expiries||[]).join(', ')+'.';
+  if(!p.flip_stable && p.flip_roots>1){
+    out+='<br><span class="warn">Net gamma crosses zero '+p.flip_roots+
+         '&times; within &plusmn;5% — the flip is an artifact of where spot '+
+         'sits, not a level.</span>';
+  }
   if(p.concentrated){
     out+='<br><span class="warn">One strike holds '+pct(p.max_strike_share)+
          ' of the surface — near expiry the flip means less.</span>';

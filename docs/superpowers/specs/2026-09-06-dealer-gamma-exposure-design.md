@@ -221,20 +221,25 @@ Configurable via `GEX_EXPIRIES`.
 
 ---
 
-> **Amended 2026-09-07 during implementation — the data assumption was wrong.**
-> This spec asserted that yfinance supplies strike-level OI and that this is
-> "exactly what SpotGamma/MenthorQ feed their GEX models". Measured against the
-> live feed: yfinance returns **zero open interest** on every near expiry for
-> SPX, SPY and QQQ, and 17 of 612 strikes on the front monthly, while volume is
-> fully populated. Open interest is the entire input to a gamma profile, so
-> nothing usable can be built on this path. Components 1–7 are implemented and
-> tested, and `compute()` now refuses to render a surface when OI coverage falls
-> below `GEX_MIN_OI_COVERAGE`, reporting a missing reading rather than a zero
-> one. The likely real source is dxFeed's `Summary` event, which does carry
-> `openInterest` and which the TastyTrade session can now reach — but a
-> Sunday-night probe cannot distinguish "no OI" from "not published outside
-> market hours", so it is **untested and must be verified during a live
-> session** before being built on.
+> **Amended 2026-09-07, corrected 2026-09-08.** The 2026-09-07 amendment
+> claimed yfinance supplies no open interest. That was measured at 21:00 on a
+> Sunday and was wrong as a general statement: **during market hours OI is fully
+> populated** — 100% strike coverage on SPX, 1.2M contracts, max 52,834 on a
+> strike. The zeros were a weekend artifact. The coverage gate
+> (`GEX_MIN_OI_COVERAGE`) stays, because it correctly refuses to render the
+> weekend surface, which produced a call wall 24% from spot off 8 contracts.
+> Lesson recorded rather than buried: do not generalise a data-availability
+> claim from a single out-of-hours sample.
+>
+> **What live data did reveal**, 2026-09-08 intraday:
+> - Sign inference reaches 77–88% coverage from the chain alone, and it matters:
+>   SPX net GEX moved from −$17.66B under the naive convention to +$4.83B with
+>   observed signs. The convention is not a detail.
+> - The profile crosses zero **6–7 times** within ±5%, and the nearest root
+>   moved ~90 points between two fetches seconds apart, because last-price
+>   jitter flips inferred signs strike by strike. `flip_stable` and `flip_roots`
+>   now report this. A single "flip level" is frequently not a real thing, and
+>   the module says so rather than printing one confident number.
 
 ## Component 3: `core/market_data.py` — full-chain fetch
 

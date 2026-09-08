@@ -389,3 +389,104 @@ def test_real_open_interest_is_still_reported_usable():
     out = G.compute(balanced_chain(), SPOT, 0.03)
     assert out["provenance"]["oi_usable"] is True
     assert out["provenance"]["oi_total"] == 4000
+
+
+# ── Time to expiry ────────────────────────────────────────────────────────────
+def test_zero_dte_uses_the_intraday_clock():
+    """At 15:55 a 0DTE contract has five minutes of life, not a full day."""
+    five_min = G.years_to_expiry(0, minutes_left=5)
+    full_day = G.years_to_expiry(0, minutes_left=390)
+    assert five_min < full_day
+    assert five_min == pytest.approx(5 / (365 * 24 * 60), rel=1e-9)
+
+
+def test_time_to_expiry_adds_the_remaining_session():
+    """A 2DTE contract still has today's remaining hours on top of two days."""
+    assert G.years_to_expiry(2, minutes_left=390) == pytest.approx(
+        2 / 365 + 390 / (365 * 24 * 60), rel=1e-9)
+
+
+def test_time_to_expiry_never_goes_below_the_floor():
+    assert G.years_to_expiry(0, minutes_left=0) == pytest.approx(G.MIN_T)
+
+
+def test_shorter_time_means_more_atm_gamma():
+    """Gamma scales as 1/sqrt(T); understating T understates the whole surface."""
+    near = G.build_profile([row(100.0, "call", oi=1000)], SPOT,
+                           G.years_to_expiry(0, minutes_left=30))
+    far = G.build_profile([row(100.0, "call", oi=1000)], SPOT,
+                          G.years_to_expiry(0, minutes_left=390))
+    assert near[0]["gamma_notional"] > far[0]["gamma_notional"] * 2
+
+
+# ── Deriving the sign from the chain ──────────────────────────────────────────
+def chain_row(strike, opt_type, bid, ask, last, volume):
+    return {"strike": strike, "type": opt_type, "bid": bid, "ask": ask,
+            "last": last, "volume": volume, "oi": 1000, "iv": 0.20}
+
+
+def test_last_near_the_ask_counts_as_customer_buying():
+    f = G.flow_from_chain([chain_row(100.0, "call", 1.00, 2.00, 1.95, 500)])
+    assert f[(100.0, "call")]["ask"] == 500
+
+
+def test_last_near_the_bid_counts_as_customer_selling():
+    f = G.flow_from_chain([chain_row(100.0, "call", 1.00, 2.00, 1.05, 500)])
+    assert f[(100.0, "call")]["bid"] == 500
+
+
+def test_mid_prints_are_not_recorded():
+    f = G.flow_from_chain([chain_row(100.0, "call", 1.00, 2.00, 1.50, 500)])
+    assert (100.0, "call") not in f
+
+
+def test_zero_volume_rows_are_ignored():
+    f = G.flow_from_chain([chain_row(100.0, "call", 1.00, 2.00, 1.95, 0)])
+    assert f == {}
+
+
+def test_volume_accumulates_across_expiries_at_one_strike():
+    f = G.flow_from_chain([chain_row(100.0, "call", 1.0, 2.0, 1.95, 300),
+                           chain_row(100.0, "call", 1.0, 2.0, 1.95, 400)])
+    assert f[(100.0, "call")]["ask"] == 700
+
+
+def test_derived_flow_actually_flips_a_dealer_sign():
+    """The end of the chain: derived flow must reach the profile, not sit unused."""
+    rows = [chain_row(100.0, "call", 1.00, 2.00, 1.95, 5000)]
+    naive = G.build_profile(rows, SPOT, 0.03)
+    inferred = G.build_profile(rows, SPOT, 0.03, flow=G.flow_from_chain(rows))
+    assert naive[0]["src"] == "assumed" and naive[0]["gamma_notional"] > 0
+    assert inferred[0]["src"] == "inferred" and inferred[0]["gamma_notional"] < 0
+
+
+# ── Flip stability ────────────────────────────────────────────────────────────
+def test_a_single_clean_crossing_is_reported_stable():
+    out = G.compute(balanced_chain(), SPOT, 0.03)
+    assert out["provenance"]["flip_roots"] == 1
+    assert out["provenance"]["flip_stable"] is True
+
+
+def test_a_profile_crossing_repeatedly_is_reported_unstable():
+    """
+    Observed on live SPX: seven roots within +/-5%. Alternating dealer signs on
+    adjacent strikes make net gamma oscillate through zero as spot passes each
+    one, so the nearest root is an artifact of where spot happens to sit -- and
+    it moved 90 points between two fetches seconds apart.
+    """
+    strikes = [96.0, 97.0, 98.0, 99.0, 100.0, 101.0, 102.0, 103.0, 104.0]
+    chain, flow = [], {}
+    for i, k in enumerate(strikes):
+        chain.append(row(k, "call", oi=5000, volume=10_000))
+        # Alternate observed sign strike by strike.
+        flow[(k, "call")] = ({"ask": 9000, "bid": 1000} if i % 2
+                             else {"ask": 1000, "bid": 9000})
+    out = G.compute(chain, SPOT, T=1.0 / 365, flow=flow)
+    assert out["provenance"]["flip_roots"] > 1, out["flips"]
+    assert out["provenance"]["flip_stable"] is False
+
+
+def test_no_flip_is_not_reported_as_stable():
+    out = G.compute([row(k, "call", oi=1000) for k in (95.0, 100.0, 105.0)], SPOT, 0.03)
+    assert out["flip"] is None
+    assert out["provenance"]["flip_stable"] is False

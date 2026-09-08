@@ -269,9 +269,126 @@ def compute(rows: List[Dict], spot: float, T: float,
             "oi_usable":       usable_oi,
             "strikes_total":   len(usable),
             "strikes_dropped": dropped,
+            "flip_roots":      len(flips),
+            # One clean crossing is a level. Seven is a profile oscillating
+            # through zero as spot passes each strike, and the nearest root is
+            # then an artifact of where spot happens to sit -- not a level to
+            # trade against. Reported so the reader can tell the two apart.
+            "flip_stable":     len(flips) == 1,
             "max_strike_share": max_share,
             "concentrated":     max_share >= GEX_CONCENTRATION_FLAG,
             "inferred_pct":    inferred_pct,
             "assumed_pct":     1.0 - inferred_pct,
         },
     }
+
+
+def years_to_expiry(dte: int, minutes_left: Optional[float] = None) -> float:
+    """
+    Time to expiry in years, honouring the intraday clock.
+
+    A flat `dte / 365` prices a 0DTE contract as if it had a full day of life
+    at 15:55, when it has five minutes. Gamma scales as 1/sqrt(T), so the error
+    is not cosmetic: at 13:50 with 2.1 hours left, a half-day floor understates
+    0DTE gamma by roughly 2.4x -- on precisely the contracts this is built for.
+
+    `minutes_left` is injectable so the calculation is testable without waiting
+    for a particular time of day.
+    """
+    if minutes_left is None:
+        from core.market_calendar import minutes_to_close
+        try:
+            minutes_left = max(float(minutes_to_close()), 0.0)
+        except Exception:
+            minutes_left = 0.0
+    # Outside RTH there is no intraday life left in today's contracts; the next
+    # session's open is the earliest they can trade again.
+    today_frac = minutes_left / (365.0 * 24.0 * 60.0)
+    return max(max(int(dte), 0) / 365.0 + today_frac, MIN_T)
+
+
+def flow_from_chain(rows: List[Dict]) -> Dict:
+    """
+    Classified volume per strike, derived from the chain itself.
+
+    `classify_trade_side` is the Lee-Ready heuristic the rest of the scanner
+    already uses: a last price near the ask means buyers were lifting it. That
+    is a per-contract read rather than a per-print one, so it is weaker than the
+    live tape -- but it is available on every chain fetch, and without it the
+    dealer sign falls back to the naive convention on every single strike,
+    which is the thing the hybrid model exists to avoid.
+    """
+    from core.options import classify_trade_side
+
+    out: Dict = {}
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        strike = _num(r.get("strike"))
+        opt_type = r.get("type")
+        vol = _num(r.get("volume"))
+        if strike <= 0 or opt_type not in ("call", "put") or vol <= 0:
+            continue
+        side = classify_trade_side(_num(r.get("bid")), _num(r.get("ask")),
+                                   _num(r.get("last")))
+        if side == "mid":
+            continue
+        e = out.setdefault((strike, opt_type), {"ask": 0.0, "bid": 0.0})
+        e[side] += vol
+    return out
+
+
+def surface_for(symbol: str, flow: Optional[Dict] = None) -> Dict[str, Any]:
+    """
+    Fetch and compute one symbol's gamma surface.
+
+    Lives here rather than in each caller because the API endpoint and the CLI
+    both need identical expiry selection and time-to-expiry handling, and two
+    copies of that drift.
+    """
+    from datetime import datetime as _dtm
+
+    from core.market_calendar import exchange_today
+    from core.market_data import _yf, full_chain
+
+    t = _yf(symbol)
+    try:
+        spot = float(t.fast_info.last_price or 0)
+    except Exception:
+        spot = 0.0
+    if spot <= 0:
+        raise ValueError(f"no spot price for {symbol}")
+
+    today = exchange_today()
+    dated = []
+    for e in list(getattr(t, "options", []) or []):
+        try:
+            d = _dtm.strptime(e, "%Y-%m-%d").date()
+        except ValueError:
+            continue
+        if d >= today:
+            dated.append((e, (d - today).days, d))
+    dated.sort(key=lambda x: x[1])
+    chosen = dated[:GEX_EXPIRIES]
+    # Front monthly OPEX carries outsized open interest even when it is further
+    # out than the near expiries, so it is included regardless.
+    monthly = next((x for x in dated
+                    if x[2].weekday() == 4 and 15 <= x[2].day <= 21), None)
+    if monthly and monthly not in chosen:
+        chosen.append(monthly)
+    if not chosen:
+        raise ValueError(f"no expiries available for {symbol}")
+
+    rows = full_chain(symbol, [e for e, _, _ in chosen])
+    t_by_exp = {e: years_to_expiry(d) for e, d, _ in chosen}
+    for r in rows:
+        r["T"] = t_by_exp.get(r.get("expiry"), years_to_expiry(1))
+
+    if flow is None:
+        flow = flow_from_chain(rows)
+
+    out = compute(rows, spot, T=t_by_exp[chosen[0][0]], flow=flow)
+    out["symbol"] = symbol
+    out["expiries"] = [e for e, _, _ in chosen]
+    out["provenance"]["expiries"] = out["expiries"]
+    return out

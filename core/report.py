@@ -453,43 +453,15 @@ def print_gex_levels(symbol: str = "SPX") -> None:
     does not print a bias, and the brief's BIAS / PLAY TYPE lines are not
     driven by it. See core/gex.py for why that separation is deliberate.
     """
-    from datetime import datetime as _dtm
+    from core.gex import surface_for
 
-    from core.constants import GEX_EXPIRIES
-    from core.gex import compute as gex_compute
-    from core.market_calendar import exchange_today
-    from core.market_data import _yf, full_chain
-
-    t = _yf(symbol)
     try:
-        spot = float(t.fast_info.last_price or 0)
-    except Exception:
-        spot = 0.0
-    if spot <= 0:
-        print(f"  no spot price for {symbol}")
+        out = surface_for(symbol)
+    except ValueError as e:
+        print(f"  {e}")
         return
+    spot = out["spot"]
 
-    today = exchange_today()
-    dated = []
-    for e in list(getattr(t, "options", []) or []):
-        try:
-            d = _dtm.strptime(e, "%Y-%m-%d").date()
-        except ValueError:
-            continue
-        if d >= today:
-            dated.append((e, (d - today).days))
-    dated.sort(key=lambda x: x[1])
-    chosen = dated[:GEX_EXPIRIES]
-    if not chosen:
-        print(f"  no expiries available for {symbol}")
-        return
-
-    rows = full_chain(symbol, [e for e, _ in chosen])
-    dte_by_exp = {e: d for e, d in chosen}
-    for r in rows:
-        r["T"] = max(dte_by_exp.get(r.get("expiry"), 1), 0.5) / 365.0
-
-    out = gex_compute(rows, spot, T=max(chosen[0][1], 0.5) / 365.0)
     net = out["net_gex"]
     net_s = (f"{'-' if net < 0 else ''}${abs(net)/1e9:.2f}B" if abs(net) >= 1e9
              else f"{'-' if net < 0 else ''}${abs(net)/1e6:.0f}M")
@@ -507,6 +479,9 @@ def print_gex_levels(symbol: str = "SPX") -> None:
     print(f"  Gamma:       flip {flip} | call wall {cw} | put wall {pw} | net {net_s}/1%")
     print(f"  (OI {p['oi_asof']}; {p['inferred_pct']*100:.0f}% of sign observed, "
           f"{p['assumed_pct']*100:.0f}% assumed; {p['strikes_dropped']} strikes dropped)")
+    if not p["flip_stable"] and p["flip_roots"] > 1:
+        print(f"  (net gamma crosses zero {p['flip_roots']}x within +/-5% — the flip is "
+              f"an artifact of where spot sits, not a level)")
     if p["concentrated"]:
         print(f"  (one strike holds {p['max_strike_share']*100:.0f}% of the surface — "
               f"near expiry the flip means less)")
