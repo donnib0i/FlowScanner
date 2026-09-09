@@ -114,16 +114,64 @@ def load_credentials() -> tuple[str, str]:
     return "", ""
 
 
+_OAUTH_PATH = os.path.expanduser("~/.tt_oauth.json")
+
+
 def _load_oauth() -> tuple[str, str, str]:
     """
     (client_secret, refresh_token, client_id) for an OAuth2 personal grant.
 
+    Env vars first, then ~/.tt_oauth.json — the same precedence and the same
+    home-directory location as load_credentials(), so neither secret ever needs
+    to live in the repo. This repo is public.
+
     client_id is optional: the server infers it from the refresh token, and
     sending a wrong one fails the exchange, so it is only forwarded when set.
     """
-    return (os.environ.get("TT_CLIENT_SECRET", "").strip(),
-            os.environ.get("TT_REFRESH_TOKEN", "").strip(),
-            os.environ.get("TT_CLIENT_ID", "").strip())
+    secret = os.environ.get("TT_CLIENT_SECRET", "").strip()
+    refresh = os.environ.get("TT_REFRESH_TOKEN", "").strip()
+    client_id = os.environ.get("TT_CLIENT_ID", "").strip()
+    if secret and refresh:
+        return secret, refresh, client_id
+
+    try:
+        with open(_OAUTH_PATH) as f:
+            data = json.load(f)
+    except Exception:
+        return secret, refresh, client_id
+    return (secret or str(data.get("client_secret", "") or "").strip(),
+            refresh or str(data.get("refresh_token", "") or "").strip(),
+            client_id or str(data.get("client_id", "") or "").strip())
+
+
+def save_oauth(client_secret: str, refresh_token: str = "",
+               client_id: str = "", path: Optional[str] = None) -> str:
+    """
+    Write an OAuth grant to ~/.tt_oauth.json, owner-read-only.
+
+    Merges rather than replaces, so the client secret can be saved when the app
+    is created and the refresh token added later when the grant is made —
+    without retyping a value tastytrade only shows once.
+    """
+    path = path or _OAUTH_PATH
+    existing = {}
+    try:
+        with open(path) as f:
+            existing = json.load(f)
+    except Exception:
+        pass
+    for key, val in (("client_secret", client_secret),
+                     ("refresh_token", refresh_token),
+                     ("client_id", client_id)):
+        if val:
+            existing[key] = val.strip()
+    # Mode at creation: writing then chmod'ing leaves it world-readable in
+    # between, and this is a brokerage credential.
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        json.dump(existing, f)
+    os.chmod(path, 0o600)
+    return path
 
 
 def oauth_configured() -> bool:

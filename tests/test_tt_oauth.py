@@ -254,3 +254,67 @@ def test_the_scan_entrypoint_does_not_demand_a_username(monkeypatch):
     src = inspect.getsource(tt_flow.scan_options_flow_tt)
     assert "oauth_configured()" in src, \
         "the credential gate must let an OAuth grant through"
+
+
+# ── Credential file ───────────────────────────────────────────────────────────
+def test_a_grant_can_live_in_a_file_instead_of_the_environment(tmp_path, monkeypatch):
+    """
+    The repo is public and a client secret is shown exactly once, so it needs a
+    home outside both the repo and the shell history.
+    """
+    p = tmp_path / "oauth.json"
+    monkeypatch.setattr(tt_flow, "_OAUTH_PATH", str(p))
+    tt_flow.save_oauth("sec-file", "ref-file", "cid-file")
+    assert tt_flow._load_oauth() == ("sec-file", "ref-file", "cid-file")
+    assert tt_flow.oauth_configured() is True
+
+
+def test_the_grant_file_is_owner_only(tmp_path, monkeypatch):
+    import os as _os
+    p = tmp_path / "oauth.json"
+    monkeypatch.setattr(tt_flow, "_OAUTH_PATH", str(p))
+    tt_flow.save_oauth("sec", "ref")
+    assert _os.stat(p).st_mode & 0o777 == 0o600
+
+
+def test_saving_merges_so_the_secret_survives_adding_the_token(tmp_path, monkeypatch):
+    """
+    The client secret is created before the grant exists and is displayed once.
+    Saving the refresh token later must not wipe it.
+    """
+    p = tmp_path / "oauth.json"
+    monkeypatch.setattr(tt_flow, "_OAUTH_PATH", str(p))
+    tt_flow.save_oauth("sec-only")
+    tt_flow.save_oauth("", "ref-added")
+    assert tt_flow._load_oauth()[:2] == ("sec-only", "ref-added")
+
+
+def test_the_environment_wins_over_the_file(tmp_path, monkeypatch):
+    """Railway sets env vars; a stale local file must not override prod."""
+    p = tmp_path / "oauth.json"
+    monkeypatch.setattr(tt_flow, "_OAUTH_PATH", str(p))
+    tt_flow.save_oauth("file-sec", "file-ref")
+    monkeypatch.setenv("TT_CLIENT_SECRET", "env-sec")
+    monkeypatch.setenv("TT_REFRESH_TOKEN", "env-ref")
+    assert tt_flow._load_oauth()[:2] == ("env-sec", "env-ref")
+
+
+def test_a_secret_without_a_token_is_still_not_configured(tmp_path, monkeypatch):
+    """Half a grant cannot authenticate; it must not look ready."""
+    p = tmp_path / "oauth.json"
+    monkeypatch.setattr(tt_flow, "_OAUTH_PATH", str(p))
+    tt_flow.save_oauth("sec-only")
+    assert tt_flow.oauth_configured() is False
+
+
+def test_a_missing_or_corrupt_file_is_not_fatal(tmp_path, monkeypatch):
+    p = tmp_path / "oauth.json"
+    monkeypatch.setattr(tt_flow, "_OAUTH_PATH", str(p))
+    assert tt_flow._load_oauth() == ("", "", "")
+    p.write_text("{not json")
+    assert tt_flow._load_oauth() == ("", "", "")
+
+
+def test_the_grant_file_is_gitignored():
+    """This repo is public."""
+    assert ".tt_oauth.json" in open(".gitignore").read()
