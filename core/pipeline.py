@@ -556,7 +556,7 @@ def enrich_contracts(results: List[Dict], top_n: int = 20, vix: float = -1.0,
             _t = _yf(r["ticker"])
             _exps = _t.options
             if _exps:
-                _today = datetime.now().date()
+                _today = exchange_today()
                 _near_exp = None
                 for _e in _exps:
                     _d = (datetime.strptime(_e, "%Y-%m-%d").date() - _today).days

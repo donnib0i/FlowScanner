@@ -47,7 +47,11 @@ MAX_DTE = 60
 
 def _dte(expiry_str: str) -> int:
     try:
-        return max(0, (datetime.strptime(expiry_str, "%Y-%m-%d").date() - date.today()).days)
+        # Exchange date, not the host's: Railway runs UTC and a developer may
+        # sit on Pacific, so a host date rolls past New York's in the evening
+        # and every contract is labelled a day closer to expiry than it is.
+        from core.market_calendar import exchange_today
+        return max(0, (datetime.strptime(expiry_str, "%Y-%m-%d").date() - exchange_today()).days)
     except Exception:
         return 99
 

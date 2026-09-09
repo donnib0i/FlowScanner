@@ -83,7 +83,7 @@ def gather_frame(top: int = 30, min_score: int = 35,
     secs = round(_time.time() - t0, 1)
 
     agg = aggregate_by_ticker(signals)
-    today = date.today().isoformat()
+    today = exchange_today().isoformat()
     leaders = []
     for tkr, a in sorted(agg.items(),
                          key=lambda kv: kv[1]["opt_vol"], reverse=True)[:top]:

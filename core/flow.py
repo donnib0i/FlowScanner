@@ -7,7 +7,7 @@ Part of the scanner core; `core.scanner` re-exports everything here.
 from core import runtime as _runtime  # noqa: F401  (warnings/colorama setup)
 
 from colorama import Fore, Style
-from core.market_calendar import is_market_open
+from core.market_calendar import exchange_today, is_market_open
 from core.repeat_hits import RepeatHitTracker
 from datetime import datetime
 from typing import List, Dict
@@ -146,7 +146,7 @@ def _scan_options_flow_yf(tickers: List[str], show_progress: bool = True,
     Sorted by whale_score descending.
     """
     flow_signals: List[Dict] = []
-    today = datetime.now().date()
+    today = exchange_today()
     # Callers that reach this path directly (the CLI's flow-only modes, tests)
     # still get repeat-hit history rather than silently skipping the write.
     tracker = tracker or RepeatHitTracker()
