@@ -9,7 +9,7 @@ Open:  http://localhost:8765
 """
 
 from __future__ import annotations
-import asyncio, collections, contextlib, hmac, io, json, logging, os, re, sys, threading, time
+import asyncio, collections, contextlib, hmac, io, json, logging, os, re, secrets, sys, threading, time
 
 logger = logging.getLogger(__name__)
 from datetime import datetime
@@ -180,6 +180,46 @@ def _check_rate(req: Request, endpoint: str, limit: int, window: int):
         raise HTTPException(429, detail="Too many requests -- slow down",
                             headers={"Retry-After": str(window)})
 
+# ─── SSE tickets ──────────────────────────────────────────────────────────────
+# EventSource cannot set request headers and does not route through
+# window.fetch, so the X-Pin header every other call uses is unreachable from
+# the flow stream. Without this, setting SCANNER_PIN silently 401s /api/flow --
+# the app's primary feature -- and the browser surfaces only a bare onerror.
+#
+# A ticket is single-use and short-lived, so the durable secret still never
+# reaches a URL, an access log, a Referer header or browser history. A leaked
+# ticket is worth one stream for a few seconds.
+_TICKET_TTL_S = 30.0
+_TICKET_MAX   = 256
+_TICKETS: Dict[str, float] = {}
+_TICKET_LOCK = threading.Lock()
+
+
+def _issue_ticket() -> str:
+    tok = secrets.token_urlsafe(24)
+    now = time.monotonic()
+    with _TICKET_LOCK:
+        # Drop expired entries first; only fall back to evicting the oldest if
+        # that frees nothing, so a flood cannot grow the store without bound.
+        dead = [k for k, exp in _TICKETS.items() if exp <= now]
+        for k in dead:
+            del _TICKETS[k]
+        while len(_TICKETS) >= _TICKET_MAX:
+            del _TICKETS[min(_TICKETS, key=_TICKETS.get)]
+        _TICKETS[tok] = now + _TICKET_TTL_S
+    return tok
+
+
+def _check_ticket(tok: str) -> bool:
+    """Consume a ticket. False for unknown, expired, or already-used."""
+    if not tok:
+        return False
+    now = time.monotonic()
+    with _TICKET_LOCK:
+        exp = _TICKETS.pop(tok, None)
+    return exp is not None and exp > now
+
+
 def _check_pin(req: Request):
     if not _PIN:
         if _REQUIRE_PIN:
@@ -187,6 +227,11 @@ def _check_pin(req: Request):
         return
     ip = _client_ip(req)
     supplied = req.headers.get("x-pin", "").strip()
+    if not supplied:
+        # An EventSource can only present a ticket, and only in the query.
+        ticket = req.query_params.get("ticket", "").strip()
+        if ticket and _check_ticket(ticket):
+            return
     if not supplied and _ALLOW_PIN_QUERY:
         supplied = req.query_params.get("pin", "").strip()
     if not hmac.compare_digest(supplied.encode("utf-8", errors="replace"),
@@ -486,6 +531,19 @@ async def api_status(req: Request):
         "macro": _FRED_OK,
         "chain_sources": available_sources(),
     }
+
+@app.get("/api/sse-ticket")
+async def api_sse_ticket(req: Request):
+    """
+    A single-use ticket the flow stream can present in its query string.
+
+    EventSource cannot send headers, so this is the only way an authenticated
+    browser can open /api/flow. Issuing requires the PIN like any other route.
+    """
+    _check_pin(req)
+    _check_rate(req, "sse_ticket", limit=60, window=60)
+    return {"ticket": _issue_ticket(), "expires_in": int(_TICKET_TTL_S)}
+
 
 @app.get("/api/universe")
 async def api_universe(req: Request):

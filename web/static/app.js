@@ -170,7 +170,7 @@ function tScope(){
   el.className='chip'+(S.full?' on':'');
 }
 
-function doFlowScan(retryCount){
+async function doFlowScan(retryCount){
   if(S.scanning&&!retryCount) return;
   retryCount=retryCount||0;
   if(!retryCount){
@@ -196,6 +196,19 @@ function doFlowScan(retryCount){
   btn.textContent='SCANNING '+n+'...';btn.className='scan-btn loading';
   const minScore=S.whale?60:40;
   const url=_pa('/api/flow?tickers='+tickers+'&dte='+S.dte+'&min_score='+minScore);
+  // EventSource cannot send headers, so when a PIN is set the stream
+  // authenticates with a single-use ticket instead. The PIN itself stays out of
+  // the URL, the access log and browser history.
+  if(PIN){
+    try{
+      const tr=await fetch('/api/sse-ticket');
+      if(_handleAuth(tr)) return;
+      if(tr.ok){
+        const tj=await tr.json();
+        if(tj.ticket) url += (url.includes('?')?'&':'?')+'ticket='+encodeURIComponent(tj.ticket);
+      }
+    }catch(e){ /* fall through: the stream will surface its own failure */ }
+  }
   const es=new EventSource(url);
   let gotData=false;
   es.onmessage=function(e){
