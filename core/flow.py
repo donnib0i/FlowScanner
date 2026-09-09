@@ -8,6 +8,7 @@ from core import runtime as _runtime  # noqa: F401  (warnings/colorama setup)
 
 from colorama import Fore, Style
 from core.market_calendar import is_market_open
+from core.repeat_hits import RepeatHitTracker
 from datetime import datetime
 from typing import List, Dict
 import time
@@ -83,7 +84,14 @@ def scan_options_flow(tickers: List[str], show_progress: bool = True,
     Tries the TastyTrade OPRA stream first and falls back to yfinance. Whichever
     one produced the returned signals is recorded via get_flow_source() so the
     UI can label the data honestly instead of trusting that credentials exist.
+
+    Both paths write their contracts to the repeat-hit store on the way out.
+    One tracker for the whole scan, built here rather than in either producer,
+    so the scan-level work (opening the store, pruning it) happens once even
+    when TastyTrade is tried first and falls through to yfinance.
     """
+    tracker = RepeatHitTracker()
+
     if _TT_AVAILABLE and scan_options_flow_tt is not None:
         try:
             if show_progress:
@@ -96,6 +104,8 @@ def scan_options_flow(tickers: List[str], show_progress: bool = True,
             )
             if tt_signals:
                 _set_flow_source("tastytrade-live", "live OPRA trade prints")
+                for sig in tt_signals:
+                    tracker.annotate(sig)
                 return tt_signals
             err = _tt_last_error()
             if err:
@@ -115,14 +125,14 @@ def scan_options_flow(tickers: List[str], show_progress: bool = True,
 
     signals = _scan_options_flow_yf(
         tickers, show_progress=show_progress,
-        on_signal=on_signal, on_progress=on_progress,
+        on_signal=on_signal, on_progress=on_progress, tracker=tracker,
     )
     _set_flow_source("yfinance-delayed", reason)
     return signals
 
 
 def _scan_options_flow_yf(tickers: List[str], show_progress: bool = True,
-                          on_signal=None, on_progress=None) -> List[Dict]:
+                          on_signal=None, on_progress=None, tracker=None) -> List[Dict]:
     """
     yfinance flow path: a 15-minute-delayed daily snapshot, not trade prints.
     Enhanced vs CheddarFlow/Unusual Whales:
@@ -137,6 +147,9 @@ def _scan_options_flow_yf(tickers: List[str], show_progress: bool = True,
     """
     flow_signals: List[Dict] = []
     today = datetime.now().date()
+    # Callers that reach this path directly (the CLI's flow-only modes, tests)
+    # still get repeat-hit history rather than silently skipping the write.
+    tracker = tracker or RepeatHitTracker()
 
     def dte_of(e: str) -> int:
         return (datetime.strptime(e, "%Y-%m-%d").date() - today).days
@@ -360,6 +373,11 @@ def _scan_options_flow_yf(tickers: List[str], show_progress: bool = True,
             elif iv_skew > 0.05 and signal["flow_bias"] == "call":
                 _skew_adj = 0.05    # bullish skew — slight call edge boost
             signal["iv_skew_options_adj"] = round(_skew_adj, 2)
+
+            # Before on_signal, not after the loop: the web scan serializes
+            # each signal the moment it is emitted, so a day count stamped
+            # later would never reach the browser.
+            tracker.annotate(signal)
 
             flow_signals.append(signal)
             if on_signal:

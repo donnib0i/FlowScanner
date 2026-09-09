@@ -347,6 +347,9 @@ def _serialize_flow(sig: Dict) -> Dict:
             "moneyness_pct":    c.get("moneyness_pct"),
             "spread_pct":       c.get("spread_pct"),
             "wide_spread":      bool(c.get("wide_spread", False)),
+            # Sessions this exact contract has printed in. 1 is a first
+            # sighting and must not be badged; 2+ is the "DAY N" read.
+            "repeat_days":      int(c.get("repeat_days") or 1),
         } for c in ranked]
 
     top_calls = _contracts("call_contracts")
