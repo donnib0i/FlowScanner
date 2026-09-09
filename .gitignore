@@ -21,3 +21,6 @@ data/*.db
 
 # Playwright MCP scratch output (snapshots, console logs)
 .playwright-mcp/
+
+# Agent worktrees — isolated checkouts, never part of the repo
+.claude/worktrees/
