@@ -56,7 +56,23 @@ const S={
   qt:[],ft:[],
   scanData:[],scanFilter:'any',scanSort:'setup',
   flowSort:'premium',flowDir:-1,
+  // Post-scan chips. The bar above SCAN decides what gets scanned and costs a
+  // rescan to change; these narrow a scan already paid for, in place.
+  fSweeps:false,fDte:'all',fMin:0,fWhale:false,
 };
+const FLOW_FILTERS={
+  // Sweep only became worth filtering on once it stopped firing on 72% of
+  // contracts. A golden sweep is a sweep that also cleared the size bar.
+  sweeps:function(s){return !!(s.has_sweep||s.golden)},
+  dte0:function(s){return s.dte===0},
+  swing:function(s){return s.dte>0},
+  whale:function(s){return s.score>=70||s.tier==='whale'||s.tier==='block'},
+  minPrem:function(s,v){return (s.total||0)>=v},
+};
+const FLOW_MIN_STEPS=[0,500000,1000000,5000000];
+const FLOW_MIN_LBLS=['MIN $','MIN $500K','MIN $1M','MIN $5M'];
+const FLOW_DTE_OPTS=['all','0dte','swing'];
+const FLOW_DTE_LBLS={'all':'ANY DTE','0dte':'0DTE','swing':'SWING'};
 const FLOW_SORT_KEYS={
   premium:function(s){return s.total||0},
   score:function(s){return s.score||0},
@@ -162,6 +178,7 @@ function doFlowScan(retryCount){
     setView('signals');
     document.getElementById('view-toggle').style.display='none';
     document.getElementById('flow-sort-bar').style.display='none';
+    document.getElementById('flow-filter-bar').style.display='none';
     document.getElementById('flow-feed').textContent='';
     document.getElementById('hot-feed').textContent='';
     document.getElementById('flow-bar').classList.remove('on');
@@ -196,9 +213,13 @@ function doFlowScan(retryCount){
       S.signals.push(s);
       S.callFlow+=s.call_flow||0;S.putFlow+=s.put_flow||0;
       (s.top_calls||[]).concat(s.top_puts||[]).forEach(function(c){S.hotContracts.push(Object.assign({},c,{ticker:s.ticker,badge:s.badge,cls:s.cls}))});
-      renderFlowCard(s);
+      // Cards stream in one at a time, so the chips have to gate them here
+      // too — otherwise a filter set mid-scan leaks every later signal in.
+      if(flowPasses(s)) renderFlowCard(s);
+      updateFlowFilterCount(S.signals.filter(flowPasses).length);
       updateFlowBias();
       document.getElementById('flow-sort-bar').style.display='flex';
+      document.getElementById('flow-filter-bar').style.display='flex';
     }
   };
   es.onerror=function(){
@@ -265,6 +286,69 @@ function badgeCls(b){
 function voiCls(v){return v>=10?'hot':v>=3?'warm':'cool'}
 function fmtVol(v){v=v||0;return v>=1000?(v/1000).toFixed(v>=10000?0:1)+'k':String(v)}
 function scoreCls(s){return s>=70?'whale':s>=50?'inst':'retail'}
+
+function renderFlowLadder(d){
+  // Where the premium is stacked, by strike. The four contract chips are
+  // ranked and capped, so they cannot show shape: six strikes bought in a row
+  // around spot and one lotto strike far out look identical there. Highest
+  // strike sits on top, the way a price ladder reads, with spot ruled across
+  // it so the stack's side of the money is obvious at a glance.
+  if(!d||!d.rows||!d.rows.length) return null;
+  const rows=d.rows.slice().sort((a,b)=>b.strike-a.strike);
+  const rowH=14,padT=6,padB=6,labelW=42,barX=46,rightPad=52;
+  const w=300,barW=w-barX-rightPad;
+  const h=padT+padB+rows.length*rowH;
+  const yOf=i=>padT+i*rowH+rowH/2;
+
+  let svg='<svg width="'+w+'" height="'+h+'" viewBox="0 0 '+w+' '+h+'" style="display:block;width:100%;max-width:'+w+'px">';
+  rows.forEach(function(r,i){
+    const y=yOf(i),len=Math.max(r.pct/100*barW,0.8);
+    // Calls and puts at one strike are a straddle, not conviction — keep the
+    // split visible instead of summing them into a single anonymous bar.
+    const cw=r.total?len*(r.call/r.total):0;
+    svg+='<text x="'+labelW+'" y="'+(y+3.2)+'" text-anchor="end" font-size="8.5" fill="#6b6b80" font-family="var(--font)">'+r.strike+'</text>';
+    if(cw>0) svg+='<rect x="'+barX+'" y="'+(y-4.5)+'" width="'+cw.toFixed(1)+'" height="9" rx="1.5" fill="#00ff88" opacity=".8"/>';
+    if(len-cw>0) svg+='<rect x="'+(barX+cw).toFixed(1)+'" y="'+(y-4.5)+'" width="'+(len-cw).toFixed(1)+'" height="9" rx="1.5" fill="#ff3355" opacity=".8"/>';
+    // The longest bar's amount would sit under the spot label in the right
+    // gutter, so on a long bar the amount moves inside it.
+    const inside=len>barW*0.62;
+    svg+='<text x="'+(inside?barX+len-5:barX+len+5).toFixed(1)+'" y="'+(y+3.2)+
+         '" text-anchor="'+(inside?'end':'start')+'" font-size="8" fill="'+
+         (inside?'#0a0a0f':'#6b6b80')+'" font-family="var(--font)">'+r.fmt+'</text>';
+  });
+
+  if(d.spot>0){
+    // Interpolate spot onto the strike axis, same as the GEX profile does, so
+    // the rule lands between strikes rather than snapping to the nearest row.
+    const hi=rows[0].strike,lo=rows[rows.length-1].strike;
+    let y;
+    if(d.spot>=hi) y=padT;
+    else if(d.spot<=lo) y=h-padB;
+    else{
+      y=yOf(0);
+      for(let i=0;i<rows.length-1;i++){
+        const a=rows[i].strike,b=rows[i+1].strike;
+        if(d.spot<=a&&d.spot>=b){const t=(a-d.spot)/(a-b);y=yOf(i)+(yOf(i+1)-yOf(i))*t;break}
+      }
+    }
+    const sy=y.toFixed(1);
+    svg+='<line x1="4" y1="'+sy+'" x2="'+(barX+barW)+'" y2="'+sy+'" stroke="#00d4ff" stroke-width="1" stroke-dasharray="3 3" opacity=".85"/>';
+    svg+='<text x="'+(barX+barW+4)+'" y="'+(y+3.2).toFixed(1)+'" font-size="8" fill="#00d4ff" font-family="var(--font)">'+d.spot.toFixed(2)+'</text>';
+  }
+  svg+='</svg>';
+
+  const wrap=document.createElement('div');
+  wrap.className='ladder-wrap';
+  const hdr=document.createElement('div');
+  hdr.className='cc-side-lbl';hdr.style.color='var(--sub)';
+  hdr.textContent='PREMIUM BY STRIKE';
+  wrap.appendChild(hdr);
+  const chart=document.createElement('div');
+  chart.className='ladder-chart';
+  chart.innerHTML=svg;   // static SVG built from numbers only — no user text
+  wrap.appendChild(chart);
+  return wrap;
+}
 
 function renderFlowCard(s){
   const feed=document.getElementById('flow-feed');
@@ -440,8 +524,51 @@ function renderFlowCard(s){
 
   card.appendChild(head);card.appendChild(sbWrap);card.appendChild(statsDiv);
   if(contractsWrap.childNodes.length) card.appendChild(contractsWrap);
+  const ladder=renderFlowLadder(s.ladder);
+  if(ladder) card.appendChild(ladder);
   card.appendChild(det);
   feed.appendChild(card);
+}
+function updateFlowFilterCount(shown){
+  // Say what was hidden. A chip that empties the feed in silence is
+  // indistinguishable from a scan that found nothing.
+  const cnt=document.getElementById('flow-filter-count');
+  cnt.textContent=shown<S.signals.length?shown+' of '+S.signals.length:'';
+}
+function flowPasses(s){
+  // Chips stack: every one that is on must pass. OR-ing them would put back
+  // exactly the noise the reader turned a chip on to remove.
+  if(S.fSweeps&&!FLOW_FILTERS.sweeps(s)) return false;
+  if(S.fDte==='0dte'&&!FLOW_FILTERS.dte0(s)) return false;
+  if(S.fDte==='swing'&&!FLOW_FILTERS.swing(s)) return false;
+  if(S.fWhale&&!FLOW_FILTERS.whale(s)) return false;
+  if(S.fMin>0&&!FLOW_FILTERS.minPrem(s,S.fMin)) return false;
+  return true;
+}
+function tFlowSweeps(){
+  S.fSweeps=!S.fSweeps;
+  document.getElementById('f-sweeps').className='chip'+(S.fSweeps?' on':'');
+  sortFlowFeed();
+}
+function tFlowDte(){
+  S.fDte=FLOW_DTE_OPTS[(FLOW_DTE_OPTS.indexOf(S.fDte)+1)%FLOW_DTE_OPTS.length];
+  const el=document.getElementById('f-dte');
+  el.textContent=FLOW_DTE_LBLS[S.fDte];
+  el.className='chip'+(S.fDte!=='all'?' on':'');
+  sortFlowFeed();
+}
+function tFlowMin(){
+  const i=(FLOW_MIN_STEPS.indexOf(S.fMin)+1)%FLOW_MIN_STEPS.length;
+  S.fMin=FLOW_MIN_STEPS[i];
+  const el=document.getElementById('f-min');
+  el.textContent=FLOW_MIN_LBLS[i];
+  el.className='chip'+(S.fMin>0?' on':'');
+  sortFlowFeed();
+}
+function tFlowWhale(){
+  S.fWhale=!S.fWhale;
+  document.getElementById('f-whale').className='chip'+(S.fWhale?' on':'');
+  sortFlowFeed();
 }
 function setFlowSort(v){S.flowSort=v;sortFlowFeed()}
 function toggleFlowDir(){
@@ -455,7 +582,16 @@ function sortFlowFeed(){
   S.signals.sort(function(a,b){return (key(a)-key(b))*S.flowDir});
   const feed=document.getElementById('flow-feed');
   feed.textContent='';
-  S.signals.forEach(renderFlowCard);
+  const shown=S.signals.filter(flowPasses);
+  shown.forEach(renderFlowCard);
+  updateFlowFilterCount(shown.length);
+  if(!shown.length){
+    const wrap=document.createElement('div');wrap.className='empty-st';
+    const h=document.createElement('h3');h.textContent='Nothing matches';
+    const p=document.createElement('p');
+    p.textContent=S.signals.length+' signal'+(S.signals.length>1?'s':'')+' hidden by the filters.';
+    wrap.appendChild(h);wrap.appendChild(p);feed.appendChild(wrap);
+  }
 }
 function toggleDetail(head){
   head.closest('.flow-card').querySelector('.card-detail').classList.toggle('open');
