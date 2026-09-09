@@ -43,6 +43,13 @@
       <button class="chip" id="c-scope" onclick="tScope()">QUICK</button>
       <button class="scan-btn" id="scan-btn" onclick="doFlowScan()">SCAN</button>
     </div>
+    <div class="filter-bar flow-filters" id="flow-filter-bar" style="display:none">
+      <button class="chip" id="f-sweeps" onclick="tFlowSweeps()" title="Only signals carrying a sweep">SWEEPS</button>
+      <button class="chip" id="f-dte" onclick="tFlowDte()" title="0DTE only / swing only / any">ANY DTE</button>
+      <button class="chip" id="f-min" onclick="tFlowMin()" title="Premium floor">MIN $</button>
+      <button class="chip" id="f-whale" onclick="tFlowWhale()" title="Whale score 70+ or block/whale tier">WHALE+</button>
+      <span class="filter-count" id="flow-filter-count"></span>
+    </div>
     <div class="sort-bar" id="flow-sort-bar" style="display:none">
       <span class="sort-lbl">SORT</span>
       <select class="sel" id="flow-sort" onchange="setFlowSort(this.value)">

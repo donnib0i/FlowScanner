@@ -71,6 +71,7 @@ from data.sources import available_sources
 _UOA_CACHE: dict = {"signals": [], "summary": {}, "ts": 0.0}
 _UOA_TTL = 600  # 10 min
 CARD_CONTRACTS = 4  # contracts serialized per side, per card
+LADDER_STRIKES = 8  # strike levels drawn per card — more is a wall, not a shape
 
 PORT = int(os.environ.get("PORT", 8765))
 
@@ -314,6 +315,45 @@ def _cls(sig: Dict) -> str:
     if s >= 50: return "inst"
     return "retail"
 
+def _strike_ladder(sig: Dict) -> Dict:
+    """
+    Premium stacked by strike, for the ladder on the card.
+
+    The four contract chips answer "what is the best contract to buy". They
+    cannot answer "where is the money", because they are capped and ranked: six
+    strikes bought in a row around spot and one lotto strike 8% out render the
+    same. This aggregates every contract in the signal onto its strike so the
+    shape shows, and rides `spot` along so the reader can see which side of the
+    money the stack is on.
+    """
+    spot = sig.get("spot", 0) or 0
+    by_strike: Dict[float, Dict] = {}
+    for c in (sig.get("call_contracts") or []) + (sig.get("put_contracts") or []):
+        try:
+            strike = float(c.get("strike") or 0)
+        except (TypeError, ValueError):
+            continue
+        if strike <= 0:
+            continue
+        # One strike is one level of interest however many expiries traded it.
+        row = by_strike.setdefault(strike, {"strike": strike, "call": 0.0, "put": 0.0})
+        row["put" if c.get("type") == "put" else "call"] += c.get("flow", 0) or 0
+
+    rows = list(by_strike.values())
+    for r in rows:
+        r["total"] = r["call"] + r["put"]
+    # Trim on size, then restore strike order: the axis is price, not rank.
+    rows.sort(key=lambda r: r["total"], reverse=True)
+    rows = rows[:LADDER_STRIKES]
+    rows.sort(key=lambda r: r["strike"])
+
+    top = max((r["total"] for r in rows), default=0.0)
+    for r in rows:
+        r["pct"] = round(r["total"] / top * 100, 1) if top else 0.0
+        r["above_spot"] = bool(spot) and r["strike"] > spot
+        r["fmt"] = _fmt(r["total"])
+    return {"rows": rows, "spot": spot}
+
 def _serialize_flow(sig: Dict) -> Dict:
     tc    = sig.get("top_contract") or {}
     all_c = sig.get("call_contracts", []) + sig.get("put_contracts", [])
@@ -351,6 +391,10 @@ def _serialize_flow(sig: Dict) -> Dict:
 
     top_calls = _contracts("call_contracts")
     top_puts  = _contracts("put_contracts")
+
+    # Counted over every contract, not the four that reach the chips: the
+    # "sweeps only" chip filters the signal, so it has to see the whole signal.
+    sweep_n = sum(1 for c in all_c if c.get("sweep") or c.get("golden_sweep"))
 
     score = sig.get("whale_score", 0)
     tier  = sig.get("premium_tier", "retail")
@@ -390,6 +434,9 @@ def _serialize_flow(sig: Dict) -> Dict:
         "top_calls":  top_calls,
         "top_puts":   top_puts,
         "spot":       sig.get("spot", 0),
+        "ladder":     _strike_ladder(sig),
+        "has_sweep":  sweep_n > 0,
+        "sweep_n":    sweep_n,
         # Contracts the quality gate excluded. Reported rather than dropped in
         # silence — an invisible filter is indistinguishable from an empty market.
         "filtered_n":       sig.get("filtered_n", 0),

@@ -350,3 +350,8 @@ th.sortable .arr{font-size:8px;margin-left:2px}
 .freshness.is-live{color:var(--green)}
 .freshness.is-live .dot{background:var(--green);box-shadow:0 0 5px var(--green)}
 .freshness.is-lagged .dot{background:var(--gold)}
+.ladder-wrap{padding:2px 0 4px}
+.ladder-chart{padding:0 12px}
+.flow-filters{padding:0 14px 8px}
+.filter-count{font-size:9px;color:var(--sub);letter-spacing:.5px;margin-left:auto;
+  flex-shrink:0;white-space:nowrap}
