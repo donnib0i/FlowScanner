@@ -351,3 +351,56 @@ def test_failed_auth_is_not_cached(monkeypatch):
     script(monkeypatch, [challenge(), challenge()], [otp_sent(), otp_sent()])
     assert asyncio.run(tt_flow._get_auth("u", "p")) is None
     assert tt_flow._AUTH_CACHE is None
+
+
+# ── The SMS is only sent when it can be answered ──────────────────────────────
+# Production proved this the hard way: Railway has a username and password, no
+# tty and no OAuth grant, so every flow scan POSTed /device-challenge, texted
+# Dante's phone, and then discovered it could not read the code. Observed live
+# 2026-09-09 in /api/status: "device challenge sent an OTP by SMS to ...2217,
+# but this host is non-interactive". With no PIN set, anyone with the URL could
+# trigger that.
+@pytest.mark.asyncio
+async def test_no_sms_is_sent_when_the_host_cannot_answer_it(monkeypatch):
+    from data import tt_flow as T
+
+    a = T.TTAuth("user", "pass")
+    sent = []
+
+    async def _post(challenge_token):
+        sent.append(challenge_token)
+        raise AssertionError("SMS triggered on a host that cannot answer")
+    monkeypatch.setattr(a, "_post_device_challenge", _post)
+    monkeypatch.setattr(T.sys.stdin, "isatty", lambda: False, raising=False)
+    monkeypatch.delenv("TT_OTP", raising=False)
+
+    class _R403:
+        headers = {"x-tastyworks-challenge-token": "tok"}
+
+    assert await a._device_challenge({}, _R403()) is False
+    assert sent == []
+    assert "non-interactive" in T.last_error().lower()
+
+
+@pytest.mark.asyncio
+async def test_the_sms_is_still_sent_when_a_tty_can_answer(monkeypatch):
+    from data import tt_flow as T
+
+    a = T.TTAuth("user", "pass")
+    sent = []
+
+    class _C:
+        status_code = 500          # stop the flow right after the send
+        def json(self): return {}
+
+    async def _post(challenge_token):
+        sent.append(challenge_token)
+        return _C()
+    monkeypatch.setattr(a, "_post_device_challenge", _post)
+    monkeypatch.setattr(T.sys.stdin, "isatty", lambda: True, raising=False)
+
+    class _R403:
+        headers = {"x-tastyworks-challenge-token": "tok"}
+
+    assert await a._device_challenge({}, _R403()) is False
+    assert sent == ["tok"]

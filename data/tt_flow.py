@@ -442,6 +442,21 @@ class TTAuth:
                        "returned in the response header")
             return False
 
+        # Refuse BEFORE the send, not after. /device-challenge is what texts the
+        # phone, and until 2026-09-09 the tty check sat below it: Railway has a
+        # username, a password, no tty and no OAuth grant, so every flow scan
+        # sent Dante a text and then reported it could not read the code back.
+        # With no PIN set on the deployment, anyone holding the URL could do
+        # that to his phone at will.
+        if not os.environ.get("TT_OTP", "").strip() and not sys.stdin.isatty():
+            _set_error(
+                "a device challenge is required, but this host is "
+                "non-interactive (no tty) so the texted code could never be "
+                "entered — no SMS was sent. Set TT_OTP, use an OAuth grant "
+                "(TT_CLIENT_SECRET / TT_REFRESH_TOKEN), or run from a terminal."
+            )
+            return False
+
         # Nothing reaches the user until this call is made.
         c = await self._post_device_challenge(challenge_token)
         if c.status_code != 200:
@@ -454,13 +469,6 @@ class TTAuth:
 
         otp = os.environ.get("TT_OTP", "").strip()
         if not otp:
-            if not sys.stdin.isatty():
-                _set_error(
-                    f"device challenge sent an OTP by SMS to {phone or 'your phone'}, "
-                    "but this host is non-interactive (no tty) so it cannot be "
-                    "entered. Set TT_OTP, or run the scan from a terminal."
-                )
-                return False
             print(f"TTAuth: TastyTrade texted a code to {phone or 'your phone'}.")
             otp = _prompt_for_otp(phone)
         if not otp:
