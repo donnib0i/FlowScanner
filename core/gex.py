@@ -338,6 +338,79 @@ def flow_from_chain(rows: List[Dict]) -> Dict:
     return out
 
 
+def merge_open_interest(rows: List[Dict], stats: Dict) -> int:
+    """
+    Fill missing open interest (and volume) from a live reading. Returns how
+    many rows were filled.
+
+    Only holes are filled. A yfinance row that carries a real number keeps it:
+    the two feeds settle at different moments, and silently preferring one over
+    the other would make the profile depend on which fetch happened to win.
+    """
+    if not stats:
+        return 0
+    filled = 0
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        strike = _num(r.get("strike"))
+        if strike <= 0 or r.get("type") not in ("call", "put"):
+            continue
+        rec = stats.get((r.get("expiry"), round(strike, 4), r.get("type")))
+        if not rec:
+            continue
+        oi = _num(rec.get("oi"))
+        if oi > 0 and _num(r.get("oi")) <= 0:
+            r["oi"] = int(oi)
+            filled += 1
+        dv = _num(rec.get("day_volume"))
+        if dv > 0 and _num(r.get("volume")) <= 0:
+            r["volume"] = int(dv)
+    return filled
+
+
+def _fetch_live_oi(symbol: str, expiries: List[str], spot: float = 0.0) -> Dict:
+    """Indirection point: the tests replace this, and an import failure here
+    must cost the surface nothing."""
+    from data.tt_flow import fetch_open_interest
+    return fetch_open_interest(symbol, list(expiries), spot=spot)
+
+
+def _oi_coverage(rows: List[Dict]) -> float:
+    """Share of usable strikes carrying any open interest -- the same test
+    `compute` applies, run early so the backfill is only paid for when the
+    surface would otherwise be refused."""
+    usable = [r for r in rows if isinstance(r, dict)
+              and _num(r.get("strike")) > 0 and r.get("type") in ("call", "put")]
+    if not usable:
+        return 0.0
+    return sum(1 for r in usable if _num(r.get("oi")) > 0) / len(usable)
+
+
+def backfill_open_interest(symbol: str, rows: List[Dict],
+                           expiries: List[str], spot: float = 0.0) -> str:
+    """
+    Ensure the chain has open interest, and report where it came from.
+
+    yfinance is asked first: it is the fetch the caller has already made, and
+    intraday it answers in full. Outside market hours it reports zeros instead
+    -- which is precisely when the next session is being planned -- so the same
+    settled number is read from dxFeed's Summary event and used to fill the
+    holes. Intraday this costs nothing: coverage passes and no fetch is made.
+    """
+    before = _oi_coverage(rows)
+    if before >= GEX_MIN_OI_COVERAGE:
+        return "yfinance"
+    try:
+        stats = _fetch_live_oi(symbol, expiries, spot)
+    except Exception:
+        return "yfinance"
+    filled = merge_open_interest(rows, stats)
+    if not filled:
+        return "yfinance"
+    return "dxfeed" if before <= 0.0 else "yfinance+dxfeed"
+
+
 def surface_for(symbol: str, flow: Optional[Dict] = None) -> Dict[str, Any]:
     """
     Fetch and compute one symbol's gamma surface.
@@ -384,10 +457,14 @@ def surface_for(symbol: str, flow: Optional[Dict] = None) -> Dict[str, Any]:
     for r in rows:
         r["T"] = t_by_exp.get(r.get("expiry"), years_to_expiry(1))
 
+    oi_source = backfill_open_interest(symbol, rows,
+                                       [e for e, _, _ in chosen], spot)
+
     if flow is None:
         flow = flow_from_chain(rows)
 
-    out = compute(rows, spot, T=t_by_exp[chosen[0][0]], flow=flow)
+    out = compute(rows, spot, T=t_by_exp[chosen[0][0]], flow=flow,
+                  oi_source=oi_source)
     out["symbol"] = symbol
     out["expiries"] = [e for e, _, _ in chosen]
     out["provenance"]["expiries"] = out["expiries"]

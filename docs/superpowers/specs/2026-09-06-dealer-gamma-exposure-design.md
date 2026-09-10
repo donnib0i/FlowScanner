@@ -1,8 +1,9 @@
 # Dealer Gamma Exposure — Full Greeks Engine + Measured GEX Surface
 
 **Date:** 2026-09-06
-**Status:** Components 1–7 implemented 2026-09-07. Blocked on an open-interest
-source — see the amendment before Component 3.
+**Status:** Components 1–7 implemented 2026-09-07. Out-of-hours open interest
+backfilled from dxFeed 2026-09-09 — see the amendments before Component 3. The
+backfill path has not yet been run against a live session.
 
 ## Goal
 
@@ -240,6 +241,43 @@ Configurable via `GEX_EXPIRIES`.
 >   jitter flips inferred signs strike by strike. `flip_stable` and `flip_roots`
 >   now report this. A single "flip level" is frequently not a real thing, and
 >   the module says so rather than printing one confident number.
+
+> **Amended 2026-09-09 — the out-of-hours gap is filled from dxFeed.**
+> Intraday the chain carries its own OI and nothing here changes. Outside
+> market hours yfinance reports zeros, so `surface_for` measures coverage
+> first and, only when it falls below `GEX_MIN_OI_COVERAGE`, backfills from
+> dxFeed's Summary event via `data.tt_flow.fetch_open_interest`. That matters
+> because the surface is most useful when the plan is written — pre-market and
+> after the close — which was exactly when it refused to render.
+>
+> Holes are filled; a strike where yfinance reported a real number keeps it,
+> because the two feeds settle at different moments and silently preferring one
+> would make the profile depend on which fetch won. `provenance.oi_source`
+> reports what the surface actually rests on — `yfinance`, `dxfeed`, or
+> `yfinance+dxfeed` — and the UI prints it next to the coverage share.
+>
+> The fetch is bounded (`OI_BAND` ±25% of spot, `OI_MAX_SYMBOLS` 1200,
+> nearest-strike-first): a full SPX chain across four expiries is several
+> thousand contracts and `/api/gex` runs under a 60s timeout. A reading is
+> cached 15 minutes — OI settles overnight and cannot change within a session;
+> an empty result is not cached, so one out-of-hours miss cannot suppress the
+> next attempt.
+>
+> It is gated harder than the flow scanner's `_TT_AVAILABLE`. A password login
+> POSTs `/device-challenge` — which is what sends the SMS — *before* it can
+> discover the host has no tty to answer it. `/api/gex` is user-triggered at 10
+> requests a minute, so an unguarded fetch would text a phone ten times a
+> minute and authenticate zero times. The fetch runs only when auth can
+> complete silently: OAuth grant, cached session, `TT_OTP`, or a real tty.
+>
+> **Still unverified.** Summary returned OI for 300/300 SPY symbols on
+> 2026-09-08, but that was the flow path during market hours. Whether dxFeed
+> publishes Summary OI *outside* the session — the entire point of this
+> backfill — has never been observed, and index chains (SPX/NDX) have not been
+> checked at all. Verify with a valid session: build the SPY surface after the
+> close and check `provenance.oi_source` reads `dxfeed`, then repeat for SPX.
+> If Summary is silent out-of-hours, the surface stays refused exactly as it
+> is today and nothing regresses.
 
 ## Component 3: `core/market_data.py` — full-chain fetch
 

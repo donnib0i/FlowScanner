@@ -1162,6 +1162,123 @@ async def _get_auth(username: str, password: str) -> Optional[TTAuth]:
     return auth
 
 
+# ── Open interest (Summary event, no prints required) ────────────────────────
+# Open interest is settled overnight, so a reading is good for the whole
+# session; refetching it per request would spend a 20s WebSocket collection on
+# a number that cannot have changed.
+_OI_CACHE:     Dict[tuple, tuple] = {}
+_OI_TTL_SECS:  float = 900.0
+# A full SPX chain across four expiries is several thousand contracts. The
+# collector subscribes in batches of 200 and waits for the feed to answer all
+# of them, so the request has to be bounded. Strikes are kept nearest-first:
+# the wings past +/-25% carry the least gamma and are the first to drop.
+OI_BAND        = 0.25
+OI_MAX_SYMBOLS = 1200
+
+
+async def _async_open_interest(ticker: str, expiries: List[str],
+                               username: str, password: str,
+                               spot: float = 0.0,
+                               timeout_secs: float = 15.0) -> Dict[tuple, Dict[str, int]]:
+    auth = await _get_auth(username, password)
+    if auth is None:
+        return {}
+
+    today = _dt.datetime.now(_ET).date()
+    dtes = []
+    for e in expiries:
+        try:
+            dtes.append((datetime.strptime(e, "%Y-%m-%d").date() - today).days)
+        except ValueError:
+            continue
+    if not dtes:
+        return {}
+
+    wanted = set(expiries)
+    contracts = [c for c in await fetch_chain(auth, ticker, max_dte=max(max(dtes), 0))
+                 if c.get("exp") in wanted]
+    if spot > 0:
+        near = [c for c in contracts
+                if abs(c["strike"] - spot) / spot <= OI_BAND]
+        # Never let the band empty the request: a symbol whose chain sits
+        # entirely outside it is better served by the nearest strikes than by
+        # nothing at all.
+        contracts = near or contracts
+        contracts.sort(key=lambda c: abs(c["strike"] - spot))
+    contracts = contracts[:OI_MAX_SYMBOLS]
+    if not contracts:
+        return {}
+
+    stats = await collect_contract_stats(
+        auth, [c["streamer_symbol"] for c in contracts], timeout_secs=timeout_secs)
+    if not stats:
+        return {}
+
+    out: Dict[tuple, Dict[str, int]] = {}
+    for c in contracts:
+        rec = stats.get(c["streamer_symbol"])
+        if rec:
+            out[(c["exp"], round(float(c["strike"]), 4), c["type"])] = dict(rec)
+    return out
+
+
+def fetch_open_interest(ticker: str, expiries: List[str], spot: float = 0.0,
+                        username: str = "", password: str = "",
+                        timeout_secs: float = 15.0) -> Dict[tuple, Dict[str, int]]:
+    """
+    Open interest and day volume per contract, keyed (expiry, strike, type).
+
+    The reason this exists: outside market hours yfinance reports zero open
+    interest across SPX/SPY/QQQ, and OI is the whole input to a gamma profile,
+    so the surface cannot be built pre-market or after the close. dxFeed's
+    Summary event carries the same settled number.
+
+    Returns {} on any failure -- no credentials, no session, a dead feed. The
+    caller's surface is degraded without it, never broken by it.
+    """
+    if not expiries:
+        return {}
+    key = (ticker, tuple(sorted(expiries)), round(spot, 2))
+    hit = _OI_CACHE.get(key)
+    now = time.monotonic()
+    if hit is not None and now - hit[0] < _OI_TTL_SECS:
+        return hit[1]
+
+    u = username or os.environ.get("TT_USERNAME", "")
+    p = password or os.environ.get("TT_PASSWORD", "")
+    if not u or not p:
+        u, p = load_credentials()
+
+    # Stricter than the flow scanner's gate, deliberately. A password login
+    # POSTs /device-challenge -- which is what sends the SMS -- before it can
+    # discover the host has no tty to answer it. A flow scan is one deliberate
+    # command; this runs behind /api/gex, rate-limited at 10 requests a minute.
+    # Unguarded, a stale session would text Dante ten times a minute and
+    # authenticate zero times. So: only auth paths that complete silently.
+    can_auth = (oauth_configured()
+                or bool(_load_session()[0])
+                or bool(os.environ.get("TT_OTP", "").strip())
+                or (u and p and sys.stdin.isatty()))
+    if not can_auth:
+        _set_error("open interest needs a TastyTrade session that can "
+                   "authenticate without an SMS challenge — an OAuth grant, a "
+                   "cached session, or TT_OTP")
+        return {}
+
+    try:
+        out = asyncio.run(_async_open_interest(ticker, list(expiries), u, p,
+                                               spot=spot,
+                                               timeout_secs=timeout_secs))
+    except Exception as e:
+        _set_error(f"{type(e).__name__}: {e}")
+        return {}
+    # Only a real reading is worth caching: an empty result outside market
+    # hours must not suppress the next attempt for fifteen minutes.
+    if out:
+        _OI_CACHE[key] = (now, out)
+    return out
+
+
 # ── Main async scanner ────────────────────────────────────────────────────────
 async def _async_scan(
     tickers:      List[str],

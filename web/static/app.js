@@ -1638,8 +1638,13 @@ function renderGexProv(d){
   const p=d.provenance;
   const pct=x=>(x*100).toFixed(0)+'%';
   let out='<div class="gex-prov">';
+  const SRC={'yfinance':'yfinance chain',
+             'dxfeed':'dxFeed Summary (TastyTrade)',
+             'yfinance+dxfeed':'yfinance chain, backfilled from dxFeed Summary'};
   out+='<b>Open interest is '+p.oi_asof+'</b> — not intraday. The surface is least '+
        'accurate on days with heavy overnight repositioning.<br>';
+  out+='OI source: '+(SRC[p.oi_source]||p.oi_source)+' — '+pct(p.oi_coverage)+
+       ' of strikes carry a reading.<br>';
   out+='Sign: '+pct(p.inferred_pct)+' observed from today\'s flow, '+
        pct(p.assumed_pct)+' assumed (dealers long calls / short puts).<br>';
   out+='Strikes: '+p.strikes_total+' total, '+p.strikes_dropped+' dropped for no usable IV. ';
@@ -1679,7 +1684,10 @@ async function loadGEX(){
       st.style.display='block';
       st.innerHTML='<b style="color:var(--gold)">No open interest in this chain.</b><br>'+
         'The feed returned none, so there is no surface to draw. This is a missing '+
-        'reading, not a zero one — nothing here is safe to trade off.';
+        'reading, not a zero one — nothing here is safe to trade off.<br>'+
+        'Outside market hours yfinance reports no OI; the fallback reading comes '+
+        'from dxFeed and needs TastyTrade credentials (or an OAuth grant) on this '+
+        'deployment. During market hours the chain itself carries OI.';
       return;
     }
     st.style.display='none';
