@@ -220,22 +220,25 @@ def _check_ticket(tok: str) -> bool:
     return exp is not None and exp > now
 
 
-def _mask_pin(pin: str) -> str:
+def _pin_banner(pin: str) -> str:
     """
-    The PIN for the banner, masked wherever stdout is captured.
+    What the startup banner says about the PIN: that there is one, and nothing
+    else.
 
-    Railway pipes stdout into a log that persists and is visible to anyone with
-    project access, and on 2026-09-10 the first PIN ever set on production was
-    sitting there in plaintext -- a secret worth no more than the log viewer.
-    Locally the banner is genuinely how you find the PIN, so it still prints in
-    full; a platform marker in the environment is what switches it off.
+    Two earlier versions of this line were wrong in instructive ways. The first
+    printed the PIN outright, and Railway captured it into a persistent,
+    project-visible log -- the first PIN ever set on production sat there in
+    plaintext. The second masked it only when a known platform marker was in
+    the environment, which fails *open*: an unrecognised host prints the secret
+    in full, and the list of platforms is exactly the thing nobody updates. It
+    also printed the length and last two characters, which is free brute-force
+    guidance for no benefit at all.
+
+    The PIN is always supplied by the operator -- SCANNER_PIN or --pin, never
+    generated here -- so the banner has nothing to tell them they do not
+    already have. It confirms the control is on.
     """
-    deployed = any(os.environ.get(k) for k in
-                   ("RAILWAY_ENVIRONMENT", "RAILWAY_SERVICE_ID", "RENDER",
-                    "DYNO", "FLY_APP_NAME", "K_SERVICE"))
-    if not deployed:
-        return pin
-    return f"set ({len(pin)} chars, ends {pin[-2:]}) — hidden: this host's logs are captured"
+    return "set — API requires it"
 
 
 def _check_pin(req: Request):
@@ -1276,7 +1279,7 @@ if __name__ == "__main__":
     print("  Local:   http://localhost:{}".format(PORT))
     print("  Network: http://{}:{}".format(lan_ip, PORT))
     if _PIN:
-        print("  PIN:     {}".format(_mask_pin(_PIN)))
+        print("  PIN:     {}".format(_pin_banner(_PIN)))
     print()
 
     uvicorn.run(app, host="0.0.0.0", port=PORT, log_level="warning")
