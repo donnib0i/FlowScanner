@@ -215,3 +215,22 @@ def test_rate_limiter_blocks_past_limit():
     rl = webapp._RateLimiter()
     assert all(rl.allow("k", 30, 60) for _ in range(30))
     assert rl.allow("k", 30, 60) is False
+
+
+def test_the_startup_banner_never_prints_the_pin_on_a_deployed_host():
+    """
+    Railway captures stdout into logs that persist and are shared with anyone
+    who can see the project. Observed 2026-09-10: the first PIN ever set on
+    production was sitting in the deploy log in plaintext, which makes the
+    secret worth exactly as much as access to the log viewer.
+
+    Locally the banner is how you find the PIN, so it still prints there. The
+    test pins the distinction: a host with a platform marker gets a mask.
+    """
+    import re
+    src = open(os.path.join(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))), "web", "app.py")).read()
+    banner = re.search(r'print\("  PIN:.*?\n', src)
+    assert banner, "the banner line moved -- re-point this test"
+    assert "_mask_pin" in banner.group(0), (
+        "the startup banner prints the PIN unmasked: " + banner.group(0).strip())

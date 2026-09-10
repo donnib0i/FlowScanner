@@ -220,6 +220,24 @@ def _check_ticket(tok: str) -> bool:
     return exp is not None and exp > now
 
 
+def _mask_pin(pin: str) -> str:
+    """
+    The PIN for the banner, masked wherever stdout is captured.
+
+    Railway pipes stdout into a log that persists and is visible to anyone with
+    project access, and on 2026-09-10 the first PIN ever set on production was
+    sitting there in plaintext -- a secret worth no more than the log viewer.
+    Locally the banner is genuinely how you find the PIN, so it still prints in
+    full; a platform marker in the environment is what switches it off.
+    """
+    deployed = any(os.environ.get(k) for k in
+                   ("RAILWAY_ENVIRONMENT", "RAILWAY_SERVICE_ID", "RENDER",
+                    "DYNO", "FLY_APP_NAME", "K_SERVICE"))
+    if not deployed:
+        return pin
+    return f"set ({len(pin)} chars, ends {pin[-2:]}) — hidden: this host's logs are captured"
+
+
 def _check_pin(req: Request):
     if not _PIN:
         if _REQUIRE_PIN:
@@ -1258,7 +1276,7 @@ if __name__ == "__main__":
     print("  Local:   http://localhost:{}".format(PORT))
     print("  Network: http://{}:{}".format(lan_ip, PORT))
     if _PIN:
-        print("  PIN:     {}".format(_PIN))
+        print("  PIN:     {}".format(_mask_pin(_PIN)))
     print()
 
     uvicorn.run(app, host="0.0.0.0", port=PORT, log_level="warning")
