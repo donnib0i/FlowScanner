@@ -1169,11 +1169,14 @@ async def _get_auth(username: str, password: str) -> Optional[TTAuth]:
 _OI_CACHE:     Dict[tuple, tuple] = {}
 _OI_TTL_SECS:  float = 900.0
 # A full SPX chain across four expiries is several thousand contracts. The
-# collector subscribes in batches of 200 and waits for the feed to answer all
-# of them, so the request has to be bounded. Strikes are kept nearest-first:
-# the wings past +/-25% carry the least gamma and are the first to drop.
+# collector is bounded by its own 15s window rather than by symbol count --
+# measured 2026-09-09 after hours, SPX cost 19.4s end to end at 2500 symbols
+# and 19.5s at 1200, while coverage went 52.6% -> 84.1%. So the cap exists only
+# to keep the subscription sane, and sits above a full index chain rather than
+# through the middle of one. Strikes are still kept nearest-first: past +/-25%
+# of spot they carry the least gamma and are the first to drop.
 OI_BAND        = 0.25
-OI_MAX_SYMBOLS = 1200
+OI_MAX_SYMBOLS = 2500
 
 
 async def _async_open_interest(ticker: str, expiries: List[str],

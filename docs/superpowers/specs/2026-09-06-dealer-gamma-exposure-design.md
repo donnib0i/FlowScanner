@@ -2,8 +2,8 @@
 
 **Date:** 2026-09-06
 **Status:** Components 1–7 implemented 2026-09-07. Out-of-hours open interest
-backfilled from dxFeed 2026-09-09 — see the amendments before Component 3. The
-backfill path has not yet been run against a live session.
+backfilled from dxFeed 2026-09-09 and verified live the same night — see the
+amendments before Component 3.
 
 ## Goal
 
@@ -270,14 +270,30 @@ Configurable via `GEX_EXPIRIES`.
 > minute and authenticate zero times. The fetch runs only when auth can
 > complete silently: OAuth grant, cached session, `TT_OTP`, or a real tty.
 >
-> **Still unverified.** Summary returned OI for 300/300 SPY symbols on
-> 2026-09-08, but that was the flow path during market hours. Whether dxFeed
-> publishes Summary OI *outside* the session — the entire point of this
-> backfill — has never been observed, and index chains (SPX/NDX) have not been
-> checked at all. Verify with a valid session: build the SPY surface after the
-> close and check `provenance.oi_source` reads `dxfeed`, then repeat for SPX.
-> If Summary is silent out-of-hours, the surface stays refused exactly as it
-> is today and nothing regresses.
+> **Verified live 2026-09-09, 01:45 ET — after the close, which was the open
+> question.** dxFeed does publish Summary open interest outside the session.
+> Coverage on the same chains that had refused to render:
+>
+> | Symbol | yfinance alone | after backfill | OI total | cold build |
+> |---|---|---|---|---|
+> | SPY | 1.3% | 80.1% | 4,035,574 | 18.5s |
+> | SPX | — | 84.1% | 1,316,448 | 19.4s |
+> | QQQ | — | 75.3% | 2,825,254 | — |
+>
+> Warm (cached OI) rebuilds cost 1–2s. Every surface came back `usable` where
+> all three had been refused an hour earlier.
+>
+> Two findings from that run, neither of them bugs:
+> - `OI_MAX_SYMBOLS` was set at 1200, which cut a 2151-contract SPX chain in
+>   half for nothing: the collector is bounded by its 15s window, not by symbol
+>   count, so 2500 symbols cost 19.4s against 1200's 19.5s and lifted coverage
+>   52.6% -> 84.1%. Raised to 2500, above a full index chain.
+> - **Sign inference collapses out of hours.** QQQ came back `inferred_pct` 0%
+>   (SPX 78%), because inference reads the chain's last/bid/ask and a stale
+>   close carries no aggressor. A 0% surface is the naive convention end to
+>   end — the same convention that moved SPX net GEX by $22B intraday. The
+>   number is already reported and the UI already prints it; read it before
+>   trusting an after-hours flip.
 
 ## Component 3: `core/market_data.py` — full-chain fetch
 
