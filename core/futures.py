@@ -67,6 +67,38 @@ CONTRACTS: Dict[str, List[Dict[str, Any]]] = {
 }
 
 
+# A future is not a thing with an option chain -- it is a thing that hedges one.
+# Typing "MNQ" into a gamma scanner is a completely reasonable request, and it
+# means "show me the Nasdaq surface in MNQ prices", so it resolves to the index
+# whose options dealers hedge with that contract. ^DJI carries no chain at all
+# on this feed, so YM resolves to the ETF instead of the index.
+SURFACE_UNDERLYING: Dict[str, str] = {
+    "ES": "SPX", "NQ": "NDX", "RTY": "RUT", "YM": "DIA",
+}
+
+# Every code that should resolve, full size and micro alike.
+_CODE_TO_FAMILY: Dict[str, str] = {
+    c["code"]: fam for fam, sizes in CONTRACTS.items() for c in sizes
+}
+
+
+def resolve(symbol: str):
+    """
+    (underlying to build the surface on, contract code to preselect).
+
+    Accepts the ways a trader actually writes a contract -- MNQ, /MNQ, MNQ=F --
+    and passes anything else straight through untouched, so an ordinary ticker
+    is unaffected.
+    """
+    raw = (symbol or "").strip().upper().lstrip("/")
+    if raw.endswith("=F"):
+        raw = raw[:-2]
+    fam = _CODE_TO_FAMILY.get(raw)
+    if not fam:
+        return (symbol or "").strip().upper(), None
+    return SURFACE_UNDERLYING[fam], raw
+
+
 def contracts_for(symbol: str) -> List[Dict[str, Any]]:
     """Both sizes of the contract that hedges `symbol`, full-size first."""
     fam = FUTURES_MAP.get((symbol or "").upper())

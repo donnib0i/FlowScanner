@@ -228,3 +228,44 @@ def test_a_micro_with_no_quote_falls_back_to_the_full_contract(wired):
 
 def test_a_single_name_lists_no_contracts_at_all():
     assert F.contracts_for("NVDA") == []
+
+
+# ── typing a contract instead of a ticker ────────────────────────────────────
+def test_a_futures_code_resolves_to_the_chain_its_options_live_on():
+    # There is no option chain on MNQ. Typing it means "the Nasdaq surface, in
+    # MNQ prices", so it resolves to the index dealers hedge with that contract.
+    assert F.resolve("MNQ") == ("NDX", "MNQ")
+    assert F.resolve("NQ") == ("NDX", "NQ")
+    assert F.resolve("ES") == ("SPX", "ES")
+    assert F.resolve("MES") == ("SPX", "MES")
+    assert F.resolve("RTY") == ("RUT", "RTY")
+
+
+def test_the_dow_resolves_to_the_etf_because_the_index_carries_no_chain():
+    # ^DJI returns zero expiries on this feed; DIA is the tradeable chain.
+    assert F.resolve("YM") == ("DIA", "YM")
+    assert F.resolve("MYM") == ("DIA", "MYM")
+
+
+def test_the_ways_a_trader_actually_writes_a_contract_all_resolve():
+    for typed in ("MNQ", "mnq", "/MNQ", "/mnq", "MNQ=F", "mnq=f"):
+        assert F.resolve(typed) == ("NDX", "MNQ"), typed
+
+
+def test_an_ordinary_ticker_passes_through_untouched():
+    assert F.resolve("QQQ") == ("QQQ", None)
+    assert F.resolve("nvda") == ("NVDA", None)
+    assert F.resolve("SPX") == ("SPX", None)
+
+
+def test_an_empty_symbol_does_not_blow_up():
+    assert F.resolve("") == ("", None)
+    assert F.resolve(None) == ("", None)
+
+
+def test_every_family_resolves_to_a_symbol_that_has_a_chain():
+    # The map is only useful if each target actually carries options; ^DJI is
+    # the reason this is asserted rather than assumed.
+    for fam in F.CONTRACTS:
+        assert fam in F.SURFACE_UNDERLYING, f"{fam} resolves nowhere"
+    assert set(F.SURFACE_UNDERLYING.values()) == {"SPX", "NDX", "RUT", "DIA"}

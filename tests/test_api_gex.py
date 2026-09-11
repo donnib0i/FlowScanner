@@ -93,6 +93,31 @@ def test_the_futures_link_rides_along_with_the_surface(monkeypatch):
     assert f["ratio"] == 1.001
 
 
+def test_typing_a_contract_builds_the_surface_on_the_chain_behind_it():
+    # "no spot price for MNQ" was the old answer, which is true and useless:
+    # there is no chain on a future, but there is one on what it hedges.
+    d = get("/api/gex?symbol=mnq")
+    assert d["symbol"] == "NDX"
+    assert d["requested"] == "MNQ"
+    assert d["preselect_contract"] == "MNQ"
+    assert d["resolved_from_future"] is True
+
+
+def test_a_slashed_or_suffixed_contract_is_accepted_without_widening_the_pattern():
+    # /MNQ and MNQ=F never reach _validate_ticker as written; they are
+    # normalised first, so the ticker pattern still refuses "/" and "=".
+    for typed in ("/MNQ", "MNQ=F"):
+        assert get(f"/api/gex?symbol={typed}")["symbol"] == "NDX"
+    assert client.get("/api/gex?symbol=A/B").status_code == 400
+
+
+def test_an_ordinary_ticker_is_not_flagged_as_resolved():
+    d = get("/api/gex?symbol=SPX")
+    assert d["resolved_from_future"] is False
+    assert d["preselect_contract"] is None
+    assert d["requested"] == "SPX"
+
+
 def test_a_ticker_with_no_future_reports_null_rather_than_omitting_the_key(monkeypatch):
     import core.futures
     monkeypatch.setattr(core.futures, "link_for", lambda s: None)

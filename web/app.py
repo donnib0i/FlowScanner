@@ -790,6 +790,13 @@ async def api_gex(req: Request, symbol: str = "SPX"):
     """
     _check_pin(req)
     _check_rate(req, "gex", limit=10, window=60)
+    # A futures code resolves to the index whose options it hedges: "MNQ" means
+    # the Nasdaq surface read in MNQ prices, not a chain on MNQ, which does not
+    # exist. Resolving before validation keeps /MNQ and MNQ=F working without
+    # widening the ticker pattern to accept "/" and "=".
+    from core.futures import resolve as _resolve_future
+    requested = (symbol or "").strip().upper()
+    symbol, preselect = _resolve_future(symbol)
     symbol = _validate_ticker(symbol)
 
     loop = asyncio.get_event_loop()
@@ -809,6 +816,12 @@ async def api_gex(req: Request, symbol: str = "SPX"):
             raise HTTPException(504, "GEX build timed out")
 
     data["last_updated"] = datetime.now().strftime("%H:%M:%S")
+    # What was asked for vs what the surface was actually measured on. The
+    # client says so on screen rather than quietly answering a different
+    # question than the one typed.
+    data["requested"] = requested
+    data["resolved_from_future"] = bool(preselect)
+    data["preselect_contract"] = preselect
     return data
 
 
