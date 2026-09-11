@@ -117,13 +117,13 @@ function _refreshSourceBadge(){
   const badge=document.getElementById('source-badge');
   if(d.live){
     badge.textContent='● LIVE — TastyTrade OPRA feed';
-    badge.style.color='#00ff88';
+    badge.style.color='var(--up)';
   } else if(d.flow_source==='unknown'){
     badge.textContent='○ source unknown — no flow scan yet';
-    badge.style.color='#555';
+    badge.style.color='var(--t3)';
   } else {
     badge.textContent='○ DELAYED — yfinance 15min';
-    badge.style.color='#555';
+    badge.style.color='var(--t3)';
     if(d.flow_source_reason) badge.title=d.flow_source_reason;
   }
   _updateFlowFreshness(d);
@@ -193,7 +193,7 @@ async function doFlowScan(retryCount){
     ||'SPX,NVDA,AMD,AAPL,MSFT,META,AMZN,TSLA';
   const n=tickers.split(',').length;
   const btn=document.getElementById('scan-btn');
-  btn.textContent='SCANNING '+n+'...';btn.className='scan-btn loading';
+  btn.textContent='Scanning '+n+'…';btn.className='scan-btn loading';
   const minScore=S.whale?60:40;
   const url=_pa('/api/flow?tickers='+tickers+'&dte='+S.dte+'&min_score='+minScore);
   // EventSource cannot send headers, so when a PIN is set the stream
@@ -249,7 +249,7 @@ async function doFlowScan(retryCount){
 function endFlowScan(err){
   S.scanning=false;
   const btn=document.getElementById('scan-btn');
-  btn.textContent=S.full?'FULL':'SCAN';btn.className='scan-btn';
+  btn.textContent=S.full?'Full':'Scan';btn.className='scan-btn';
   document.getElementById('pw').style.display='none';
   document.getElementById('pl').style.display='none';
   document.getElementById('pb').style.width='0%';
@@ -274,12 +274,12 @@ function endFlowScan(err){
 }
 function updateFlowBias(){
   const cf=S.callFlow,pf=S.putFlow;
-  document.getElementById('bc').textContent='CALLS '+fmt(cf);
-  document.getElementById('bp').textContent='PUTS '+fmt(pf);
+  document.getElementById('bc').textContent=fmt(cf);
+  document.getElementById('bp').textContent=fmt(pf);
   const bd=document.getElementById('bd');
-  if(cf>pf*1.2){bd.textContent='BULL';bd.className='bias-dir bull'}
-  else if(pf>cf*1.2){bd.textContent='BEAR';bd.className='bias-dir bear'}
-  else{bd.textContent='EVEN';bd.className='bias-dir neut'}
+  if(cf>pf*1.2){bd.textContent='Bull';bd.className='bias-dir bull'}
+  else if(pf>cf*1.2){bd.textContent='Bear';bd.className='bias-dir bear'}
+  else{bd.textContent='Even';bd.className='bias-dir neut'}
   const total=cf+pf;
   if(total>0){
     document.getElementById('flow-fill').style.width=Math.round(cf/total*100)+'%';
@@ -319,15 +319,15 @@ function renderFlowLadder(d){
     // Calls and puts at one strike are a straddle, not conviction — keep the
     // split visible instead of summing them into a single anonymous bar.
     const cw=r.total?len*(r.call/r.total):0;
-    svg+='<text x="'+labelW+'" y="'+(y+3.2)+'" text-anchor="end" font-size="8.5" fill="#6b6b80" font-family="var(--font)">'+r.strike+'</text>';
-    if(cw>0) svg+='<rect x="'+barX+'" y="'+(y-4.5)+'" width="'+cw.toFixed(1)+'" height="9" rx="1.5" fill="#00ff88" opacity=".8"/>';
-    if(len-cw>0) svg+='<rect x="'+(barX+cw).toFixed(1)+'" y="'+(y-4.5)+'" width="'+(len-cw).toFixed(1)+'" height="9" rx="1.5" fill="#ff3355" opacity=".8"/>';
+    svg+='<text x="'+labelW+'" y="'+(y+3.2)+'" text-anchor="end" font-size="8.5" fill="var(--t3)" font-family="var(--font)">'+r.strike+'</text>';
+    if(cw>0) svg+='<rect x="'+barX+'" y="'+(y-4.5)+'" width="'+cw.toFixed(1)+'" height="9" rx="1.5" fill="var(--up)" opacity=".8"/>';
+    if(len-cw>0) svg+='<rect x="'+(barX+cw).toFixed(1)+'" y="'+(y-4.5)+'" width="'+(len-cw).toFixed(1)+'" height="9" rx="1.5" fill="var(--dn)" opacity=".8"/>';
     // The longest bar's amount would sit under the spot label in the right
     // gutter, so on a long bar the amount moves inside it.
     const inside=len>barW*0.62;
     svg+='<text x="'+(inside?barX+len-5:barX+len+5).toFixed(1)+'" y="'+(y+3.2)+
          '" text-anchor="'+(inside?'end':'start')+'" font-size="8" fill="'+
-         (inside?'#0a0a0f':'#6b6b80')+'" font-family="var(--font)">'+r.fmt+'</text>';
+         (inside?'var(--ink)':'var(--t3)')+'" font-family="var(--font)">'+r.fmt+'</text>';
   });
 
   if(d.spot>0){
@@ -345,8 +345,8 @@ function renderFlowLadder(d){
       }
     }
     const sy=y.toFixed(1);
-    svg+='<line x1="4" y1="'+sy+'" x2="'+(barX+barW)+'" y2="'+sy+'" stroke="#00d4ff" stroke-width="1" stroke-dasharray="3 3" opacity=".85"/>';
-    svg+='<text x="'+(barX+barW+4)+'" y="'+(y+3.2).toFixed(1)+'" font-size="8" fill="#00d4ff" font-family="var(--font)">'+d.spot.toFixed(2)+'</text>';
+    svg+='<line x1="4" y1="'+sy+'" x2="'+(barX+barW)+'" y2="'+sy+'" stroke="var(--m4)" stroke-width="1" stroke-dasharray="3 3" opacity=".85"/>';
+    svg+='<text x="'+(barX+barW+4)+'" y="'+(y+3.2).toFixed(1)+'" font-size="8" fill="var(--m4)" font-family="var(--font)">'+d.spot.toFixed(2)+'</text>';
   }
   svg+='</svg>';
 
@@ -354,7 +354,7 @@ function renderFlowLadder(d){
   wrap.className='ladder-wrap';
   const hdr=document.createElement('div');
   hdr.className='cc-side-lbl';hdr.style.color='var(--sub)';
-  hdr.textContent='PREMIUM BY STRIKE';
+  hdr.textContent='Premium by strike';
   wrap.appendChild(hdr);
   const chart=document.createElement('div');
   chart.className='ladder-chart';
@@ -685,7 +685,7 @@ async function runFullScan(){
   if(S.scanRunning) return;
   S.scanRunning=true;
   const btn=document.getElementById('scan-run-btn');
-  btn.textContent='SCANNING...';btn.style.opacity='.6';
+  btn.textContent='Scanning…';btn.style.opacity='.6';
   const wrap=document.getElementById('scan-table-wrap');
   wrap.textContent='';
   const skelWrap=document.createElement('div');skelWrap.style.padding='16px';
@@ -822,13 +822,13 @@ async function loadSectors(){
     const hdr=document.createElement('div');hdr.className='sec-head';
     const hdrLeft=document.createTextNode('SECTORS');
     const ts=document.createElement('span');ts.className='ts';
-    ts.textContent='UPDATED '+(d.last_updated||'');
+    ts.textContent='Updated '+(d.last_updated||'');
     hdr.appendChild(hdrLeft);hdr.appendChild(ts);
     feed.appendChild(hdr);
     if(d.laggard){
       const lg=d.laggard;
       const lb=document.createElement('div');lb.className='laggard-box';
-      const lbl=document.createElement('div');lbl.className='laggard-label';lbl.textContent='TOP LAGGARD';
+      const lbl=document.createElement('div');lbl.className='laggard-label';lbl.textContent='Top laggard';
       const lt=document.createElement('div');lt.className='laggard-ticker';
       lt.textContent=lg.ticker+'  ·  '+lg.sector;
       const ld=document.createElement('div');ld.className='laggard-desc';
@@ -877,7 +877,7 @@ async function loadSectors(){
     empt.appendChild(icon);empt.appendChild(h);empt.appendChild(p);
     feed.appendChild(empt);
     const btn=document.createElement('button');btn.className='load-btn';
-    btn.textContent='TRY AGAIN';btn.onclick=loadSectors;feed.appendChild(btn);
+    btn.textContent='Try again';btn.onclick=loadSectors;feed.appendChild(btn);
     toast('Sectors failed: '+e.message,'err');
   }
 }
@@ -964,7 +964,8 @@ async function loadHeatmap(sector,map,sub){
       const s=rc.it;
       const t=document.createElement('div');t.className='heat-tile';
       t.style.cssText='position:absolute;left:'+rc.x+'px;top:'+rc.y+'px;width:'+
-        Math.max(rc.w-2,1)+'px;height:'+Math.max(rc.h-2,1)+'px;background:'+heatColor(s.change);
+        Math.max(rc.w-2,1)+'px;height:'+Math.max(rc.h-2,1)+'px;background:'+heatColor(s.change)+
+        ';color:'+heatInk(s.change);
       if(rc.h>=14&&rc.w>=22){
         const tk=document.createElement('div');tk.className='ht-tk';
         if(rc.w<40)tk.style.fontSize='9px';
@@ -1016,11 +1017,22 @@ function squarify(items,W,H){
   return out;
 }
 
-function heatColor(ch){
+// Monochrome treemap: magnitude is luminance, direction is which way it runs
+// from the neutral mid-grey -- gainers lighten toward white, losers darken
+// toward the ground. A 3% move saturates the ramp, as it did with the colours.
+function heatLevel(ch){
   const a=Math.min(Math.abs(ch)/3,1);
-  const lerp=function(x,y){return Math.round(x+(y-x)*a)};
-  if(ch>=0){return 'rgb('+lerp(28,21)+','+lerp(46,194)+','+lerp(40,101)+')';}
-  return 'rgb('+lerp(48,255)+','+lerp(34,51)+','+lerp(40,85)+')';
+  const mid=66;
+  return Math.round(ch>=0 ? mid+(255-mid)*a : mid-(mid-12)*a);
+}
+function heatColor(ch){
+  const v=heatLevel(ch);
+  return 'rgb('+v+','+v+','+v+')';
+}
+// Ink that survives its own tile: the crossover sits where grey stops carrying
+// white text, so no tile is ever a light-on-light or dark-on-dark label.
+function heatInk(ch){
+  return heatLevel(ch)>=128 ? '#000' : '#fff';
 }
 
 // Contract finder
@@ -1118,12 +1130,12 @@ function renderBothLadder(d){
   const fmtN=v=>v>=1e6?(v/1e6).toFixed(1)+'M':v>=1e3?(v/1e3).toFixed(0)+'K':String(v);
 
   const ct=d.call_totals, pt=d.put_totals;
-  const cw='#00ff88', pw='#ff3355', neu='#888';
+  const cw='var(--up)', pw='var(--dn)', neu='var(--t2)';
 
   if(d.dte_note){
     const warn=document.createElement('div');
-    warn.style.cssText='background:rgba(255,176,32,.08);border:1px solid rgba(255,176,32,.3);'
-      +'border-radius:8px;padding:9px 12px;margin-bottom:10px;font-size:11px;color:var(--amber)';
+    warn.style.cssText='background:var(--s1);border:1px solid var(--line2);'
+      +'border-radius:10px;padding:9px 12px;margin-bottom:10px;font-size:11px;color:var(--t2)';
     warn.textContent='⚠ '+d.dte_note;
     res.appendChild(warn);
   }
@@ -1135,24 +1147,24 @@ function renderBothLadder(d){
     [['BEST CALL',d.best_call,cw,'C'],['BEST PUT',d.best_put,pw,'P']].forEach(function(p){
       const label=p[0], c=p[1], col=p[2], letter=p[3];
       const box=document.createElement('div');
-      box.style.cssText='background:#0d0d16;border:1px solid '+col+'33;border-radius:10px;padding:12px';
+      box.style.cssText='background:var(--s1);border:1px solid '+col+'33;border-radius:10px;padding:12px';
       if(!c){
-        box.innerHTML='<div style="font-size:9px;color:#555;letter-spacing:.8px;margin-bottom:6px">'
-          +label+'</div><div style="font-size:11px;color:#555">no qualifying contract</div>';
+        box.innerHTML='<div style="font-size:9px;color:var(--t3);letter-spacing:.8px;margin-bottom:6px">'
+          +label+'</div><div style="font-size:11px;color:var(--t3)">no qualifying contract</div>';
         pickWrap.appendChild(box);return;
       }
       const roi=(c.roi!=null)?Number(c.roi).toFixed(0)+'%':'-';
-      box.innerHTML='<div style="font-size:9px;color:#555;letter-spacing:.8px;margin-bottom:6px">'
+      box.innerHTML='<div style="font-size:9px;color:var(--t3);letter-spacing:.8px;margin-bottom:6px">'
         +label+'</div>'
         +'<div style="font-size:15px;font-weight:800;color:'+col+'">$'+Number(c.strike).toFixed(0)+' '+letter+'</div>'
         +'<div style="font-size:10px;color:var(--sub);margin-top:3px">'
         +(c.exp?String(c.exp).slice(5):'-')+' · '+(c.dte===0?'0DTE':c.dte+'DTE')+'</div>'
-        +'<div style="display:flex;gap:10px;margin-top:8px;font-size:10px;color:#888">'
-        +'<span>MID <b style="color:#ccc">$'+Number(c.mid||0).toFixed(2)+'</b></span>'
-        +'<span>Δ <b style="color:#ccc">'+Number(c.delta||0).toFixed(2)+'</b></span></div>'
-        +'<div style="display:flex;gap:10px;margin-top:3px;font-size:10px;color:#888">'
+        +'<div style="display:flex;gap:10px;margin-top:8px;font-size:10px;color:var(--t2)">'
+        +'<span>MID <b style="color:var(--t1)">$'+Number(c.mid||0).toFixed(2)+'</b></span>'
+        +'<span>Δ <b style="color:var(--t1)">'+Number(c.delta||0).toFixed(2)+'</b></span></div>'
+        +'<div style="display:flex;gap:10px;margin-top:3px;font-size:10px;color:var(--t2)">'
         +'<span>SCORE <b style="color:'+col+'">'+Number(c.score||0).toFixed(0)+'</b></span>'
-        +'<span>ROI <b style="color:#ccc">'+roi+'</b></span></div>';
+        +'<span>ROI <b style="color:var(--t1)">'+roi+'</b></span></div>';
       pickWrap.appendChild(box);
     });
     res.appendChild(pickWrap);
@@ -1160,11 +1172,11 @@ function renderBothLadder(d){
 
   // ── summary scoreboard ──────────────────────────────────────────────────
   const scoreEl=document.createElement('div');
-  scoreEl.style.cssText='background:#0d0d16;border:1px solid #1a1a2e;border-radius:10px;padding:14px 16px;margin-bottom:12px';
+  scoreEl.style.cssText='background:var(--s1);border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin-bottom:12px';
 
   const hdr=document.createElement('div');
   hdr.style.cssText='display:flex;justify-content:space-between;align-items:center;margin-bottom:12px';
-  hdr.innerHTML=`<span style="font-size:11px;color:#555;letter-spacing:.8px">CALLS vs PUTS — ${d.ticker} ${d.exp} (${d.dte}DTE)</span><span style="font-size:10px;color:#444">${d.last_updated}</span>`;
+  hdr.innerHTML=`<span style="font-size:11px;color:var(--t3);letter-spacing:.8px">CALLS vs PUTS — ${d.ticker} ${d.exp} (${d.dte}DTE)</span><span style="font-size:10px;color:var(--t3)">${d.last_updated}</span>`;
   scoreEl.appendChild(hdr);
 
   const metrics=[
@@ -1180,17 +1192,17 @@ function renderBothLadder(d){
   metrics.forEach(m=>{
     const cWin=m.winner==='call', pWin=m.winner==='put';
     const cell=document.createElement('div');
-    cell.style.cssText='background:#111;border-radius:8px;padding:10px 12px';
+    cell.style.cssText='background:var(--line);border-radius:8px;padding:10px 12px';
     cell.innerHTML=`
-      <div style="font-size:9px;color:#555;letter-spacing:.8px;margin-bottom:6px">${m.label}</div>
+      <div style="font-size:9px;color:var(--t3);letter-spacing:.8px;margin-bottom:6px">${m.label}</div>
       <div style="display:flex;justify-content:space-between;align-items:center">
         <div>
-          <span style="font-size:11px;color:#555">C </span>
+          <span style="font-size:11px;color:var(--t3)">C </span>
           <span style="font-size:13px;font-weight:700;color:${cWin?cw:neu}">${m.fmt(ct[m.key])}</span>
           ${cWin?'<span style="font-size:9px;color:'+cw+';margin-left:4px">▲</span>':''}
         </div>
         <div>
-          <span style="font-size:11px;color:#555">P </span>
+          <span style="font-size:11px;color:var(--t3)">P </span>
           <span style="font-size:13px;font-weight:700;color:${pWin?pw:neu}">${m.fmt(pt[m.key])}</span>
           ${pWin?'<span style="font-size:9px;color:'+pw+';margin-left:4px">▲</span>':''}
         </div>
@@ -1211,16 +1223,16 @@ function renderBothLadder(d){
 
   // ── ladder table ────────────────────────────────────────────────────────
   const ladderEl=document.createElement('div');
-  ladderEl.style.cssText='background:#0d0d16;border:1px solid #1a1a2e;border-radius:10px;padding:14px 16px;margin-bottom:60px';
+  ladderEl.style.cssText='background:var(--s1);border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin-bottom:60px';
 
   const ladderHdr=document.createElement('div');
-  ladderHdr.style.cssText='font-size:9px;color:#555;letter-spacing:.8px;margin-bottom:10px';
+  ladderHdr.style.cssText='font-size:9px;color:var(--t3);letter-spacing:.8px;margin-bottom:10px';
   ladderHdr.textContent='TOP STRIKES BY $ FLOW';
   ladderEl.appendChild(ladderHdr);
 
   // header row
   const hrow=document.createElement('div');
-  hrow.style.cssText='display:grid;grid-template-columns:60px 1fr 1fr 1fr 1fr;gap:4px;font-size:9px;color:#444;letter-spacing:.5px;margin-bottom:6px;padding:0 4px';
+  hrow.style.cssText='display:grid;grid-template-columns:60px 1fr 1fr 1fr 1fr;gap:4px;font-size:9px;color:var(--t3);letter-spacing:.5px;margin-bottom:6px;padding:0 4px';
   hrow.innerHTML='<span>STRIKE</span><span style="text-align:right">$FLOW</span><span style="text-align:right">VOL</span><span style="text-align:right">OI</span><span style="text-align:right">ΔOI</span>';
   ladderEl.appendChild(hrow);
 
@@ -1231,13 +1243,13 @@ function renderBothLadder(d){
   allStrikes.slice(0,12).forEach(r=>{
     const col=r.side==='call'?cw:pw;
     const row=document.createElement('div');
-    row.style.cssText='display:grid;grid-template-columns:60px 1fr 1fr 1fr 1fr;gap:4px;font-size:11px;padding:5px 4px;border-bottom:1px solid #111';
+    row.style.cssText='display:grid;grid-template-columns:60px 1fr 1fr 1fr 1fr;gap:4px;font-size:11px;padding:5px 4px;border-bottom:1px solid var(--line)';
     row.innerHTML=`
       <span style="font-weight:700;color:${col}">${r.side==='call'?'C':'P'} ${r.strike}</span>
-      <span style="text-align:right;color:#ccc">$${fmtM(r.dollar_flow)}</span>
-      <span style="text-align:right;color:#aaa">${fmtN(r.vol)}</span>
-      <span style="text-align:right;color:#888">${fmtN(r.oi)}</span>
-      <span style="text-align:right;color:#666">${fmtN(r.ddoi)}</span>`;
+      <span style="text-align:right;color:var(--t1)">$${fmtM(r.dollar_flow)}</span>
+      <span style="text-align:right;color:var(--t2)">${fmtN(r.vol)}</span>
+      <span style="text-align:right;color:var(--t2)">${fmtN(r.oi)}</span>
+      <span style="text-align:right;color:var(--t3)">${fmtN(r.ddoi)}</span>`;
     ladderEl.appendChild(row);
   });
 
@@ -1252,8 +1264,8 @@ function renderContracts(ticker,cs,ts,dteNote){
   res.textContent='';
   if(dteNote){
     const warn=document.createElement('div');
-    warn.style.cssText='background:rgba(255,176,32,.08);border:1px solid rgba(255,176,32,.3);'
-      +'border-radius:8px;padding:9px 12px;margin-bottom:10px;font-size:11px;color:var(--amber)';
+    warn.style.cssText='background:var(--s1);border:1px solid var(--line2);'
+      +'border-radius:10px;padding:9px 12px;margin-bottom:10px;font-size:11px;color:var(--t2)';
     warn.textContent='⚠ '+dteNote;
     res.appendChild(warn);
   }
@@ -1354,15 +1366,15 @@ async function loadIntel(){
 function renderIntelMacro(data){
   const el=document.getElementById('intel-macro');
   if(data.error){el.textContent=data.error;return;}
-  const col=data.regime==='RISK-ON'?'#00ff88':data.regime==='RISK-OFF'?'#ff3355':'#ffa500';
+  const col=data.regime==='RISK-ON'?'var(--up)':data.regime==='RISK-OFF'?'var(--dn)':'var(--m4)';
   const score=data.score>=0?'+'+data.score:String(data.score);
   let html=`<div style="display:flex;align-items:center;gap:16px;margin-bottom:8px">
     <span style="color:${col};font-size:16px;font-weight:800">${data.regime}</span>
-    <span style="color:#888;font-size:12px">Score: ${score}</span>
-    <span style="color:#444;font-size:10px">${data.source||''}</span>
+    <span style="color:var(--t2);font-size:12px">Score: ${score}</span>
+    <span style="color:var(--t3);font-size:10px">${data.source||''}</span>
   </div>`;
   if(data.signals&&data.signals.length){
-    html+=data.signals.map(s=>`<div style="font-size:11px;color:#aaa;padding:2px 0">• ${s}</div>`).join('');
+    html+=data.signals.map(s=>`<div style="font-size:11px;color:var(--t2);padding:2px 0">• ${s}</div>`).join('');
   }
   if(data.data&&Object.keys(data.data).length){
     html+=`<div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:8px">`;
@@ -1372,13 +1384,13 @@ function renderIntelMacro(data){
         // daily ones are current. Without the age they read as equally fresh.
         const age=v.stale_days;
         const aged=age!=null&&age>=30;
-        const tag=age==null?'':` <span style="color:${aged?'#ffb020':'#555'}" title="${v.as_of||''}">${age}d</span>`;
-        html+=`<span style="background:#111;border:1px solid ${aged?'#3a2c10':'#222'};border-radius:4px;padding:3px 8px;font-size:10px;color:#aaa">${v.label}: <span style="color:#ccc">${v.value.toFixed?v.value.toFixed(2):v.value}${v.unit}</span>${tag}</span>`;
+        const tag=age==null?'':` <span style="color:${aged?'var(--m4)':'var(--t3)'}" title="${v.as_of||''}">${age}d</span>`;
+        html+=`<span style="background:var(--line);border:1px solid ${aged?'var(--line2)':'var(--line)'};border-radius:4px;padding:3px 8px;font-size:10px;color:var(--t2)">${v.label}: <span style="color:var(--t1)">${v.value.toFixed?v.value.toFixed(2):v.value}${v.unit}</span>${tag}</span>`;
       }
     }
     html+=`</div>`;
   }
-  html+=`<div style="font-size:9px;color:#444;margin-top:6px">Updated: ${data.last_updated||'—'}</div>`;
+  html+=`<div style="font-size:9px;color:var(--t3);margin-top:6px">Updated: ${data.last_updated||'—'}</div>`;
   el.innerHTML=html;
 }
 
@@ -1388,18 +1400,18 @@ function renderIntelDP(data){
   const sigs=(data.signals||[]).filter(s=>s.score>15).slice(0,20);
   if(!sigs.length){el.textContent='No significant dark pool anomalies detected.';return;}
   const rows=sigs.map(s=>{
-    const col=s.signal==='ACCUMULATION'?'#00ff88':s.signal==='DISTRIBUTION'?'#ff3355':'#888';
+    const col=s.signal==='ACCUMULATION'?'var(--up)':s.signal==='DISTRIBUTION'?'var(--dn)':'var(--t2)';
     const vol=s.vol_ratio!=null?s.vol_ratio.toFixed(1)+'x':'—';
     const impact=s.price_impact_pct!=null?s.price_impact_pct.toFixed(2)+'%':'—';
-    return `<div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid #1a1a2e;font-size:12px">
+    return `<div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--line);font-size:12px">
       <span style="color:${col};font-weight:700;width:60px">${s.ticker}</span>
       <span style="color:${col};width:110px">${s.signal}</span>
-      <span style="color:#aaa;width:60px">Vol: ${vol}</span>
-      <span style="color:#666;width:70px">D${impact}</span>
-      <span style="color:#888">Score: ${Math.round(s.score)}</span>
+      <span style="color:var(--t2);width:60px">Vol: ${vol}</span>
+      <span style="color:var(--t3);width:70px">D${impact}</span>
+      <span style="color:var(--t2)">Score: ${Math.round(s.score)}</span>
     </div>`;
   }).join('');
-  el.innerHTML=`<div style="max-height:280px;overflow-y:auto">${rows}</div><div style="font-size:9px;color:#444;margin-top:6px">Source: yfinance vol-proxy · Updated: ${data.last_updated||'—'}</div>`;
+  el.innerHTML=`<div style="max-height:280px;overflow-y:auto">${rows}</div><div style="font-size:9px;color:var(--t3);margin-top:6px">Source: yfinance vol-proxy · Updated: ${data.last_updated||'—'}</div>`;
 }
 
 function renderIntelIns(data){
@@ -1408,23 +1420,23 @@ function renderIntelIns(data){
   const sigs=(data.signals||[]).filter(s=>s.score>20).slice(0,20);
   if(!sigs.length){el.textContent='No significant insider activity detected.';return;}
   const rows=sigs.map(s=>{
-    const col=s.net_sentiment==='BUYING'?'#00ff88':s.net_sentiment==='SELLING'?'#ff3355':'#ffa500';
+    const col=s.net_sentiment==='BUYING'?'var(--up)':s.net_sentiment==='SELLING'?'var(--dn)':'var(--m4)';
     const val=s.buy_value>1e6?(s.buy_value/1e6).toFixed(1)+'M':s.buy_value>1e3?(s.buy_value/1e3).toFixed(0)+'K':'—';
-    return `<div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid #1a1a2e;font-size:12px">
+    return `<div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--line);font-size:12px">
       <span style="color:${col};font-weight:700;width:60px">${s.ticker}</span>
       <span style="color:${col};width:100px">${s.net_sentiment}</span>
-      <span style="color:#aaa;width:80px">Buys: ${s.buy_count} ($${val})</span>
-      <span style="color:#888">Score: ${Math.round(s.score)}</span>
+      <span style="color:var(--t2);width:80px">Buys: ${s.buy_count} ($${val})</span>
+      <span style="color:var(--t2)">Score: ${Math.round(s.score)}</span>
     </div>`;
   }).join('');
-  el.innerHTML=`<div style="max-height:280px;overflow-y:auto">${rows}</div><div style="font-size:9px;color:#444;margin-top:6px">Source: SEC EDGAR Form 4 · Updated: ${data.last_updated||'—'}</div>`;
+  el.innerHTML=`<div style="max-height:280px;overflow-y:auto">${rows}</div><div style="font-size:9px;color:var(--t3);margin-top:6px">Source: SEC EDGAR Form 4 · Updated: ${data.last_updated||'—'}</div>`;
 }
 
 // ── UOA: Unusual Options Activity tab ────────────────────────────────────────
 function _e(v){return String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 function _fN(n){if(n>=1e6)return'$'+(n/1e6).toFixed(1)+'M';if(n>=1e3)return'$'+(n/1e3).toFixed(0)+'K';return'$'+n;}
 
-const _UOA_COLORS={'🔴 EXTREME':'#ff3355','🟠 UNUSUAL':'#ff8c00','🟡 NOTABLE':'#ffd700','⚪ NORMAL':'#666'};
+const _UOA_COLORS={'🔴 EXTREME':'var(--dn)','🟠 UNUSUAL':'var(--m4)','🟡 NOTABLE':'var(--t1)','⚪ NORMAL':'var(--t3)'};
 let _uoaSignals=[]; let _uoaMeta=''; let _uoaSort={key:'score',dir:-1};
 // {label, key, type:'n'umeric | 's'tring | 'x' non-sortable}
 const _UOA_COLS=[
@@ -1452,7 +1464,7 @@ function renderUOATable(){
   wrap.innerHTML='';
   if(!_uoaSignals.length){
     const msg=document.createElement('div');
-    msg.style.cssText='text-align:center;padding:30px;color:#555;font-size:12px';
+    msg.style.cssText='text-align:center;padding:30px;color:var(--t3);font-size:12px';
     msg.textContent='No unusual flow detected right now.';
     wrap.appendChild(msg);return;
   }
@@ -1465,28 +1477,28 @@ function renderUOATable(){
     return ((av||0)-(bv||0))*dir;
   });
   const rows=sorted.map(function(s){
-    const lc=_UOA_COLORS[s.label]||'#666';
-    const tc=s.type==='call'?'#00ff88':'#ff3355';
-    const sc=s.trade_side==='ask'?'#ffd700':s.trade_side==='bid'?'#ff8c00':'#555';
-    const vc=s.vol_oi>=5?'#ff3355':s.vol_oi>=1?'#ff8c00':s.vol_oi>=0.5?'#ffd700':'#aaa';
+    const lc=_UOA_COLORS[s.label]||'var(--t3)';
+    const tc=s.type==='call'?'var(--up)':'var(--dn)';
+    const sc=s.trade_side==='ask'?'var(--t1)':s.trade_side==='bid'?'var(--m4)':'var(--t3)';
+    const vc=s.vol_oi>=5?'var(--dn)':s.vol_oi>=1?'var(--m4)':s.vol_oi>=0.5?'var(--t1)':'var(--t2)';
     return '<tr>'
       +'<td style="color:'+lc+';font-size:9px;white-space:nowrap">'+_e(s.label)+'</td>'
-      +'<td style="font-weight:700;color:#eee">'+_e(s.ticker)+'</td>'
-      +'<td style="font-size:9px;color:#666">'+_e(s.sector)+'</td>'
+      +'<td style="font-weight:700;color:var(--t1)">'+_e(s.ticker)+'</td>'
+      +'<td style="font-size:9px;color:var(--t3)">'+_e(s.sector)+'</td>'
       +'<td style="color:'+tc+';font-weight:700">'+_e(s.type.toUpperCase())+'</td>'
-      +'<td style="color:#aaa">$'+_e(s.strike)+'</td>'
-      +'<td style="font-size:10px;color:#888">'+_e(s.expiry)+'</td>'
-      +'<td style="color:#777">'+_e(s.dte)+'d</td>'
-      +'<td style="color:#ccc">'+_e(Number(s.volume).toLocaleString())+'</td>'
-      +'<td style="color:#666">'+_e(Number(s.open_interest).toLocaleString())+'</td>'
+      +'<td style="color:var(--t2)">$'+_e(s.strike)+'</td>'
+      +'<td style="font-size:10px;color:var(--t2)">'+_e(s.expiry)+'</td>'
+      +'<td style="color:var(--t3)">'+_e(s.dte)+'d</td>'
+      +'<td style="color:var(--t1)">'+_e(Number(s.volume).toLocaleString())+'</td>'
+      +'<td style="color:var(--t3)">'+_e(Number(s.open_interest).toLocaleString())+'</td>'
       +'<td style="color:'+vc+';font-weight:700">'+_e(s.vol_oi)+'x</td>'
-      +'<td style="color:#00ff88;font-weight:700">'+_e(_fN(s.notional))+'</td>'
+      +'<td style="color:var(--up);font-weight:700">'+_e(_fN(s.notional))+'</td>'
       +'<td style="color:'+sc+';font-size:10px">'+_e(s.trade_side)+'</td>'
-      +'<td style="color:#aaa">'+_e(s.score)+'</td>'
+      +'<td style="color:var(--t2)">'+_e(s.score)+'</td>'
       +'</tr>';
   }).join('');
   const meta=document.createElement('div');
-  meta.style.cssText='font-size:9px;color:#444;margin-bottom:6px;text-align:right';
+  meta.style.cssText='font-size:9px;color:var(--t3);margin-bottom:6px;text-align:right';
   meta.textContent=_uoaMeta;
   wrap.appendChild(meta);
   const ths=_UOA_COLS.map(function(c){
@@ -1509,7 +1521,7 @@ async function loadUOA(force){
   const status=document.getElementById('uoa-status');
   const wrap=document.getElementById('uoa-table-wrap');
   const bar=document.getElementById('uoa-sector-bar');
-  btn.disabled=true; btn.textContent='SCANNING…';
+  btn.disabled=true; btn.textContent='Scanning…';
   status.textContent='Screening tickers → fetching options chains → scoring anomalies…';
   status.style.display='block';
   wrap.innerHTML='';
@@ -1526,19 +1538,19 @@ async function loadUOA(force){
       const bhtml=sumKeys.sort((a,b)=>d.summary[b].notional-d.summary[a].notional).map(sec=>{
         const s=d.summary[sec];
         const pct=Math.round(s.notional/maxN*100);
-        const bias=s.calls>=s.puts?'#00ff88':'#ff3355';
+        const bias=s.calls>=s.puts?'var(--up)':'var(--dn)';
         const cpct=s.count?(s.calls/s.count*100).toFixed(0):0;
         return '<div style="margin-bottom:5px">'
-          +'<div style="display:flex;justify-content:space-between;font-size:9px;color:#aaa;margin-bottom:2px">'
+          +'<div style="display:flex;justify-content:space-between;font-size:9px;color:var(--t2);margin-bottom:2px">'
           +'<span>'+_e(sec)+'</span>'
           +'<span style="color:'+bias+'">'+_e(cpct)+'% CALLS · '+_e(_fN(s.notional))+'</span>'
           +'</div>'
-          +'<div style="height:4px;background:#1a1a2e;border-radius:2px">'
+          +'<div style="height:4px;background:var(--line);border-radius:2px">'
           +'<div style="height:4px;width:'+pct+'%;background:'+bias+';border-radius:2px"></div>'
           +'</div></div>';
       }).join('');
-      bar.innerHTML='<div style="background:#0d0d1a;border:1px solid #222;border-radius:8px;padding:10px 12px">'
-        +'<div style="font-size:9px;letter-spacing:.8px;color:#555;margin-bottom:8px">SECTOR FLOW BREAKDOWN</div>'
+      bar.innerHTML='<div style="background:var(--s1);border:1px solid var(--line);border-radius:8px;padding:10px 12px">'
+        +'<div style="font-size:9px;letter-spacing:.8px;color:var(--t3);margin-bottom:8px">SECTOR FLOW BREAKDOWN</div>'
         +bhtml+'</div>';
       bar.style.display='block';
     }
@@ -1549,7 +1561,7 @@ async function loadUOA(force){
   } catch(e){
     status.style.display='none';
     const err=document.createElement('div');
-    err.style.cssText='text-align:center;padding:20px;color:#ff3355;font-size:11px';
+    err.style.cssText='text-align:center;padding:20px;color:var(--dn);font-size:11px';
     err.textContent='Error: '+e.message;
     wrap.appendChild(err);
   } finally {
@@ -1578,11 +1590,35 @@ function gexStat(k,v,cls,unit){
 // the payload lets the unit toggle redraw without paying for another chain.
 let _gexData=null, _gexUnit='under';
 
-function gexUnit(){
+let _gexContract=null;   // contract code; null = the family's full-size one
+
+// The full contract and its micro quote the same index, so which one is
+// selected never moves a level -- it only changes what reaching that level is
+// worth. On a four-figure account that is the difference between a tradeable
+// contract and one you cannot carry.
+function gexContract(){
   const f=_gexData&&_gexData.futures;
+  if(!f||!f.contracts||!f.contracts.length) return null;
+  return f.contracts.find(c=>c.code===_gexContract)||f.contracts[0];
+}
+
+function gexUnit(){
+  const f=_gexData&&_gexData.futures, c=gexContract();
   return (_gexUnit==='fut'&&f)
-    ? {ratio:f.ratio, label:f.future, fut:true}
+    ? {ratio:f.ratio, label:(c?c.code:f.future), fut:true}
     : {ratio:1, label:(_gexData&&_gexData.symbol)||'', fut:false};
+}
+
+// Distances: whole dollars. Nobody sizes a trade off the cents on a $4,932 move.
+function gexDollars(v){
+  return '$'+String(Math.round(Math.abs(v))).replace(/\B(?=(\d{3})+(?!\d))/g,',');
+}
+
+// Contract specs: exact. ES ticks at $12.50 and MNQ at $0.50 -- these are the
+// numbers traders know by heart, and rounding them printed "$13" and "$1".
+function gexSpec(v){
+  const a=Math.abs(v);
+  return '$'+(a%1===0?String(a):a.toFixed(2));
 }
 
 // A strike in the active unit. Index strikes are round by construction; the
@@ -1668,7 +1704,18 @@ function renderGexChart(d,containerW,u){
   // dead strip is left over. The right gutter has to hold "SPOT 7599.64" and
   // the left one a five-digit strike, both in the 8.5px mono face.
   const W=Math.max(300,Math.round(containerW||360));
-  const padL=44, padR=68, rowH=14, padT=12, padB=26;
+  // Both gutters are sized from the text that actually goes in them. They were
+  // fixed at 44/68, which fits a four-digit SPX strike and silently cropped the
+  // leading digit off every five-digit one -- an NQ ladder read "0005.19".
+  const CH_STRIKE=5.1, CH_RULE=4.8;   // mono advance at 8.5px and 8px
+  const strikeChars=strikes.reduce((m,k)=>Math.max(m,gexLevel(k,u).length),4);
+  const ruleChars=Math.max(
+    ('SPOT '+(d.spot*u.ratio).toFixed(2)).length,
+    d.flip!=null?('FLIP '+(d.flip*u.ratio).toFixed(2)).length:0,
+    d.futures?(d.futures.future+' '+d.futures.last.toFixed(2)).length:0);
+  const padL=Math.ceil(strikeChars*CH_STRIKE)+14;
+  const padR=Math.ceil(ruleChars*CH_RULE)+10;
+  const rowH=14, padT=12, padB=26;
   const plotL=padL, plotR=W-padR;
   const midX=Math.round((plotL+plotR)/2), halfW=(plotR-plotL)/2-2;
   const h=padT+padB+strikes.length*rowH;
@@ -1699,11 +1746,11 @@ function renderGexChart(d,containerW,u){
     // Sign observed from today's flow is drawn solid; sign assumed by
     // convention is drawn faint, so the reader sees how much is inference.
     const share=e.total?e.inferred/e.total:0;
-    const col=pos?'#00ff88':'#ff3355';
+    const col=pos?'var(--up)':'var(--dn)';
     // The wall is marked by a caret and a coloured strike, not a tinted row:
     // a band spanning the plot reads as a bar the width of the chart.
     if(w){
-      const wc=w==='call'?'#00ff88':'#ff3355';
+      const wc=w==='call'?'var(--up)':'var(--dn)';
       svg+='<path d="M'+(plotL-1)+' '+(y-4)+'L'+(plotL+4)+' '+y+'L'+(plotL-1)+' '+(y+4)+'Z" fill="'+wc+'"/>';
     }
     svg+='<rect x="'+x.toFixed(1)+'" y="'+(y-4.5)+'" width="'+Math.max(len,0.75).toFixed(1)+
@@ -1712,7 +1759,7 @@ function renderGexChart(d,containerW,u){
     // sign of the bar, which made the axis zigzag and unreadable.
     if(isRound(k)||w){
       svg+='<text x="'+(padL-9)+'" y="'+(y+3)+'" text-anchor="end" font-size="8.5" fill="'+
-           (w?(w==='call'?'#00ff88':'#ff3355'):'#6b6b80')+'" font-family="var(--font)">'+
+           (w?(w==='call'?'var(--up)':'var(--dn)'):'var(--t3)')+'" font-family="var(--font)">'+
            gexLevel(k,u)+'</text>';
     }
     svg+='<line x1="'+(padL-5)+'" y1="'+y+'" x2="'+(padL-2)+'" y2="'+y+
@@ -1738,13 +1785,13 @@ function renderGexChart(d,containerW,u){
   // Captions on the rules are prices, so they keep both decimals; the strike
   // labels in the gutter are strikes and do not.
   const px=v=>(v*u.ratio).toFixed(2);
-  const rules=[{p:d.spot,col:'#00d4ff',lbl:'SPOT '+px(d.spot),dash:false}];
+  const rules=[{p:d.spot,col:'var(--m4)',lbl:'SPOT '+px(d.spot),dash:false}];
   if(d.flip!=null)
-    rules.push({p:d.flip,col:'#ffb800',lbl:'FLIP '+px(d.flip),dash:true});
+    rules.push({p:d.flip,col:'var(--t1)',lbl:'FLIP '+px(d.flip),dash:true});
   // Out of hours the index print is frozen at its close and this is the only
   // line on the chart that is still moving.
   if(d.futures&&d.futures.implied_underlying>0)
-    rules.push({p:d.futures.implied_underlying,col:'#a855f7',
+    rules.push({p:d.futures.implied_underlying,col:'var(--m4)',
                 lbl:d.futures.future+' '+d.futures.last.toFixed(2),dash:true});
   rules.forEach(r=>r.y=priceToY(r.p));
   rules.sort((a,b)=>a.y-b.y);
@@ -1769,11 +1816,11 @@ function renderGexChart(d,containerW,u){
 
   // A bar meant nothing without a scale to read it against.
   const base=h-padB+16;
-  svg+='<text x="'+plotL+'" y="'+base+'" font-size="7.5" fill="#6b6b80" font-family="var(--font)">'+
+  svg+='<text x="'+plotL+'" y="'+base+'" font-size="7.5" fill="var(--t3)" font-family="var(--font)">'+
        '&#8722;$'+gexAxisMoney(maxMag)+'</text>'+
-       '<text x="'+midX+'" y="'+base+'" text-anchor="middle" font-size="7.5" fill="#6b6b80" '+
+       '<text x="'+midX+'" y="'+base+'" text-anchor="middle" font-size="7.5" fill="var(--t3)" '+
        'font-family="var(--font)">per 1% move</text>'+
-       '<text x="'+plotR+'" y="'+base+'" text-anchor="end" font-size="7.5" fill="#6b6b80" '+
+       '<text x="'+plotR+'" y="'+base+'" text-anchor="end" font-size="7.5" fill="var(--t3)" '+
        'font-family="var(--font)">+$'+gexAxisMoney(maxMag)+'</text>';
   svg+='</svg>';
 
@@ -1791,15 +1838,54 @@ function gexPct(v){return (v>=0?'+':'')+(v*100).toFixed(2)+'%';}
 
 // The stat block and the unit switch. Rebuilt rather than patched so the two
 // can never disagree about which unit is showing.
+// What a move from here to each measured level is worth on one contract.
+// Distance only -- it says nothing about direction, position or whether the
+// level gets reached, because none of that is measured here.
+function renderGexDist(d){
+  const f=d.futures, c=gexContract();
+  if(!f||!c||!(c.last>0)) return '';
+  const rows=[['CALL WALL',d.call_wall,'gex-pos'],
+              ['ZERO-GAMMA FLIP',d.flip,''],
+              ['PUT WALL',d.put_wall,'gex-neg']]
+             .filter(r=>r[1]!=null);
+  if(!rows.length) return '';
+  let out='<div class="gex-dist"><div class="gex-dist-head">'+
+          'FROM '+c.code+' '+c.last.toFixed(2)+
+          '<span>'+gexSpec(c.multiplier)+'/pt &middot; 1 tick '+
+          gexSpec(c.tick_value)+'</span></div>';
+  rows.forEach(([lbl,lvl,cls])=>{
+    const price=lvl*f.ratio, pts=price-c.last;
+    out+='<div class="gex-dist-row"><span class="l">'+lbl+'</span>'+
+         '<span class="p">'+price.toFixed(2)+'</span>'+
+         '<span class="d '+(pts>=0?'gex-pos':'gex-neg')+'">'+
+         (pts>=0?'+':'&minus;')+Math.abs(pts).toFixed(2)+'</span>'+
+         '<span class="v">'+gexDollars(Math.abs(pts)*c.multiplier)+'</span></div>';
+  });
+  out+='</div>';
+  return out;
+}
+
 function renderGexHead(d){
   const u=gexUnit(), f=d.futures;
-  let out='<div class="gex-head">'+
+  let out='';
+  // There is no option chain on a future. Asking for MNQ gets the Nasdaq
+  // surface priced in MNQ, and the screen says so rather than quietly
+  // answering a different question than the one that was typed.
+  if(d.resolved_from_future)
+    out+='<div class="gex-resolved"><b>'+d.requested+'</b> &rarr; gamma measured on '+
+         d.symbol+' options, priced in '+(gexContract()||{code:d.requested}).code+
+         '. There is no option chain on a future.</div>';
+  out+='<div class="gex-head">'+
     gexStat('NET GAMMA',gexMoney(d.net_gex),d.net_gex>=0?'gex-pos':'gex-neg','/1%')+
     gexStat('ZERO-GAMMA FLIP',d.flip!=null?gexLevel(d.flip,u):'none in range','')+
     gexStat('CALL WALL',gexLevel(d.call_wall,u),'')+
     gexStat('PUT WALL',gexLevel(d.put_wall,u),'');
   if(f){
-    out+=gexStat(f.future+' LAST',f.last.toFixed(2),
+    // The live print follows the selected size -- MNQ and NQ quote within a
+    // tick of each other, and a stat headed NQ beside a table headed MNQ reads
+    // like the two disagree.
+    const sel=gexContract()||{code:f.future,last:f.last};
+    out+=gexStat(sel.code+' LAST',(sel.last||f.last).toFixed(2),
                  f.change>=0?'gex-pos':'gex-neg',
                  ' '+(f.change>=0?'+':'')+f.change.toFixed(2))+
          gexStat(f.future+(f.basis!=null?' BASIS':' RATIO'),
@@ -1809,18 +1895,36 @@ function renderGexHead(d){
   }
   out+='</div>';
   if(f){
-    out+='<div class="gex-unit"><span class="lbl">SHOW LEVELS IN</span>'+
+    const c=gexContract();
+    out+='<div class="gex-unit"><span class="lbl">LEVELS IN</span>'+
          '<button class="gex-unit-btn'+(u.fut?'':' on')+'" onclick="setGexUnit(\'under\')">'+
          (d.symbol||'INDEX')+'</button>'+
          '<button class="gex-unit-btn'+(u.fut?' on':'')+'" onclick="setGexUnit(\'fut\')">'+
-         f.future+'</button></div>';
+         f.future+'</button>';
+    if(f.contracts&&f.contracts.length>1){
+      out+='<span class="lbl sz">SIZE</span>';
+      f.contracts.forEach(x=>{
+        out+='<button class="gex-unit-btn'+(c&&c.code===x.code?' on':'')+
+             '" title="'+x.name+' &mdash; '+gexSpec(x.multiplier)+' per point"'+
+             ' onclick="setGexContract(\''+x.code+'\')">'+x.code+'</button>';
+      });
+    }
+    out+='</div>';
   }
+  out+=renderGexDist(d);
   return out;
 }
 
 function setGexUnit(which){
   if(_gexUnit===which||!_gexData) return;
   _gexUnit=which;
+  drawGex();
+}
+
+function setGexContract(code){
+  const c=gexContract();
+  if(!_gexData||(c&&c.code===code)) return;
+  _gexContract=code;
   drawGex();
 }
 
@@ -1875,7 +1979,7 @@ async function loadGEX(){
   const btn=document.getElementById('gex-run-btn');
   const st=document.getElementById('gex-status');
   const sym=(document.getElementById('gex-sym').value||'SPX').trim().toUpperCase();
-  btn.disabled=true; btn.textContent='BUILDING...';
+  btn.disabled=true; btn.textContent='Building…';
   st.style.display='block'; st.textContent='Fetching chains for '+sym+'...';
   document.getElementById('gex-head').innerHTML='';
   document.getElementById('gex-chart').innerHTML='';
@@ -1896,6 +2000,9 @@ async function loadGEX(){
       // on this screen, and it is the reason to come back at the open.
       if(d.futures){
         const f=d.futures;
+        const codes=(f.contracts||[]).map(x=>x.code);
+        if(d.preselect_contract&&codes.indexOf(d.preselect_contract)>=0)
+          _gexContract=d.preselect_contract;
         document.getElementById('gex-head').innerHTML='<div class="gex-head">'+
           gexStat(f.future+' LAST',f.last.toFixed(2),
                   f.change>=0?'gex-pos':'gex-neg',
@@ -1916,13 +2023,21 @@ async function loadGEX(){
     st.style.display='none';
     _gexData=d;
     // A symbol with no futures counterpart cannot stay switched to a unit it
-    // does not have.
+    // does not have, and a contract code from the previous symbol's family
+    // (MNQ held over onto SPX) would silently fall back to the wrong size.
     if(!d.futures) _gexUnit='under';
+    const codes=(d.futures&&d.futures.contracts||[]).map(x=>x.code);
+    if(codes.indexOf(_gexContract)<0) _gexContract=null;
+    // Typing a contract is a request to see it in that contract's prices, so
+    // the unit and the size are already set when the surface arrives.
+    if(d.preselect_contract&&codes.indexOf(d.preselect_contract)>=0){
+      _gexUnit='fut'; _gexContract=d.preselect_contract;
+    }
     drawGex();
   }catch(e){
     st.textContent='Could not build the surface.';
   }finally{
-    btn.disabled=false; btn.innerHTML='&#9654; BUILD GAMMA SURFACE';
+    btn.disabled=false; btn.innerHTML='Build gamma surface';
   }
 }
 

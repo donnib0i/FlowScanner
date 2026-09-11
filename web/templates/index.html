@@ -5,13 +5,13 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="theme-color" content="#0a0a0f">
+<meta name="theme-color" content="#000000">
 <meta name="apple-mobile-web-app-title" content="Scanner">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <link rel="manifest" href="/manifest.json">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <title>Scanner Pro</title>
 <style>
 {{APP_CSS}}</style>
@@ -24,11 +24,9 @@
     <div class="vix-pill" id="vix-chip">VIX ...</div>
   </div>
   <div class="bias-row">
-    <span class="bias-calls" id="bc">CALLS -</span>
-    <span class="bias-sep"> . </span>
-    <span class="bias-puts" id="bp">PUTS -</span>
-    <span class="bias-sep"> . </span>
-    <span class="bias-dir neut" id="bd">-</span>
+    <span class="bias-side"><span class="bias-k">Calls</span><span class="bias-calls" id="bc">&mdash;</span></span>
+    <span class="bias-side"><span class="bias-k">Puts</span><span class="bias-puts" id="bp">&mdash;</span></span>
+    <span class="bias-dir neut" id="bd">&mdash;</span>
   </div>
   <div class="flow-bar-wrap" id="flow-bar">
     <div class="flow-bar-fill" id="flow-fill" style="width:50%"></div>
@@ -39,15 +37,15 @@
   <div class="tab-pane active" id="tab-flow">
     <div class="filter-bar">
       <button class="chip" id="c-dte" onclick="tDte()">0DTE</button>
-      <button class="chip" id="c-whale" onclick="tWhale()">WHALE+</button>
-      <button class="chip" id="c-scope" onclick="tScope()">QUICK</button>
-      <button class="scan-btn" id="scan-btn" onclick="doFlowScan()">SCAN</button>
+      <button class="chip" id="c-whale" onclick="tWhale()">Whale+</button>
+      <button class="chip" id="c-scope" onclick="tScope()">Quick</button>
+      <button class="scan-btn" id="scan-btn" onclick="doFlowScan()">Scan</button>
     </div>
     <div class="filter-bar flow-filters" id="flow-filter-bar" style="display:none">
-      <button class="chip" id="f-sweeps" onclick="tFlowSweeps()" title="Only signals carrying a sweep">SWEEPS</button>
-      <button class="chip" id="f-dte" onclick="tFlowDte()" title="0DTE only / swing only / any">ANY DTE</button>
-      <button class="chip" id="f-min" onclick="tFlowMin()" title="Premium floor">MIN $</button>
-      <button class="chip" id="f-whale" onclick="tFlowWhale()" title="Whale score 70+ or block/whale tier">WHALE+</button>
+      <button class="chip" id="f-sweeps" onclick="tFlowSweeps()" title="Only signals carrying a sweep">Sweeps</button>
+      <button class="chip" id="f-dte" onclick="tFlowDte()" title="0DTE only / swing only / any">Any DTE</button>
+      <button class="chip" id="f-min" onclick="tFlowMin()" title="Premium floor">Min $</button>
+      <button class="chip" id="f-whale" onclick="tFlowWhale()" title="Whale score 70+ or block/whale tier">Whale+</button>
       <span class="filter-count" id="flow-filter-count"></span>
     </div>
     <div class="sort-bar" id="flow-sort-bar" style="display:none">
@@ -73,7 +71,7 @@
       <div class="empty-st">
         <div class="icon">&#9889;</div>
         <h3>Ready to scan flow</h3>
-        <p>Hit SCAN to pull live options flow.<br>Institutional only - no retail noise.</p>
+        <p>Hit Scan to pull live options flow — institutional prints only, no retail noise.</p>
       </div>
     </div>
     <div id="hot-feed" style="display:none"></div>
@@ -154,7 +152,7 @@
           ALL<span class="dte-sub">Best fit</span>
         </button>
       </div>
-      <button class="find-go" id="find-btn" onclick="doFind()">FIND TOP 3 CONTRACTS</button>
+      <button class="find-go" id="find-btn" onclick="doFind()">Find top 3 contracts</button>
       <button class="find-go" id="both-btn" onclick="doFindBoth()" style="margin-top:6px;color:var(--amber)">&#9654; CALLS vs PUTS LADDER</button>
       <div id="find-result"></div>
       <div id="both-result"></div>
@@ -186,12 +184,12 @@
       <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px">
         <input id="gex-sym" value="SPX" maxlength="12" autocapitalize="characters"
           autocorrect="off" spellcheck="false"
-          style="width:86px;padding:8px 10px;font-family:var(--font);font-size:12px;
-                 font-weight:700;background:var(--bg3);border:1px solid var(--border);
-                 border-radius:6px;color:var(--text);text-align:center">
+          style="width:86px;padding:8px 12px;font-family:var(--num);font-size:12px;
+                 font-weight:500;background:var(--s2);border:1px solid var(--line);
+                 border-radius:999px;color:var(--t1);text-align:center;outline:none">
         <button class="ctrl-btn" id="gex-run-btn" onclick="loadGEX()"
-          style="flex:1;background:rgba(168,85,247,.12);color:#a855f7;border:1px solid rgba(168,85,247,.25)">
-          &#9654; BUILD GAMMA SURFACE
+          style="flex:1;background:var(--t1);color:var(--ink);border:1px solid var(--t1);font-weight:600">
+          Build gamma surface
         </button>
       </div>
       <div id="gex-status" style="font-size:10px;color:var(--sub);text-align:center;padding:20px 0">
