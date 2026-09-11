@@ -1573,7 +1573,58 @@ function gexStat(k,v,cls,unit){
          v+(unit?'<span class="u">'+unit+'</span>':'')+'</div></div>';
 }
 
-function renderGexChart(d){
+function gexAxisMoney(v){
+  const a=Math.abs(v);
+  if(a>=1e9) return (a/1e9).toFixed(1)+'B';
+  if(a>=1e6) return (a/1e6).toFixed(0)+'M';
+  if(a>=1e3) return (a/1e3).toFixed(0)+'K';
+  return a.toFixed(0);
+}
+
+// The band worth drawing. A full SPX chain runs thousands of points wide and
+// nearly all of it is far-OTM strikes carrying no gamma -- drawing every one
+// produced a 12,000px ladder that was 80% blank rows. Walk outward from spot
+// until the band holds COVER of the total magnitude, then keep that contiguous
+// range so the ladder has no holes in it. Walls and the flip are pulled in even
+// if they sit outside, because a chart that hides the level it names is worse
+// than a tall one.
+function gexWindow(strikes, mag, spot, marks){
+  const COVER=0.94, MAXROWS=64;
+  const total=strikes.reduce((a,k)=>a+mag[k],0);
+  if(!total) return strikes.slice(0,MAXROWS);
+  const nearest=v=>strikes.reduce((best,k,idx)=>
+        Math.abs(k-v)<Math.abs(strikes[best]-v)?idx:best,0);
+
+  // Grow outward from spot, always toward the heavier side, until the band
+  // holds COVER of the surface.
+  let lo=nearest(spot), hi=lo, acc=mag[strikes[lo]];
+  while(acc/total<COVER && (lo>0||hi<strikes.length-1)){
+    const dLo=lo>0?mag[strikes[lo-1]]:-1, dHi=hi<strikes.length-1?mag[strikes[hi+1]]:-1;
+    if(dHi>dLo){ hi++; acc+=dHi; } else { lo--; acc+=dLo; }
+  }
+
+  // Then take in anything the header names. A chart that hides the level it
+  // prints above itself is worse than a tall one, so these are pinned: the
+  // row trim below will not cross them.
+  const pins=new Set();
+  marks.filter(v=>v!=null).forEach(v=>{
+    const i=nearest(v); pins.add(i);
+    if(i<lo) lo=i;
+    if(i>hi) hi=i;
+  });
+
+  // Trim back to a readable height from whichever end carries less, stopping
+  // at a pinned row. This runs after the pins are in, which is the whole
+  // point -- recentring on spot here is what used to drop a far wall.
+  while(hi-lo+1>MAXROWS){
+    const canLo=!pins.has(lo), canHi=!pins.has(hi);
+    if(!canLo&&!canHi) break;
+    if(canHi&&(!canLo||mag[strikes[hi]]<=mag[strikes[lo]])) hi--; else lo++;
+  }
+  return strikes.slice(lo,hi+1);
+}
+
+function renderGexChart(d,containerW){
   // Aggregate both option types into one bar per strike: the reader is asking
   // where dealers are long or short gamma, not how it splits by contract type.
   const byStrike={};
@@ -1583,31 +1634,66 @@ function renderGexChart(d){
     e.total+=Math.abs(r.gamma_notional);
     if(r.src==='inferred') e.inferred+=Math.abs(r.gamma_notional);
   });
-  const strikes=Object.keys(byStrike).map(Number).sort((a,b)=>a-b);
+  let strikes=Object.keys(byStrike).map(Number).sort((a,b)=>a-b);
   if(!strikes.length) return '<div style="font-size:11px;color:var(--sub);text-align:center;padding:16px">No strikes with usable data.</div>';
 
-  const maxMag=Math.max(...strikes.map(k=>Math.abs(byStrike[k].n)))||1;
-  const rowH=15, padT=10, padB=10, midX=150, halfW=132;
+  const mag={}; strikes.forEach(k=>mag[k]=Math.abs(byStrike[k].n));
+  const shown=gexWindow(strikes,mag,d.spot,[d.flip,d.call_wall,d.put_wall]);
+  const clipped=strikes.length-shown.length;
+  strikes=shown;
+
+  // Lay the chart out against the real container so nothing is cut off and no
+  // dead strip is left over. The right gutter has to hold "SPOT 7599.64" and
+  // the left one a five-digit strike, both in the 8.5px mono face.
+  const W=Math.max(300,Math.round(containerW||360));
+  const padL=44, padR=68, rowH=14, padT=12, padB=26;
+  const plotL=padL, plotR=W-padR;
+  const midX=Math.round((plotL+plotR)/2), halfW=(plotR-plotL)/2-2;
   const h=padT+padB+strikes.length*rowH;
-  const w=midX+halfW+58;
 
-  const yOf=k=>padT+(strikes.length-1-strikes.indexOf(k))*rowH+rowH/2;
+  const idx={}; strikes.forEach((k,i)=>idx[k]=i);
+  const yOf=k=>padT+(strikes.length-1-idx[k])*rowH+rowH/2;
 
-  let svg='<svg width="'+w+'" height="'+h+'" viewBox="0 0 '+w+' '+h+'" style="display:block">';
-  svg+='<line x1="'+midX+'" y1="0" x2="'+midX+'" y2="'+h+'" stroke="rgba(255,255,255,.14)" stroke-width="1"/>';
+  const maxMag=Math.max(...strikes.map(k=>mag[k]))||1;
+  // Label round strikes, not every Nth row. Stepping by row position lands the
+  // axis on values like 7715 and 7665, which nobody thinks in; stepping by
+  // price keeps it on the 7700s and 7650s a trader actually reads.
+  const span=strikes[strikes.length-1]-strikes[0];
+  const step=[0.5,1,2.5,5,10,25,50,100,250,500,1000]
+             .find(x=>span/x<=13)||1000;
+  const isRound=k=>Math.abs(k/step-Math.round(k/step))<1e-6;
+  const wall=k=>k===d.call_wall?'call':(k===d.put_wall?'put':null);
 
-  strikes.forEach(k=>{
-    const e=byStrike[k], y=yOf(k);
-    const len=Math.abs(e.n)/maxMag*halfW;
+  let svg='<svg width="'+W+'" height="'+h+'" viewBox="0 0 '+W+' '+h+
+          '" style="display:block" role="img" aria-label="Dealer gamma by strike">';
+  svg+='<line x1="'+midX+'" y1="'+(padT-4)+'" x2="'+midX+'" y2="'+(h-padB+4)+
+       '" stroke="rgba(255,255,255,.14)" stroke-width="1"/>';
+
+  strikes.forEach((k,i)=>{
+    const e=byStrike[k], y=yOf(k), w=wall(k);
+    const len=mag[k]/maxMag*halfW;
     const pos=e.n>=0;
     const x=pos?midX:midX-len;
-    // Observed sign is drawn solid; assumed sign is drawn hollow, so the
-    // reader can see how much of the surface is inference vs convention.
+    // Sign observed from today's flow is drawn solid; sign assumed by
+    // convention is drawn faint, so the reader sees how much is inference.
     const share=e.total?e.inferred/e.total:0;
     const col=pos?'#00ff88':'#ff3355';
-    svg+='<rect x="'+x+'" y="'+(y-5)+'" width="'+Math.max(len,0.6)+'" height="10" rx="1.5" fill="'+col+'" opacity="'+(0.30+0.65*share)+'"/>';
-    svg+='<text x="'+(midX+(pos?-6:6))+'" y="'+(y+3.4)+'" text-anchor="'+(pos?'end':'start')+
-         '" font-size="8.5" fill="#6b6b80" font-family="var(--font)">'+k+'</text>';
+    // The wall is marked by a caret and a coloured strike, not a tinted row:
+    // a band spanning the plot reads as a bar the width of the chart.
+    if(w){
+      const wc=w==='call'?'#00ff88':'#ff3355';
+      svg+='<path d="M'+(plotL-1)+' '+(y-4)+'L'+(plotL+4)+' '+y+'L'+(plotL-1)+' '+(y+4)+'Z" fill="'+wc+'"/>';
+    }
+    svg+='<rect x="'+x.toFixed(1)+'" y="'+(y-4.5)+'" width="'+Math.max(len,0.75).toFixed(1)+
+         '" height="9" rx="1.5" fill="'+col+'" opacity="'+(0.30+0.65*share).toFixed(2)+'"/>';
+    // Strikes live in a fixed left gutter. They used to flip sides with the
+    // sign of the bar, which made the axis zigzag and unreadable.
+    if(isRound(k)||w){
+      svg+='<text x="'+(padL-9)+'" y="'+(y+3)+'" text-anchor="end" font-size="8.5" fill="'+
+           (w?(w==='call'?'#00ff88':'#ff3355'):'#6b6b80')+'" font-family="var(--font)">'+k+'</text>';
+    }
+    svg+='<line x1="'+(padL-5)+'" y1="'+y+'" x2="'+(padL-2)+'" y2="'+y+
+         '" stroke="rgba(255,255,255,.16)" stroke-width="1"/>';
   });
 
   const priceToY=p=>{
@@ -1621,17 +1707,52 @@ function renderGexChart(d){
     return yOf(strikes[0]);
   };
 
-  const rule=(p,col,lbl,dash)=>{
-    const y=priceToY(p);
-    return '<line x1="4" y1="'+y+'" x2="'+(midX+halfW)+'" y2="'+y+'" stroke="'+col+
-           '" stroke-width="1"'+(dash?' stroke-dasharray="3 3"':'')+' opacity=".85"/>'+
-           '<text x="'+(midX+halfW+4)+'" y="'+(y+3.4)+'" font-size="8" fill="'+col+
-           '" font-family="var(--font)">'+lbl+'</text>';
-  };
-  svg+=rule(d.spot,'#00d4ff','SPOT '+d.spot.toFixed(2));
-  if(d.flip!=null) svg+=rule(d.flip,'#ffb800','FLIP '+d.flip.toFixed(2),true);
+  // Rule labels are anchored to the right edge rather than offset from the
+  // plot, which is what used to push "SPOT 7599.64" past the viewBox and cut
+  // the last characters off. The lines stay on their true price; only the
+  // labels are nudged apart, because spot and the flip are routinely a couple
+  // of points from each other and the two captions landed on top of each other.
+  const rules=[{p:d.spot,col:'#00d4ff',lbl:'SPOT '+d.spot.toFixed(2),dash:false}];
+  if(d.flip!=null)
+    rules.push({p:d.flip,col:'#ffb800',lbl:'FLIP '+d.flip.toFixed(2),dash:true});
+  rules.forEach(r=>r.y=priceToY(r.p));
+  rules.sort((a,b)=>a.y-b.y);
+  const MINGAP=9.5;
+  rules.forEach((r,i)=>{
+    r.ly=r.y;
+    if(i>0 && r.ly-rules[i-1].ly<MINGAP) r.ly=rules[i-1].ly+MINGAP;
+  });
+  // Keep the nudged stack inside the plot.
+  const spill=rules.length?rules[rules.length-1].ly-(h-padB):0;
+  if(spill>0) rules.forEach(r=>r.ly-=spill);
+  rules.forEach(r=>{
+    svg+='<line x1="'+plotL+'" y1="'+r.y+'" x2="'+plotR+'" y2="'+r.y+'" stroke="'+r.col+
+         '" stroke-width="1"'+(r.dash?' stroke-dasharray="3 3"':'')+' opacity=".85"/>';
+    // When a label has been pushed off its line, a leader keeps them tied.
+    if(Math.abs(r.ly-r.y)>0.5)
+      svg+='<line x1="'+plotR+'" y1="'+r.y+'" x2="'+(plotR+5)+'" y2="'+r.ly+
+           '" stroke="'+r.col+'" stroke-width="1" opacity=".45"/>';
+    svg+='<text x="'+(W-4)+'" y="'+(r.ly+3)+'" text-anchor="end" font-size="8" fill="'+r.col+
+         '" font-family="var(--font)">'+r.lbl+'</text>';
+  });
+
+  // A bar meant nothing without a scale to read it against.
+  const base=h-padB+16;
+  svg+='<text x="'+plotL+'" y="'+base+'" font-size="7.5" fill="#6b6b80" font-family="var(--font)">'+
+       '&#8722;$'+gexAxisMoney(maxMag)+'</text>'+
+       '<text x="'+midX+'" y="'+base+'" text-anchor="middle" font-size="7.5" fill="#6b6b80" '+
+       'font-family="var(--font)">per 1% move</text>'+
+       '<text x="'+plotR+'" y="'+base+'" text-anchor="end" font-size="7.5" fill="#6b6b80" '+
+       'font-family="var(--font)">+$'+gexAxisMoney(maxMag)+'</text>';
   svg+='</svg>';
-  return '<div class="gex-chart-wrap">'+svg+'</div>';
+
+  let note='';
+  if(clipped>0){
+    note='<div class="gex-axis-note">'+strikes[0]+'&ndash;'+strikes[strikes.length-1]+
+         ' &middot; '+clipped+' further strike'+(clipped===1?'':'s')+
+         ' hold almost no gamma and are not drawn</div>';
+  }
+  return '<div class="gex-chart-wrap">'+svg+'</div>'+note;
 }
 
 function renderGexProv(d){
@@ -1698,7 +1819,8 @@ async function loadGEX(){
       gexStat('CALL WALL',d.call_wall!=null?d.call_wall:'—','')+
       gexStat('PUT WALL',d.put_wall!=null?d.put_wall:'—','')+
       '</div>';
-    document.getElementById('gex-chart').innerHTML=renderGexChart(d);
+    const chartEl=document.getElementById('gex-chart');
+    chartEl.innerHTML=renderGexChart(d,chartEl.clientWidth);
     document.getElementById('gex-prov').innerHTML=renderGexProv(d);
   }catch(e){
     st.textContent='Could not build the surface.';
