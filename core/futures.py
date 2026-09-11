@@ -1,5 +1,6 @@
 """
-core/futures.py -- where a gamma surface sits in futures prices.
+core/futures.py -- where a gamma surface sits in futures prices, and what a
+move to each level is worth on the contract you actually trade.
 
 Dealers hedging index options hedge in the futures, not the cash index, and
 outside the cash session the futures are the only thing still printing. So the
@@ -19,34 +20,63 @@ prints instead conflates the basis with however far futures have travelled since
 the cash close, which would slide the whole gamma map by the overnight move --
 the map would drift away from the strikes it was computed on, and every level
 would read wrong by exactly the amount you most wanted to know.
+
+Multipliers and tick sizes below are CME contract specs, not measurements.
 """
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
-# Underlying -> the future that hedges it. Both the index and its tracking ETF
-# map to the same contract; the ratio absorbs the divisor.
+# Underlying -> the contract family that hedges it. Both the index and its
+# tracking ETF map to the same family; the ratio absorbs the divisor.
 FUTURES_MAP: Dict[str, str] = {
-    "SPX": "ES=F",  "^SPX": "ES=F",  "^GSPC": "ES=F", "SPY": "ES=F",
-    "NDX": "NQ=F",  "^NDX": "NQ=F",  "QQQ": "NQ=F",
-    "RUT": "RTY=F", "^RUT": "RTY=F", "IWM": "RTY=F",
-    "DJI": "YM=F",  "^DJI": "YM=F",  "DIA": "YM=F",
+    "SPX": "ES",  "^SPX": "ES",  "^GSPC": "ES", "SPY": "ES",
+    "NDX": "NQ",  "^NDX": "NQ",  "QQQ": "NQ",
+    "RUT": "RTY", "^RUT": "RTY", "IWM": "RTY",
+    "DJI": "YM",  "^DJI": "YM",  "DIA": "YM",
 }
 
-FUTURES_NAME: Dict[str, str] = {
-    "ES=F":  "E-mini S&P 500",
-    "NQ=F":  "E-mini Nasdaq-100",
-    "RTY=F": "E-mini Russell 2000",
-    "YM=F":  "E-mini Dow",
+# Every family trades in two sizes. The full contract and its micro track the
+# same index and quote the same price to within a tick -- what separates them is
+# the multiplier, and on a four-figure account that is the only number deciding
+# which one is tradeable at all. A 100-point move in NQ is $2,000; the same move
+# in MNQ is $200. Both are listed so the reader picks the one they trade.
+CONTRACTS: Dict[str, List[Dict[str, Any]]] = {
+    "ES": [
+        {"code": "ES",  "yf": "ES=F",  "name": "E-mini S&P 500",
+         "multiplier": 50.0, "tick": 0.25, "micro": False},
+        {"code": "MES", "yf": "MES=F", "name": "Micro E-mini S&P 500",
+         "multiplier": 5.0,  "tick": 0.25, "micro": True},
+    ],
+    "NQ": [
+        {"code": "NQ",  "yf": "NQ=F",  "name": "E-mini Nasdaq-100",
+         "multiplier": 20.0, "tick": 0.25, "micro": False},
+        {"code": "MNQ", "yf": "MNQ=F", "name": "Micro E-mini Nasdaq-100",
+         "multiplier": 2.0,  "tick": 0.25, "micro": True},
+    ],
+    "RTY": [
+        {"code": "RTY", "yf": "RTY=F", "name": "E-mini Russell 2000",
+         "multiplier": 50.0, "tick": 0.10, "micro": False},
+        {"code": "M2K", "yf": "M2K=F", "name": "Micro E-mini Russell 2000",
+         "multiplier": 5.0,  "tick": 0.10, "micro": True},
+    ],
+    "YM": [
+        {"code": "YM",  "yf": "YM=F",  "name": "E-mini Dow",
+         "multiplier": 5.0,  "tick": 1.0, "micro": False},
+        {"code": "MYM", "yf": "MYM=F", "name": "Micro E-mini Dow",
+         "multiplier": 0.5,  "tick": 1.0, "micro": True},
+    ],
 }
 
-# Shown instead of the yfinance symbol: nobody reading a chart calls it "ES=F".
-FUTURES_TICKER: Dict[str, str] = {
-    "ES=F": "ES", "NQ=F": "NQ", "RTY=F": "RTY", "YM=F": "YM",
-}
+
+def contracts_for(symbol: str) -> List[Dict[str, Any]]:
+    """Both sizes of the contract that hedges `symbol`, full-size first."""
+    fam = FUTURES_MAP.get((symbol or "").upper())
+    return [dict(c) for c in CONTRACTS.get(fam, [])] if fam else []
 
 
 def future_for(symbol: str) -> Optional[str]:
-    """The futures contract that hedges `symbol`, or None if there isn't one."""
-    return FUTURES_MAP.get((symbol or "").upper())
+    """The yfinance symbol of the full-size future hedging `symbol`."""
+    cs = contracts_for(symbol)
+    return cs[0]["yf"] if cs else None
 
 
 def _last(t) -> float:
@@ -83,21 +113,29 @@ def _synced_closes(under_sym: str, fut_sym: str):
 
 def link_for(symbol: str) -> Optional[Dict[str, Any]]:
     """
-    How to read `symbol`'s strikes as futures prices, plus where the future is
-    trading right now. None when the ticker has no futures counterpart -- most
-    single names don't, and saying so is better than inventing a proxy.
+    How to read `symbol`'s strikes as futures prices, what the contract is
+    trading at now, and what one point is worth in each size. None when the
+    ticker has no futures counterpart -- most single names don't, and saying so
+    is better than inventing a proxy.
 
     `ratio` converts a strike: futures_price = strike * ratio.
     `implied_underlying` runs it backwards, putting the live futures print onto
     the strike axis so the surface can be read against it out of hours.
+
+    The ratio is taken from the full-size contract in every case. It is the
+    deeper book and the cleaner daily bar, and the micro tracks it to within a
+    tick, so deriving the basis from the micro would add noise and change
+    nothing. The micro's own print is still reported, because that is the one
+    being traded.
     """
     from core.market_data import _yf
 
-    fut = future_for(symbol)
-    if not fut:
+    sizes = contracts_for(symbol)
+    if not sizes:
         return None
+    primary = sizes[0]
 
-    synced = _synced_closes(symbol, fut)
+    synced = _synced_closes(symbol, primary["yf"])
     if not synced:
         return None
     under_close, fut_close, asof = synced
@@ -105,14 +143,23 @@ def link_for(symbol: str) -> Optional[Dict[str, Any]]:
     if not (ratio > 0) or ratio != ratio:
         return None
 
-    last = _last(_yf(fut))
-    if last <= 0:
-        last = fut_close
+    for c in sizes:
+        c["last"] = _last(_yf(c["yf"])) or (fut_close if c is primary else 0.0)
+        # Worth stating outright: one tick is the smallest move the contract
+        # can make, and on the micros it is pocket change per contract.
+        c["tick_value"] = c["tick"] * c["multiplier"]
+    # A micro whose own quote failed still has a usable price: it tracks the
+    # full contract to within a tick by construction.
+    for c in sizes:
+        if c["last"] <= 0:
+            c["last"] = primary["last"]
 
+    last = primary["last"]
     return {
-        "future":     FUTURES_TICKER.get(fut, fut),
-        "yf_symbol":  fut,
-        "name":       FUTURES_NAME.get(fut, fut),
+        "future":     primary["code"],
+        "yf_symbol":  primary["yf"],
+        "name":       primary["name"],
+        "contracts":  sizes,
         "ratio":      ratio,
         "ratio_asof": asof.isoformat(),
         # The basis at that close, in index points. Reported because a reader

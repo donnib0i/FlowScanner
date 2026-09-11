@@ -50,7 +50,14 @@ def _render(profile, spot, flip=None, call_wall=None, put_wall=None, width=403,
 ES = {"future": "ES", "yf_symbol": "ES=F", "name": "E-mini S&P 500",
       "ratio": 1.0010274, "ratio_asof": "2026-09-10", "basis": 7.80,
       "last": 7620.50, "prev_close": 7599.50, "change": 21.0,
-      "change_pct": 0.00276, "implied_underlying": 7612.68}
+      "change_pct": 0.00276, "implied_underlying": 7612.68,
+      "contracts": [
+          {"code": "ES", "yf": "ES=F", "name": "E-mini S&P 500",
+           "multiplier": 50.0, "tick": 0.25, "micro": False,
+           "last": 7620.50, "tick_value": 12.5},
+          {"code": "MES", "yf": "MES=F", "name": "Micro E-mini S&P 500",
+           "multiplier": 5.0, "tick": 0.25, "micro": True,
+           "last": 7620.50, "tick_value": 1.25}]}
 FUT_UNIT = {"ratio": ES["ratio"], "fut": True}
 
 
@@ -134,6 +141,40 @@ def test_strike_labels_land_on_round_numbers():
     assert all(v % 25 == 0 for v in plain), f"odd strike labels: {sorted(set(plain))[:8]}"
 
 
+def test_a_wide_ladder_does_not_lose_the_leading_digit_off_its_strikes():
+    # QQQ strikes converted to NQ are eight characters ("30005.19"). The gutter
+    # was fixed at 44px, which fits a four-digit SPX strike and cropped the
+    # front off everything wider -- the axis read "0005.19".
+    NQ = dict(ES, future="NQ", ratio=41.103, basis=None, last=29429.75,
+              implied_underlying=715.99)
+    qqq = _chain(600, 830, 1, 716.0, 9)
+    svg = _render(qqq, 716.0, flip=715.20, call_wall=725, put_wall=710,
+                  futures=NQ, unit={"ratio": 41.103, "fut": True})
+    labels = re.findall(r'<text x="([\-\d.]+)" y="[\d.]+" text-anchor="end" '
+                        r'font-size="8.5"[^>]*>([\d.]+)</text>', svg)
+    assert labels, "no strike labels drawn"
+    for x, lbl in labels:
+        assert float(x) - len(lbl) * 5.1 >= -0.5, \
+            f"{lbl} starts off-canvas at x={x} -- the gutter is too narrow"
+
+
+def test_the_gutters_grow_with_the_numbers_that_go_in_them():
+    narrow = _render(FULL, 7599.64, flip=7597.17, call_wall=7700, put_wall=7600)
+    NQ = dict(ES, future="NQ", ratio=41.103, basis=None, last=29429.75,
+              implied_underlying=715.99)
+    wide = _render(_chain(600, 830, 1, 716.0, 9), 716.0, flip=715.20,
+                   call_wall=725, put_wall=710, futures=NQ,
+                   unit={"ratio": 41.103, "fut": True})
+
+    def gutter(svg):
+        return min(float(x) for x in re.findall(
+            r'<text x="([\d.]+)" y="[\d.]+" text-anchor="end" font-size="8.5"', svg))
+
+    assert gutter(wide) > gutter(narrow), "the gutter did not widen for wider labels"
+    # The column itself is unchanged -- only the split inside it moves.
+    assert _svg_attrs(narrow)["w"] == _svg_attrs(wide)["w"]
+
+
 def test_every_strike_label_sits_in_the_same_gutter():
     # They used to flip to whichever side the bar pointed, which made the axis
     # zigzag down the page.
@@ -210,3 +251,62 @@ def test_a_ticker_with_no_futures_counterpart_draws_no_future_rule():
                   futures=None)
     assert "SPOT " in svg and "FLIP " in svg
     assert " 7620.50" not in svg
+
+
+# ── what reaching a level is worth ───────────────────────────────────────────
+def _dist(call_wall=7700, flip=7597.17, put_wall=7600, contract=None):
+    """renderGexDist, executed, for one selected contract size."""
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node not installed — distance table unverified")
+    d = {"futures": ES, "call_wall": call_wall, "flip": flip, "put_wall": put_wall}
+    src = (_fn("gexDollars") + "\n" + _fn("gexSpec") + "\n"
+           + "let _gexData=" + json.dumps(d) + ";\n"
+           + "let _gexContract=" + json.dumps(contract) + ";\n"
+           + _fn("gexContract") + "\n" + _fn("renderGexDist") + "\n"
+           + "process.stdout.write(renderGexDist(_gexData));")
+    out = subprocess.run([node, "-e", src], capture_output=True, text=True, timeout=60)
+    assert out.returncode == 0, out.stderr
+    return out.stdout
+
+
+def test_the_distance_is_priced_on_the_selected_contract():
+    # ES call wall: 7700 x 1.0010274 = 7707.91, which is 87.41 above the 7620.50
+    # print. At $50/pt that is $4,371; the micro is a tenth of it.
+    big = _dist(contract="ES")
+    small = _dist(contract="MES")
+    assert "$4,371" in big, big
+    assert "$437" in small and "$4,371" not in small, small
+
+
+def test_the_dollar_per_point_is_stated_next_to_the_numbers():
+    assert "$50/pt" in _dist(contract="ES")
+    assert "$5/pt" in _dist(contract="MES")
+
+
+def test_a_sub_dollar_tick_keeps_its_cents():
+    # A micro's tick is fifty cents; rounding it to the nearest dollar printed
+    # MNQ's $0.50 tick as "$1" and overstated the smallest move it can make.
+    assert "1 tick $1.25" in _dist(contract="MES")
+    assert "1 tick $12.50" in _dist(contract="ES"), "ES ticks at $12.50, not $13"
+
+
+def test_a_level_below_the_future_reads_as_a_negative_distance():
+    out = _dist(contract="ES")
+    # put wall 7600 -> 7607.81, below the 7620.50 print
+    assert "&minus;12.69" in out, out
+    assert "+87.41" in out, out
+
+
+def test_levels_the_surface_could_not_measure_are_left_out():
+    out = _dist(call_wall=None, flip=7597.17, put_wall=None, contract="ES")
+    assert "CALL WALL" not in out and "PUT WALL" not in out
+    assert "ZERO-GAMMA FLIP" in out
+
+
+def test_no_measured_levels_means_no_table_rather_than_an_empty_one():
+    assert _dist(call_wall=None, flip=None, put_wall=None, contract="ES") == ""
+
+
+def test_the_default_size_is_the_full_contract():
+    assert _dist(contract=None) == _dist(contract="ES")

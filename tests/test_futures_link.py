@@ -37,16 +37,24 @@ def _bars(dates, closes):
 @pytest.fixture
 def wired(monkeypatch):
     """Point core.futures at bars we control, without touching the network."""
-    def install(mapping):
+    def install(mapping, micro_last="track"):
         import core.market_data
         # Keep the real ticker normalisation (SPX -> ^SPX) in the path: the
         # mapping is keyed on what yfinance is actually asked for.
         norm = core.market_data._yf_ticker
+        full = dict(mapping)
+        # Micros are quoted too. Unless a test says otherwise they track the
+        # full contract, which is what they do in the market to within a tick.
+        for sizes in F.CONTRACTS.values():
+            big, small = sizes[0]["yf"], sizes[1]["yf"]
+            if big in full and small not in full:
+                last = full[big]._last if micro_last == "track" else micro_last
+                full[small] = _FakeTicker(pd.DataFrame({"Close": []}), last=last)
 
         def fake_yf(sym):
             s = norm(sym)
-            assert s in mapping, f"unexpected fetch for {s}"
-            return mapping[s]
+            assert s in full, f"unexpected fetch for {s}"
+            return full[s]
         monkeypatch.setattr(core.market_data, "_yf", fake_yf)
     return install
 
@@ -152,3 +160,71 @@ def test_a_broken_futures_leg_does_not_take_the_surface_with_it(monkeypatch):
     import inspect
     src = inspect.getsource(core.gex.surface_for)
     assert "out[\"futures\"] = None" in src, "the futures fetch is not guarded"
+
+
+# ── contract sizing ──────────────────────────────────────────────────────────
+def test_every_family_lists_a_full_contract_and_its_micro():
+    for under, expect in (("SPX", ("ES", "MES")), ("QQQ", ("NQ", "MNQ")),
+                          ("IWM", ("RTY", "M2K")), ("DIA", ("YM", "MYM"))):
+        codes = tuple(c["code"] for c in F.contracts_for(under))
+        assert codes == expect
+        sizes = F.contracts_for(under)
+        assert sizes[0]["micro"] is False and sizes[1]["micro"] is True
+
+
+def test_a_micro_is_a_tenth_of_its_full_contract():
+    # This is the whole reason the micro is listed: it is what makes the
+    # contract carryable on a small account.
+    for under in ("SPX", "QQQ", "IWM", "DIA"):
+        big, small = F.contracts_for(under)
+        assert small["multiplier"] == pytest.approx(big["multiplier"] / 10)
+        assert small["tick"] == big["tick"]
+
+
+def test_the_nasdaq_pair_is_nq_and_mnq_at_twenty_and_two_dollars_a_point():
+    nq, mnq = F.contracts_for("QQQ")
+    assert (nq["code"], nq["multiplier"]) == ("NQ", 20.0)
+    assert (mnq["code"], mnq["multiplier"]) == ("MNQ", 2.0)
+
+
+def test_tick_value_is_reported_per_contract(wired):
+    wired({"QQQ":  _FakeTicker(_bars(DATES, [700.0, 704.0, 708.69])),
+           "NQ=F": _FakeTicker(_bars(DATES, [28700.0, 28860.0, 29054.50]), last=29100.0)})
+    nq, mnq = F.link_for("QQQ")["contracts"]
+    assert nq["tick_value"] == pytest.approx(5.00)     # 0.25 x $20
+    assert mnq["tick_value"] == pytest.approx(0.50)    # 0.25 x $2
+
+
+def test_the_basis_is_taken_from_the_full_contract_not_the_micro(wired):
+    # The full contract has the deeper book and the cleaner daily bar, and the
+    # micro tracks it to within a tick -- deriving the basis from the micro
+    # would add noise and change nothing.
+    wired({"QQQ":   _FakeTicker(_bars(DATES, [700.0, 704.0, 708.69])),
+           "NQ=F":  _FakeTicker(_bars(DATES, [28700.0, 28860.0, 29054.50]), last=29100.0),
+           "MNQ=F": _FakeTicker(_bars(DATES, [1.0, 2.0, 3.0]), last=29099.75)})
+    link = F.link_for("QQQ")
+    assert link["ratio"] == pytest.approx(29054.50 / 708.69)
+    assert link["last"] == 29100.0
+
+
+def test_both_sizes_carry_their_own_live_print(wired):
+    wired({"QQQ":   _FakeTicker(_bars(DATES, [700.0, 704.0, 708.69])),
+           "NQ=F":  _FakeTicker(_bars(DATES, [28700.0, 28860.0, 29054.50]), last=29100.0),
+           "MNQ=F": _FakeTicker(pd.DataFrame({"Close": []}), last=29099.75)})
+    nq, mnq = F.link_for("QQQ")["contracts"]
+    assert nq["last"] == 29100.0
+    assert mnq["last"] == 29099.75
+
+
+def test_a_micro_with_no_quote_falls_back_to_the_full_contract(wired):
+    # They track to within a tick by construction, so a blank micro quote is
+    # better filled than left at zero and rendered as a $0 level.
+    wired({"QQQ":  _FakeTicker(_bars(DATES, [700.0, 704.0, 708.69])),
+           "NQ=F": _FakeTicker(_bars(DATES, [28700.0, 28860.0, 29054.50]), last=29100.0)},
+          micro_last=None)
+    nq, mnq = F.link_for("QQQ")["contracts"]
+    assert mnq["last"] == nq["last"] == 29100.0
+
+
+def test_a_single_name_lists_no_contracts_at_all():
+    assert F.contracts_for("NVDA") == []
