@@ -329,15 +329,24 @@ th.sortable .arr{font-size:8px;margin-left:2px}
    Hand-rolled SVG, no chart library, matching the rest of the app. */
 #gex-head{position:sticky;top:0;z-index:2;background:rgba(10,10,15,.94);
   backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}
-.gex-head{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding-bottom:10px}
-.gex-stat{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:9px 11px}
-.gex-stat .k{font-size:8.5px;letter-spacing:.8px;color:var(--sub);margin-bottom:3px}
-.gex-stat .v{font-size:15px;font-weight:700;letter-spacing:-.3px}
+.gex-head{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;padding-bottom:10px}
+@media (max-width:359px){.gex-head{grid-template-columns:1fr 1fr}}
+.gex-stat{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:8px 9px}
+.gex-stat .k{font-size:7.5px;letter-spacing:.5px;color:var(--sub);margin-bottom:3px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.gex-stat .v{font-size:14px;font-weight:700;letter-spacing:-.4px}
 .gex-stat .u{font-size:9px;color:var(--sub);font-weight:400;margin-left:3px}
 .gex-pos{color:var(--green)}.gex-neg{color:var(--red)}
 .gex-chart-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;margin-bottom:6px}
 .gex-axis-note{font-size:8.5px;color:var(--sub);text-align:center;
   padding:0 0 10px;letter-spacing:.2px}
+.gex-unit{display:flex;align-items:center;gap:6px;padding:0 0 10px}
+.gex-unit .lbl{font-size:8px;letter-spacing:.8px;color:var(--sub);margin-right:auto}
+.gex-unit-btn{font-family:var(--font);font-size:10px;font-weight:700;letter-spacing:.4px;
+  padding:5px 12px;min-height:28px;border-radius:6px;cursor:pointer;
+  background:var(--bg3);border:1px solid var(--border);color:var(--sub)}
+.gex-unit-btn.on{background:rgba(168,85,247,.12);border-color:rgba(168,85,247,.35);
+  color:var(--purple)}
 .gex-prov{font-size:9px;line-height:1.65;color:var(--sub);background:var(--bg2);
   border:1px solid var(--border);border-radius:8px;padding:9px 11px;margin-bottom:14px}
 .gex-prov b{color:var(--amber);font-weight:700}

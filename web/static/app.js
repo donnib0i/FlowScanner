@@ -1573,6 +1573,27 @@ function gexStat(k,v,cls,unit){
          v+(unit?'<span class="u">'+unit+'</span>':'')+'</div></div>';
 }
 
+// The gamma surface is measured on index strikes, but dealers hedge it in the
+// futures and out of hours the future is the only leg still printing. Holding
+// the payload lets the unit toggle redraw without paying for another chain.
+let _gexData=null, _gexUnit='under';
+
+function gexUnit(){
+  const f=_gexData&&_gexData.futures;
+  return (_gexUnit==='fut'&&f)
+    ? {ratio:f.ratio, label:f.future, fut:true}
+    : {ratio:1, label:(_gexData&&_gexData.symbol)||'', fut:false};
+}
+
+// A strike in the active unit. Index strikes are round by construction; the
+// futures prices they map to are not, and rounding them to look tidy would be
+// inventing precision the basis does not have.
+function gexLevel(v,u){
+  if(v==null) return '—';
+  const x=v*u.ratio;
+  return u.fut ? x.toFixed(2) : String(Math.round(x*100)/100);
+}
+
 function gexAxisMoney(v){
   const a=Math.abs(v);
   if(a>=1e9) return (a/1e9).toFixed(1)+'B';
@@ -1624,7 +1645,8 @@ function gexWindow(strikes, mag, spot, marks){
   return strikes.slice(lo,hi+1);
 }
 
-function renderGexChart(d,containerW){
+function renderGexChart(d,containerW,u){
+  u=u||{ratio:1,fut:false};
   // Aggregate both option types into one bar per strike: the reader is asking
   // where dealers are long or short gamma, not how it splits by contract type.
   const byStrike={};
@@ -1690,7 +1712,8 @@ function renderGexChart(d,containerW){
     // sign of the bar, which made the axis zigzag and unreadable.
     if(isRound(k)||w){
       svg+='<text x="'+(padL-9)+'" y="'+(y+3)+'" text-anchor="end" font-size="8.5" fill="'+
-           (w?(w==='call'?'#00ff88':'#ff3355'):'#6b6b80')+'" font-family="var(--font)">'+k+'</text>';
+           (w?(w==='call'?'#00ff88':'#ff3355'):'#6b6b80')+'" font-family="var(--font)">'+
+           gexLevel(k,u)+'</text>';
     }
     svg+='<line x1="'+(padL-5)+'" y1="'+y+'" x2="'+(padL-2)+'" y2="'+y+
          '" stroke="rgba(255,255,255,.16)" stroke-width="1"/>';
@@ -1712,9 +1735,17 @@ function renderGexChart(d,containerW){
   // the last characters off. The lines stay on their true price; only the
   // labels are nudged apart, because spot and the flip are routinely a couple
   // of points from each other and the two captions landed on top of each other.
-  const rules=[{p:d.spot,col:'#00d4ff',lbl:'SPOT '+d.spot.toFixed(2),dash:false}];
+  // Captions on the rules are prices, so they keep both decimals; the strike
+  // labels in the gutter are strikes and do not.
+  const px=v=>(v*u.ratio).toFixed(2);
+  const rules=[{p:d.spot,col:'#00d4ff',lbl:'SPOT '+px(d.spot),dash:false}];
   if(d.flip!=null)
-    rules.push({p:d.flip,col:'#ffb800',lbl:'FLIP '+d.flip.toFixed(2),dash:true});
+    rules.push({p:d.flip,col:'#ffb800',lbl:'FLIP '+px(d.flip),dash:true});
+  // Out of hours the index print is frozen at its close and this is the only
+  // line on the chart that is still moving.
+  if(d.futures&&d.futures.implied_underlying>0)
+    rules.push({p:d.futures.implied_underlying,col:'#a855f7',
+                lbl:d.futures.future+' '+d.futures.last.toFixed(2),dash:true});
   rules.forEach(r=>r.y=priceToY(r.p));
   rules.sort((a,b)=>a.y-b.y);
   const MINGAP=9.5;
@@ -1748,11 +1779,57 @@ function renderGexChart(d,containerW){
 
   let note='';
   if(clipped>0){
-    note='<div class="gex-axis-note">'+strikes[0]+'&ndash;'+strikes[strikes.length-1]+
+    note='<div class="gex-axis-note">'+gexLevel(strikes[0],u)+'&ndash;'+
+         gexLevel(strikes[strikes.length-1],u)+
          ' &middot; '+clipped+' further strike'+(clipped===1?'':'s')+
          ' hold almost no gamma and are not drawn</div>';
   }
   return '<div class="gex-chart-wrap">'+svg+'</div>'+note;
+}
+
+function gexPct(v){return (v>=0?'+':'')+(v*100).toFixed(2)+'%';}
+
+// The stat block and the unit switch. Rebuilt rather than patched so the two
+// can never disagree about which unit is showing.
+function renderGexHead(d){
+  const u=gexUnit(), f=d.futures;
+  let out='<div class="gex-head">'+
+    gexStat('NET GAMMA',gexMoney(d.net_gex),d.net_gex>=0?'gex-pos':'gex-neg','/1%')+
+    gexStat('ZERO-GAMMA FLIP',d.flip!=null?gexLevel(d.flip,u):'none in range','')+
+    gexStat('CALL WALL',gexLevel(d.call_wall,u),'')+
+    gexStat('PUT WALL',gexLevel(d.put_wall,u),'');
+  if(f){
+    out+=gexStat(f.future+' LAST',f.last.toFixed(2),
+                 f.change>=0?'gex-pos':'gex-neg',
+                 ' '+(f.change>=0?'+':'')+f.change.toFixed(2))+
+         gexStat(f.future+(f.basis!=null?' BASIS':' RATIO'),
+                 f.basis!=null?(f.basis>=0?'+':'')+f.basis.toFixed(2)
+                              :'&times;'+f.ratio.toFixed(3),
+                 '',f.basis!=null?' pts':'');
+  }
+  out+='</div>';
+  if(f){
+    out+='<div class="gex-unit"><span class="lbl">SHOW LEVELS IN</span>'+
+         '<button class="gex-unit-btn'+(u.fut?'':' on')+'" onclick="setGexUnit(\'under\')">'+
+         (d.symbol||'INDEX')+'</button>'+
+         '<button class="gex-unit-btn'+(u.fut?' on':'')+'" onclick="setGexUnit(\'fut\')">'+
+         f.future+'</button></div>';
+  }
+  return out;
+}
+
+function setGexUnit(which){
+  if(_gexUnit===which||!_gexData) return;
+  _gexUnit=which;
+  drawGex();
+}
+
+function drawGex(){
+  const d=_gexData; if(!d) return;
+  document.getElementById('gex-head').innerHTML=renderGexHead(d);
+  const c=document.getElementById('gex-chart');
+  c.innerHTML=renderGexChart(d,c.clientWidth,gexUnit());
+  document.getElementById('gex-prov').innerHTML=renderGexProv(d);
 }
 
 function renderGexProv(d){
@@ -1770,6 +1847,17 @@ function renderGexProv(d){
        pct(p.assumed_pct)+' assumed (dealers long calls / short puts).<br>';
   out+='Strikes: '+p.strikes_total+' total, '+p.strikes_dropped+' dropped for no usable IV. ';
   out+='Expiries: '+(p.expiries||[]).join(', ')+'.';
+  const f=d.futures;
+  if(f){
+    out+='<br><b>'+f.future+' conversion</b> &times;'+f.ratio.toFixed(5)+
+         (f.basis!=null?' ('+(f.basis>=0?'+':'')+f.basis.toFixed(2)+' pts)':'')+
+         ', measured from the '+f.ratio_asof+' closes of '+f.name+' and the index '+
+         'printed in the same session. It is a measured basis, not a fair-value '+
+         'model, and it drifts as carry does.<br>'+
+         f.future+' is '+f.last.toFixed(2)+' ('+(f.change>=0?'+':'')+
+         f.change.toFixed(2)+', '+gexPct(f.change_pct)+' from its close) &mdash; '+
+         'the surface itself has not repriced since the last settle.';
+  }
   if(!p.flip_stable && p.flip_roots>1){
     out+='<br><span class="warn">Net gamma crosses zero '+p.flip_roots+
          '&times; within &plusmn;5% — the flip is an artifact of where spot '+
@@ -1803,6 +1891,20 @@ async function loadGEX(){
     const d=await r.json();
     if(!d.provenance.oi_usable){
       st.style.display='block';
+      // There is no surface to convert, so nothing claims there is one. The
+      // futures print still goes up: out of hours it is the only live number
+      // on this screen, and it is the reason to come back at the open.
+      if(d.futures){
+        const f=d.futures;
+        document.getElementById('gex-head').innerHTML='<div class="gex-head">'+
+          gexStat(f.future+' LAST',f.last.toFixed(2),
+                  f.change>=0?'gex-pos':'gex-neg',
+                  ' '+(f.change>=0?'+':'')+f.change.toFixed(2))+
+          gexStat(f.future+' FROM CLOSE',gexPct(f.change_pct),
+                  f.change>=0?'gex-pos':'gex-neg','')+
+          gexStat('IMPLIES '+(d.symbol||'INDEX'),f.implied_underlying.toFixed(2),'')+
+          '</div>';
+      }
       st.innerHTML='<b style="color:var(--gold)">No open interest in this chain.</b><br>'+
         'The feed returned none, so there is no surface to draw. This is a missing '+
         'reading, not a zero one — nothing here is safe to trade off.<br>'+
@@ -1812,16 +1914,11 @@ async function loadGEX(){
       return;
     }
     st.style.display='none';
-    const net=d.net_gex;
-    document.getElementById('gex-head').innerHTML='<div class="gex-head">'+
-      gexStat('NET GAMMA',gexMoney(net),net>=0?'gex-pos':'gex-neg','/1%')+
-      gexStat('ZERO-GAMMA FLIP',d.flip!=null?d.flip.toFixed(2):'none in range','')+
-      gexStat('CALL WALL',d.call_wall!=null?d.call_wall:'—','')+
-      gexStat('PUT WALL',d.put_wall!=null?d.put_wall:'—','')+
-      '</div>';
-    const chartEl=document.getElementById('gex-chart');
-    chartEl.innerHTML=renderGexChart(d,chartEl.clientWidth);
-    document.getElementById('gex-prov').innerHTML=renderGexProv(d);
+    _gexData=d;
+    // A symbol with no futures counterpart cannot stay switched to a unit it
+    // does not have.
+    if(!d.futures) _gexUnit='under';
+    drawGex();
   }catch(e){
     st.textContent='Could not build the surface.';
   }finally{

@@ -29,18 +29,29 @@ def _fn(name):
     return head + JS.split(head)[1].split("\n}\n")[0] + "\n}"
 
 
-def _render(profile, spot, flip=None, call_wall=None, put_wall=None, width=403):
+def _render(profile, spot, flip=None, call_wall=None, put_wall=None, width=403,
+            futures=None, unit=None):
     node = shutil.which("node")
     if not node:
         pytest.skip("node not installed — chart layout unverified")
     d = {"spot": spot, "profile": profile, "flip": flip,
-         "call_wall": call_wall, "put_wall": put_wall}
-    src = (_fn("gexAxisMoney") + "\n" + _fn("gexWindow") + "\n" +
-           _fn("renderGexChart") + "\n" +
-           f"process.stdout.write(renderGexChart({json.dumps(d)},{width}));")
+         "call_wall": call_wall, "put_wall": put_wall, "futures": futures,
+         "symbol": "SPX"}
+    u = unit or {"ratio": 1, "fut": False}
+    src = (_fn("gexLevel") + "\n" + _fn("gexAxisMoney") + "\n" + _fn("gexWindow") +
+           "\n" + _fn("renderGexChart") + "\n" +
+           f"process.stdout.write(renderGexChart({json.dumps(d)},{width},{json.dumps(u)}));")
     out = subprocess.run([node, "-e", src], capture_output=True, text=True, timeout=60)
     assert out.returncode == 0, out.stderr
     return out.stdout
+
+
+# A measured ES link, shaped like core.futures.link_for returns.
+ES = {"future": "ES", "yf_symbol": "ES=F", "name": "E-mini S&P 500",
+      "ratio": 1.0010274, "ratio_asof": "2026-09-10", "basis": 7.80,
+      "last": 7620.50, "prev_close": 7599.50, "change": 21.0,
+      "change_pct": 0.00276, "implied_underlying": 7612.68}
+FUT_UNIT = {"ratio": ES["ratio"], "fut": True}
 
 
 def _chain(lo, hi, step, spot, width):
@@ -155,3 +166,47 @@ def test_the_magnitude_axis_is_labelled():
 
 def test_an_empty_profile_says_so_instead_of_drawing_an_empty_axis():
     assert "No strikes with usable data" in _render([], 7599.64)
+
+
+# ── the surface read in futures prices ───────────────────────────────────────
+def test_the_live_future_gets_its_own_rule_on_the_ladder():
+    # Out of hours this is the only line on the chart still moving: the index
+    # print is frozen at its close.
+    svg = _render(FULL, 7599.64, flip=7597.17, call_wall=7700, put_wall=7600,
+                  futures=ES)
+    assert "ES 7620.50" in svg
+
+
+def test_the_future_rule_is_placed_by_the_index_level_it_implies():
+    # Plotting the raw futures print on a strike axis would put the line at the
+    # wrong strike by the whole basis.
+    svg = _render(FULL, 7599.64, flip=7597.17, call_wall=7700, put_wall=7600,
+                  futures=ES)
+    ys = {cap.split()[0]: float(y) for y, cap in
+          re.findall(r'<line x1="[\d.]+" y1="([\d.]+)"[^>]*/><text[^>]*>((?:SPOT|FLIP|ES)[^<]*)', svg)}
+    # implied_underlying 7612.68 sits above spot 7599.64, so a smaller y
+    assert ys["ES"] < ys["SPOT"], "the ES rule ignored the basis"
+
+
+def test_switching_to_futures_converts_every_level_on_the_chart():
+    svg = _render(FULL, 7599.64, flip=7597.17, call_wall=7700, put_wall=7600,
+                  futures=ES, unit=FUT_UNIT)
+    assert ">7707.91<" in svg, "the 7700 call wall was not converted to ES"
+    assert ">7700<" not in svg, "an unconverted index strike is still labelled"
+    assert "SPOT 7607.45" in svg
+
+
+def test_converted_strike_labels_keep_the_precision_the_basis_has():
+    # 7700 index maps to 7707.91 in ES. Rounding that to 7708 would invent
+    # precision the measured basis does not carry.
+    svg = _render(FULL, 7599.64, flip=7597.17, call_wall=7700, put_wall=7600,
+                  futures=ES, unit=FUT_UNIT)
+    labels = re.findall(r'font-family="var\(--font\)">(\d+\.\d\d)</text>', svg)
+    assert labels, "futures-unit labels lost their decimals"
+
+
+def test_a_ticker_with_no_futures_counterpart_draws_no_future_rule():
+    svg = _render(FULL, 7599.64, flip=7597.17, call_wall=7700, put_wall=7600,
+                  futures=None)
+    assert "SPOT " in svg and "FLIP " in svg
+    assert " 7620.50" not in svg

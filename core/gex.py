@@ -468,4 +468,13 @@ def surface_for(symbol: str, flow: Optional[Dict] = None) -> Dict[str, Any]:
     out["symbol"] = symbol
     out["expiries"] = [e for e, _, _ in chosen]
     out["provenance"]["expiries"] = out["expiries"]
+
+    # Where these strikes sit in futures prices. Never fatal: a surface without
+    # the futures link is still the whole measurement, and out of hours the
+    # futures leg is the part most likely to be the one that fails.
+    try:
+        from core.futures import link_for
+        out["futures"] = link_for(symbol)
+    except Exception:
+        out["futures"] = None
     return out

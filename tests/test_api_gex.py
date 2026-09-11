@@ -74,8 +74,42 @@ def get(url="/api/gex?symbol=SPX"):
 def test_response_carries_the_measured_quantities():
     d = get()
     for k in ("spot", "profile", "net_gex", "flip", "flips",
-              "call_wall", "put_wall", "provenance"):
+              "call_wall", "put_wall", "provenance", "futures"):
         assert k in d, f"missing {k}"
+
+
+# ── Futures link ──────────────────────────────────────────────────────────────
+def test_the_futures_link_rides_along_with_the_surface(monkeypatch):
+    # The client needs the conversion in the same payload it draws from; a
+    # second round trip would let the two disagree about the basis.
+    import core.futures
+    monkeypatch.setattr(core.futures, "link_for", lambda s: {
+        "future": "ES", "ratio": 1.001, "ratio_asof": "2026-09-10",
+        "basis": 7.6, "last": 7600.0, "prev_close": 7592.0, "change": 8.0,
+        "change_pct": 0.001, "implied_underlying": 7592.4,
+        "yf_symbol": "ES=F", "name": "E-mini S&P 500"})
+    f = get()["futures"]
+    assert f["future"] == "ES"
+    assert f["ratio"] == 1.001
+
+
+def test_a_ticker_with_no_future_reports_null_rather_than_omitting_the_key(monkeypatch):
+    import core.futures
+    monkeypatch.setattr(core.futures, "link_for", lambda s: None)
+    d = get("/api/gex?symbol=NVDA")
+    assert "futures" in d and d["futures"] is None
+
+
+def test_a_dead_futures_feed_does_not_take_the_surface_down(monkeypatch):
+    # The surface is the measurement; the futures leg is a convenience on top
+    # of it, and out of hours it is the leg most likely to fail.
+    import core.futures
+    def boom(s):
+        raise RuntimeError("feed down")
+    monkeypatch.setattr(core.futures, "link_for", boom)
+    d = get()
+    assert d["futures"] is None
+    assert d["net_gex"] is not None and d["profile"]
 
 
 def test_profile_rows_carry_units_and_sourcing():
