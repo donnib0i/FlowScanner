@@ -51,21 +51,21 @@
     <div class="sort-bar" id="flow-sort-bar" style="display:none">
       <span class="sort-lbl">SORT</span>
       <select class="sel" id="flow-sort" onchange="setFlowSort(this.value)">
-        <option value="premium">PREMIUM $</option>
-        <option value="score">WHALE SCORE</option>
-        <option value="vol">VOLUME</option>
-        <option value="oi">OPEN INTEREST</option>
-        <option value="voloi">VOL / OI</option>
+        <option value="premium">Premium</option>
+        <option value="score">Whale score</option>
+        <option value="vol">Volume</option>
+        <option value="oi">Open interest</option>
+        <option value="voloi">Vol / OI</option>
         <option value="dte">DTE</option>
-        <option value="pc">P/C RATIO</option>
+        <option value="pc">Put / call ratio</option>
       </select>
       <button class="dir-toggle" id="flow-dir" onclick="toggleFlowDir()" title="Ascending / descending">&#9660;</button>
     </div>
     <div class="prog-wrap" id="pw" style="display:none"><div class="prog-bar" id="pb"></div></div>
     <div class="prog-lbl" id="pl" style="display:none"></div>
     <div class="view-toggle" id="view-toggle" style="display:none">
-      <button class="vt-btn on" id="vt-sig" onclick="setView('signals')">SIGNALS</button>
-      <button class="vt-btn" id="vt-hot" onclick="setView('hot')">HOT CONTRACTS</button>
+      <button class="vt-btn on" id="vt-sig" onclick="setView('signals')">Signals</button>
+      <button class="vt-btn" id="vt-hot" onclick="setView('hot')">Hot contracts</button>
     </div>
     <div id="flow-feed">
       <div class="empty-st">
@@ -79,22 +79,22 @@
   <div class="tab-pane" id="tab-scan">
     <div class="scan-controls">
       <select class="sel" id="scan-filter" onchange="updateScanFilter()">
-        <option value="any">ALL SETUPS</option>
-        <option value="gap">GAP FILLS</option>
-        <option value="hv">HIGH VOL</option>
-        <option value="inside">INSIDE DAY</option>
-        <option value="breakout">BREAKOUT</option>
-        <option value="laggard">LAGGARDS</option>
+        <option value="any">All setups</option>
+        <option value="gap">Gap fills</option>
+        <option value="hv">High volume</option>
+        <option value="inside">Inside day</option>
+        <option value="breakout">Breakout</option>
+        <option value="laggard">Laggards</option>
       </select>
       <select class="sel" id="scan-sort" onchange="updateScanSort()">
-        <option value="setup">BY SETUP</option>
-        <option value="opt">BY OPT SCORE</option>
-        <option value="vol">BY REL VOL</option>
+        <option value="setup">By setup</option>
+        <option value="opt">By option score</option>
+        <option value="vol">By relative volume</option>
         <option value="chg">BY CHANGE%</option>
       </select>
       <select class="sel" id="scan-dte">
         <option value="0dte">0DTE</option>
-        <option value="weekly">WEEKLY</option>
+        <option value="weekly">Weekly</option>
         <option value="all">ALL</option>
       </select>
       <span class="scan-stat" id="scan-stat"></span>
@@ -112,21 +112,21 @@
   </div>
   <div class="tab-pane" id="tab-sectors">
     <div id="sectors-feed">
-      <button class="load-btn" onclick="loadSectors()">LOAD SECTOR MAP</button>
+      <button class="load-btn" onclick="loadSectors()">Load sector map</button>
     </div>
   </div>
   <div class="tab-pane" id="tab-intel">
     <div style="padding:12px 16px 6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
       <input id="intel-tickers" placeholder="AAPL,MSFT,NVDA (blank = full scan)" style="flex:1;min-width:160px;background:#111;border:1px solid #222;color:#e0e0e0;padding:8px 10px;border-radius:6px;font-size:12px;font-family:inherit">
-      <button class="load-btn" onclick="loadIntel()">LOAD INTEL</button>
+      <button class="load-btn" onclick="loadIntel()">Load intel</button>
     </div>
     <div style="padding:0 16px 60px">
-      <div style="font-size:9px;letter-spacing:.8px;color:var(--sub);margin:8px 0 4px">MACRO REGIME</div>
-      <div id="intel-macro" style="font-size:12px;color:var(--sub)">— press LOAD INTEL —</div>
-      <div style="font-size:9px;letter-spacing:.8px;color:var(--sub);margin:14px 0 4px">DARK POOL ANOMALIES</div>
-      <div id="intel-dp" style="font-size:12px;color:var(--sub)">— press LOAD INTEL —</div>
-      <div style="font-size:9px;letter-spacing:.8px;color:var(--sub);margin:14px 0 4px">INSIDER ACTIVITY (30 DAYS)</div>
-      <div id="intel-ins" style="font-size:12px;color:var(--sub)">— press LOAD INTEL —</div>
+      <div style="font-size:11px;color:var(--t2);margin:14px 0 6px">Macro regime</div>
+      <div id="intel-macro" style="font-size:12px;color:var(--t2)">Press Load intel to fetch this.</div>
+      <div style="font-size:11px;color:var(--t2);margin:14px 0 6px">Dark pool anomalies</div>
+      <div id="intel-dp" style="font-size:12px;color:var(--t2)">Press Load intel to fetch this.</div>
+      <div style="font-size:11px;color:var(--t2);margin:14px 0 6px">Insider activity, last 30 days</div>
+      <div id="intel-ins" style="font-size:12px;color:var(--t2)">Press Load intel to fetch this.</div>
     </div>
   </div>
 
@@ -153,7 +153,7 @@
         </button>
       </div>
       <button class="find-go" id="find-btn" onclick="doFind()">Find top 3 contracts</button>
-      <button class="find-go" id="both-btn" onclick="doFindBoth()" style="margin-top:6px;color:var(--amber)">&#9654; CALLS vs PUTS LADDER</button>
+      <button class="find-go" id="both-btn" onclick="doFindBoth()" style="margin-top:6px;background:transparent;color:var(--t1);border-color:var(--line2)">Calls vs puts ladder</button>
       <div id="find-result"></div>
       <div id="both-result"></div>
     </div>
@@ -167,12 +167,12 @@
           &#9654; SCAN UNUSUAL FLOW
         </button>
         <button class="ctrl-btn" onclick="loadUOA(true)"
-          style="width:60px;font-size:9px;color:var(--sub);border:1px solid #333">
+          style="width:60px;font-size:9px;color:var(--t2);border:1px solid var(--line)">
           FORCE
         </button>
       </div>
       <div id="uoa-sector-bar" style="display:none;margin-bottom:10px"></div>
-      <div id="uoa-status" style="font-size:10px;color:var(--sub);text-align:center;padding:20px 0">
+      <div id="uoa-status" style="font-size:10px;color:var(--t2);text-align:center;padding:20px 0">
         Press SCAN to detect unusual options activity across all sectors.
       </div>
       <div id="uoa-table-wrap" style="overflow-x:auto"></div>
@@ -192,7 +192,7 @@
           Build gamma surface
         </button>
       </div>
-      <div id="gex-status" style="font-size:10px;color:var(--sub);text-align:center;padding:20px 0">
+      <div id="gex-status" style="font-size:10px;color:var(--t2);text-align:center;padding:20px 0">
         Dealer gamma by strike. Measured from open interest &mdash; not a forecast.
       </div>
       <div id="gex-head"></div>
