@@ -592,6 +592,31 @@ th.sortable .arr{font-size:8px;margin-left:3px}
 .gex-prov b{color:var(--t1);font-weight:500}
 .gex-prov .warn{color:var(--m4)}
 
+/* ─── The gate ───────────────────────────────────────────────────────────────
+   Shown when the API says 401. Covers the app rather than sitting inside it:
+   nothing behind this is readable, so nothing behind it should be legible. */
+#gate{position:fixed;inset:0;z-index:300;background:rgba(0,0,0,.94);
+  backdrop-filter:blur(22px);-webkit-backdrop-filter:blur(22px);
+  display:flex;align-items:center;justify-content:center;padding:24px 20px;
+  animation:rise .3s var(--ease) both}
+.gate-card{width:100%;max-width:340px;text-align:left}
+.gate-mark{font-size:17px;font-weight:600;letter-spacing:-.035em;margin-bottom:18px}
+.gate-mark span{font-size:11px;font-weight:400;color:var(--t3);margin-left:6px}
+.gate-msg{font-size:14px;color:var(--t2);line-height:1.6;margin-bottom:20px}
+.gate-go{display:block;text-align:center;text-decoration:none;padding:14px;
+  background:var(--t1);color:var(--ink);border-radius:12px;font-weight:600;font-size:14px}
+.gate-alt{display:block;width:100%;margin-top:10px;padding:13px;background:transparent;
+  border:1px solid var(--line);border-radius:12px;color:var(--t2);font-family:var(--ui);
+  font-size:13px;font-weight:500;cursor:pointer;transition:all .18s var(--ease)}
+.gate-alt:hover{border-color:var(--line2);color:var(--t1)}
+.gate-pinrow{display:flex;gap:8px;margin-top:10px}
+.gate-pinrow input{flex:1;min-width:0;background:transparent;border:1px solid var(--line);
+  border-radius:12px;color:var(--t1);font-family:var(--num);font-size:15px;
+  padding:13px 15px;outline:none}
+.gate-pinrow input:focus{border-color:var(--t2)}
+.gate-pinrow button{padding:13px 18px;background:var(--t1);color:var(--ink);border:none;
+  border-radius:12px;font-family:var(--ui);font-size:13px;font-weight:600;cursor:pointer}
+
 /* ─── Freshness, toast, states ─────────────────────────────────────────────── */
 .freshness{display:flex;align-items:flex-start;gap:8px;padding:9px 14px;
   font-size:11px;line-height:1.55;color:var(--t3);border-bottom:1px solid var(--line)}

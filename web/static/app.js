@@ -40,12 +40,38 @@ window.fetch = (input, init) => {
   return _origFetch(input, init);
 };
 
+// The front door for anyone who is not signed in. A native prompt() was fine
+// when the only user was Dante; a stranger who lands here now needs somewhere
+// to go, and the owner still needs a way in that does not involve email.
 function _promptPin(msg){
-  const p = prompt(msg || 'Enter access PIN:');
-  if(p !== null){
-    PIN = p.trim();
-    localStorage.setItem('scanner_pin', PIN);
-  }
+  if(document.getElementById('gate')) return;
+  const g=document.createElement('div');
+  g.id='gate';
+  g.innerHTML=
+    '<div class="gate-card">'+
+      '<div class="gate-mark">SCANNER<span>PRO</span></div>'+
+      '<div class="gate-msg">'+(msg||'This scanner is private.')+'</div>'+
+      '<a class="gate-go" href="/join">Request access</a>'+
+      '<button class="gate-alt" id="gate-pin">Owner sign-in</button>'+
+      '<div class="gate-pinrow" id="gate-pinrow" hidden>'+
+        '<input id="gate-pinin" type="password" inputmode="numeric" '+
+          'autocomplete="off" placeholder="PIN" aria-label="Access PIN">'+
+        '<button id="gate-pingo">Enter</button>'+
+      '</div>'+
+    '</div>';
+  document.body.appendChild(g);
+  const row=g.querySelector('#gate-pinrow'), input=g.querySelector('#gate-pinin');
+  g.querySelector('#gate-pin').addEventListener('click',()=>{
+    row.hidden=false; g.querySelector('#gate-pin').hidden=true; input.focus();
+  });
+  const submit=()=>{
+    const v=input.value.trim();
+    if(!v) return;
+    PIN=v; localStorage.setItem('scanner_pin',PIN);
+    location.reload();
+  };
+  g.querySelector('#gate-pingo').addEventListener('click',submit);
+  input.addEventListener('keydown',e=>{if(e.key==='Enter')submit();});
 }
 
 // On 401, prompt for PIN and reload
@@ -53,7 +79,7 @@ function _handleAuth(resp){
   if(resp.status === 401){
     localStorage.removeItem('scanner_pin');
     PIN = '';
-    _promptPin('PIN required. Enter access PIN:');
+    _promptPin('This scanner is private. Request access, or sign in as the owner.');
     return true;
   }
   return false;

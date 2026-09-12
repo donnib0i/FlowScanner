@@ -220,6 +220,46 @@ def _check_ticket(tok: str) -> bool:
     return exp is not None and exp > now
 
 
+# ─── Accounts ────────────────────────────────────────────────────────────────
+# Email in, magic link out, signed cookie back. See data/accounts.py for why
+# the session is stateless and why the first five accounts are founders.
+SESSION_COOKIE = "scanner_session"
+
+try:
+    from data.accounts import AccountStore, normalize_email, FOUNDER_SEATS
+    _accounts: Optional[Any] = AccountStore()
+except Exception as _acc_err:            # pragma: no cover - defensive
+    logging.warning("accounts unavailable: %s", _acc_err)
+    _accounts = None
+
+
+def _account_email(req: Request) -> Optional[str]:
+    """The signed-in address for this request, or None."""
+    if _accounts is None:
+        return None
+    cookie = req.cookies.get(SESSION_COOKIE, "")
+    if not cookie:
+        return None
+    try:
+        return _accounts.read_session(cookie)
+    except Exception:
+        return None
+
+
+def _check_owner(req: Request) -> None:
+    """Admin routes. The PIN alone -- a member's session must never list the
+    membership, and every member holds a valid session by definition."""
+    if not _PIN:
+        raise HTTPException(503, "Set SCANNER_PIN to use the admin routes")
+    supplied = req.headers.get("x-pin", "").strip()
+    if not hmac.compare_digest(supplied.encode("utf-8", errors="replace"),
+                               _PIN.encode("utf-8")):
+        if not _rl.allow(f"{_client_ip(req)}:admin_fail", 10, 300):
+            raise HTTPException(429, "Too many failed attempts -- try later",
+                                headers={"Retry-After": "300"})
+        raise HTTPException(401, "Unauthorized")
+
+
 def _pin_banner(pin: str) -> str:
     """
     What the startup banner says about the PIN: that there is one, and nothing
@@ -247,6 +287,11 @@ def _check_pin(req: Request):
             raise HTTPException(503, "Server auth not configured")
         return
     ip = _client_ip(req)
+    # A signed session cookie is the normal way in for everyone who is not
+    # Dante. The PIN stays as the owner's key: it is how he reaches the admin
+    # routes and how he gets in on a machine that has never seen a magic link.
+    if _account_email(req):
+        return
     supplied = req.headers.get("x-pin", "").strip()
     if not supplied:
         # An EventSource can only present a ticket, and only in the query.
@@ -1240,6 +1285,293 @@ _ICON_SVG = (
 async def apple_touch_icon():
     return _Response(content=_ICON_SVG.encode(), media_type="image/svg+xml",
                      headers={"Cache-Control": "public, max-age=86400"})
+
+# The join page is served as its own small document rather than a tab inside
+# the app: someone who is not signed in should never receive the app's markup,
+# and it has to render before any of the app's JS runs.
+_JOIN_PAGE = """<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#000000">
+<title>Scanner &mdash; request access</title>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{--ink:#000;--s1:#0c0c0d;--line:#232326;--line2:#33333a;
+  --t1:#fafafa;--t2:#8e8e93;--t3:#78787f;
+  --ui:'Archivo','Helvetica Neue',-apple-system,sans-serif;
+  --num:'JetBrains Mono','SF Mono',monospace;
+  --ease:cubic-bezier(.2,.7,.2,1)}
+body{background:var(--ink);color:var(--t1);font-family:var(--ui);font-size:15px;
+  line-height:1.6;letter-spacing:-.01em;-webkit-font-smoothing:antialiased;
+  min-height:100dvh;display:flex;align-items:center;justify-content:center;
+  padding:24px 20px}
+body::after{content:'';position:fixed;inset:0;pointer-events:none;opacity:.03;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)'/%3E%3C/svg%3E")}
+.card{width:100%;max-width:420px;position:relative;z-index:1;
+  animation:rise .42s var(--ease) both}
+@keyframes rise{from{opacity:0;transform:translate3d(0,6px,0)}to{opacity:1;transform:none}}
+.mark{font-size:17px;font-weight:600;letter-spacing:-.035em;margin-bottom:26px}
+.mark span{font-size:11px;font-weight:400;color:var(--t3);margin-left:6px}
+h1{font-size:26px;font-weight:600;letter-spacing:-.035em;line-height:1.15;margin-bottom:10px}
+p{color:var(--t2);font-size:14px;margin-bottom:22px}
+label{display:block;font-size:12px;color:var(--t3);margin-bottom:7px}
+input{width:100%;background:transparent;border:1px solid var(--line);border-radius:12px;
+  color:var(--t1);font-family:var(--num);font-size:15px;padding:14px 16px;outline:none;
+  transition:border-color .2s var(--ease),background .2s var(--ease)}
+input:focus{border-color:var(--t2);background:var(--s1)}
+input::placeholder{color:var(--t3)}
+button{width:100%;margin-top:12px;padding:15px;background:var(--t1);color:var(--ink);
+  border:1px solid var(--t1);border-radius:12px;font-family:var(--ui);font-size:14px;
+  font-weight:600;cursor:pointer;letter-spacing:-.005em;
+  transition:transform .12s var(--ease),opacity .2s var(--ease)}
+button:active{transform:scale(.98)}
+button[disabled]{opacity:.5;cursor:default}
+.consent{display:flex;gap:9px;align-items:flex-start;margin-top:16px;
+  font-size:12px;color:var(--t3);line-height:1.5}
+.consent input{width:15px;height:15px;flex-shrink:0;margin-top:2px;accent-color:#fff}
+.notice{border:1px solid var(--line2);background:var(--s1);border-radius:10px;
+  padding:12px 14px;font-size:13px;color:var(--t1);margin-bottom:22px}
+.msg{margin-top:16px;font-size:13px;color:var(--t2);min-height:20px}
+.foot{margin-top:30px;padding-top:18px;border-top:1px solid var(--line);
+  font-size:12px;color:var(--t3);line-height:1.6}
+:focus-visible{outline:1px solid var(--t1);outline-offset:2px}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style></head><body>
+<div class="card">
+  <div class="mark">SCANNER<span>PRO</span></div>
+  <div id="notice-slot">{{NOTICE}}</div>
+  <h1>Request access</h1>
+  <p>Options flow, sector breakouts and measured dealer gamma. Free while it is
+     in testing &mdash; early accounts keep free access permanently.</p>
+  <form id="f" novalidate>
+    <label for="email">Email</label>
+    <input id="email" name="email" type="email" inputmode="email"
+           autocomplete="email" autocapitalize="off" autocorrect="off"
+           spellcheck="false" placeholder="you@example.com" required>
+    <label class="consent" for="consent">
+      <input type="checkbox" id="consent" name="consent">
+      <span>Email me product updates and the occasional question about what to
+            build next. One click unsubscribes, and access is unaffected.</span>
+    </label>
+    <button type="submit" id="go">Send my sign-in link</button>
+  </form>
+  <div class="msg" id="msg" role="status" aria-live="polite"></div>
+  <div class="foot">You get a one-time link that signs you in for 30 days.
+    No password to remember, and nothing to pay yet.</div>
+</div>
+<script>
+(function(){
+  var slot=document.getElementById('notice-slot');
+  if(slot.textContent.trim()){slot.innerHTML='<div class="notice">'+slot.textContent.trim()+'</div>';}
+  else{slot.remove();}
+  var f=document.getElementById('f'),go=document.getElementById('go'),msg=document.getElementById('msg');
+  f.addEventListener('submit',async function(e){
+    e.preventDefault();
+    var email=document.getElementById('email').value.trim();
+    if(!email){msg.textContent='Enter your email first.';return;}
+    go.disabled=true;go.textContent='Sending…';msg.textContent='';
+    try{
+      var r=await fetch('/api/join',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({email:email,consent:document.getElementById('consent').checked})});
+      var d=await r.json().catch(function(){return {};});
+      if(!r.ok){msg.textContent=d.detail||'That did not work. Check the address and try again.';
+        go.disabled=false;go.textContent='Send my sign-in link';return;}
+      msg.textContent=d.message||'Check your email.';
+      go.textContent='Link sent';
+    }catch(err){
+      msg.textContent='Could not reach the server. Try again in a moment.';
+      go.disabled=false;go.textContent='Send my sign-in link';
+    }
+  });
+})();
+</script>
+</body></html>"""
+
+
+# ─── Access: join, redeem, admin ─────────────────────────────────────────────
+def _origin(req: Request) -> str:
+    """The base URL to build a magic link against. Behind a proxy the scheme in
+    the URL is http, so the forwarded header is what tells us it was https."""
+    proto = req.headers.get("x-forwarded-proto", "").split(",")[0].strip()
+    host = req.headers.get("x-forwarded-host", "").split(",")[0].strip() or req.url.netloc
+    return f"{proto or req.url.scheme}://{host}"
+
+
+def _send_magic_link(email: str, link: str) -> bool:
+    """
+    Mail the link if a sender is configured; report whether it went.
+
+    Unconfigured is a supported state, not a failure: with five users Dante can
+    paste the link into a DM himself, and making the whole feature wait on a
+    mail provider signup would have meant shipping nothing today. The link is
+    returned to the owner's own screen in that case -- never to the visitor,
+    who would then be able to sign in as any address they can spell.
+    """
+    key = os.environ.get("RESEND_API_KEY", "").strip()
+    sender = os.environ.get("SCANNER_MAIL_FROM", "").strip()
+    if not key or not sender:
+        return False
+    try:
+        import httpx as _httpx
+        r = _httpx.post(
+            "https://api.resend.com/emails",
+            headers={"Authorization": f"Bearer {key}"},
+            json={
+                "from": sender,
+                "to": [email],
+                "subject": "Your Scanner sign-in link",
+                "text": (
+                    "Here is your sign-in link. It works once and expires in "
+                    f"30 minutes.\n\n{link}\n\n"
+                    "If you did not ask for this, ignore it -- nothing happens "
+                    "until the link is opened."
+                ),
+            },
+            timeout=10,
+        )
+        return r.status_code < 300
+    except Exception as e:
+        logging.warning("magic link send failed: %s", e)
+        return False
+
+
+@app.post("/api/join")
+async def api_join(req: Request):
+    """
+    Ask for access. Always answers the same way, whether or not the address is
+    already a member: a join form that says "you already have an account" is a
+    membership oracle for anyone who can guess addresses.
+    """
+    if _accounts is None:
+        raise HTTPException(503, "Accounts are not available")
+    # Two limits, because they stop different things. The per-IP limit is loose
+    # enough for a room full of people joining off one link on one office or
+    # carrier NAT -- the failure mode of a tight one is a launch where half the
+    # signups silently 429. The per-address limit is the one that matters: it
+    # stops this endpoint being used to mail-bomb somebody else's inbox.
+    _check_rate(req, "join", limit=12, window=600)
+    try:
+        body = await req.json()
+    except Exception:
+        body = {}
+    try:
+        email = normalize_email(str(body.get("email", "")))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    if not _rl.allow(f"join_addr:{email}", 3, 900):
+        raise HTTPException(429, detail="That address has been sent a link recently. "
+                                        "Check your inbox, including spam.",
+                            headers={"Retry-After": "900"})
+
+    result = _accounts.request_access(email)
+    link = f"{_origin(req)}/auth?token={result['token']}"
+    sent = _send_magic_link(email, link)
+    if not sent:
+        # Stdout, not the response. The owner reads the log; the visitor does
+        # not get a link for an address they may not own.
+        logging.warning("MAGIC LINK for %s: %s", email, link)
+        print(f"\n  Sign-in link for {email}\n  {link}\n", flush=True)
+    return {"ok": True, "emailed": sent,
+            "message": ("Check your email for a sign-in link."
+                        if sent else
+                        "Request received. Dante will send your link shortly.")}
+
+
+@app.get("/auth")
+async def api_auth(req: Request, token: str = ""):
+    """Redeem a magic link and start a session."""
+    if _accounts is None:
+        raise HTTPException(503, "Accounts are not available")
+    _check_rate(req, "auth", limit=20, window=300)
+    email = _accounts.redeem(token.strip())
+    if not email:
+        return HTMLResponse(_JOIN_PAGE.replace(
+            "{{NOTICE}}",
+            "That link has expired or has already been used. "
+            "Enter your email and we will send a fresh one."), status_code=401)
+    resp = _Response(status_code=303, headers={"Location": "/"})
+    resp.set_cookie(
+        SESSION_COOKIE, _accounts.issue_session(email),
+        max_age=60 * 60 * 24 * 30, httponly=True, samesite="lax",
+        secure=req.headers.get("x-forwarded-proto", "").startswith("https"),
+        path="/")
+    return resp
+
+
+@app.get("/join", response_class=HTMLResponse)
+async def join_page():
+    return HTMLResponse(_JOIN_PAGE.replace("{{NOTICE}}", ""))
+
+
+@app.get("/api/me")
+async def api_me(req: Request):
+    """Who the current session belongs to. The page uses this to decide whether
+    to show the app or send someone to /join."""
+    email = _account_email(req)
+    if not email:
+        return {"signed_in": False}
+    user = _accounts.get_user(email) or {}
+    return {"signed_in": True, "email": email,
+            "plan": user.get("plan"), "status": user.get("status")}
+
+
+@app.post("/api/signout")
+async def api_signout():
+    resp = JSONResponse({"ok": True})
+    resp.delete_cookie(SESSION_COOKIE, path="/")
+    return resp
+
+
+@app.get("/unsubscribe", response_class=HTMLResponse)
+async def unsubscribe(req: Request, email: str = ""):
+    """One click, no sign-in required -- an unsubscribe that asks you to log in
+    first is the kind that gets a sender reported."""
+    if _accounts is None or not email:
+        raise HTTPException(400, "No address given")
+    _check_rate(req, "unsub", limit=20, window=300)
+    try:
+        _accounts.set_subscribed(email, False)
+    except ValueError:
+        raise HTTPException(400, "That does not look like an email address")
+    return HTMLResponse(_JOIN_PAGE.replace(
+        "{{NOTICE}}", "You are unsubscribed from updates. "
+                      "Your access to the app is unchanged."))
+
+
+@app.get("/api/admin/users")
+async def api_admin_users(req: Request):
+    """The list, for the owner. This is the mailing list export."""
+    if _accounts is None:
+        raise HTTPException(503, "Accounts are not available")
+    _check_owner(req)
+    return {"counts": _accounts.counts(),
+            "founder_seats": FOUNDER_SEATS,
+            "users": _accounts.list_users()}
+
+
+@app.post("/api/admin/user")
+async def api_admin_user(req: Request):
+    """Change one account: plan, status, or a note to yourself."""
+    if _accounts is None:
+        raise HTTPException(503, "Accounts are not available")
+    _check_owner(req)
+    body = await req.json()
+    email = str(body.get("email", ""))
+    try:
+        if "plan" in body:
+            _accounts.set_plan(email, str(body["plan"]))
+        if "status" in body:
+            _accounts.set_status(email, str(body["status"]))
+        if "note" in body:
+            _accounts.set_note(email, str(body["note"]))
+        if "subscribed" in body:
+            _accounts.set_subscribed(email, bool(body["subscribed"]))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"ok": True, "user": _accounts.get_user(email)}
+
 
 @app.get("/", response_class=HTMLResponse)
 async def root():
