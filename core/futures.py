@@ -32,6 +32,9 @@ FUTURES_MAP: Dict[str, str] = {
     "NDX": "NQ",  "^NDX": "NQ",  "QQQ": "NQ",
     "RUT": "RTY", "^RUT": "RTY", "IWM": "RTY",
     "DJI": "YM",  "^DJI": "YM",  "DIA": "YM",
+    # Gold is not an index, but the shape is identical: an ETF with a liquid
+    # chain, a future that hedges it, and a divisor the measured ratio absorbs.
+    "GLD": "GC",  "IAU": "GC",   "XAUUSD": "GC",
 }
 
 # Every family trades in two sizes. The full contract and its micro track the
@@ -64,6 +67,15 @@ CONTRACTS: Dict[str, List[Dict[str, Any]]] = {
         {"code": "MYM", "yf": "MYM=F", "name": "Micro E-mini Dow",
          "multiplier": 0.5,  "tick": 1.0, "micro": True},
     ],
+    # Gold is quoted in dollars per troy ounce, so the multiplier is literally
+    # the contract size: GC is 100oz, MGC is 10oz, and a $1 move in the metal is
+    # $100 or $10 respectively.
+    "GC": [
+        {"code": "GC",  "yf": "GC=F",  "name": "Gold (100 oz)",
+         "multiplier": 100.0, "tick": 0.10, "micro": False},
+        {"code": "MGC", "yf": "MGC=F", "name": "Micro Gold (10 oz)",
+         "multiplier": 10.0,  "tick": 0.10, "micro": True},
+    ],
 }
 
 
@@ -74,6 +86,9 @@ CONTRACTS: Dict[str, List[Dict[str, Any]]] = {
 # on this feed, so YM resolves to the ETF instead of the index.
 SURFACE_UNDERLYING: Dict[str, str] = {
     "ES": "SPX", "NQ": "NDX", "RTY": "RUT", "YM": "DIA",
+    # GLD over IAU: both track gold, but GLD carries the deeper option chain
+    # (25 expiries against 14), and a thin chain makes a thin surface.
+    "GC": "GLD",
 }
 
 # Every code that should resolve, full size and micro alike.

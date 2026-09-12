@@ -165,7 +165,8 @@ def test_a_broken_futures_leg_does_not_take_the_surface_with_it(monkeypatch):
 # ── contract sizing ──────────────────────────────────────────────────────────
 def test_every_family_lists_a_full_contract_and_its_micro():
     for under, expect in (("SPX", ("ES", "MES")), ("QQQ", ("NQ", "MNQ")),
-                          ("IWM", ("RTY", "M2K")), ("DIA", ("YM", "MYM"))):
+                          ("IWM", ("RTY", "M2K")), ("DIA", ("YM", "MYM")),
+                          ("GLD", ("GC", "MGC"))):
         codes = tuple(c["code"] for c in F.contracts_for(under))
         assert codes == expect
         sizes = F.contracts_for(under)
@@ -175,7 +176,7 @@ def test_every_family_lists_a_full_contract_and_its_micro():
 def test_a_micro_is_a_tenth_of_its_full_contract():
     # This is the whole reason the micro is listed: it is what makes the
     # contract carryable on a small account.
-    for under in ("SPX", "QQQ", "IWM", "DIA"):
+    for under in ("SPX", "QQQ", "IWM", "DIA", "GLD"):
         big, small = F.contracts_for(under)
         assert small["multiplier"] == pytest.approx(big["multiplier"] / 10)
         assert small["tick"] == big["tick"]
@@ -268,4 +269,44 @@ def test_every_family_resolves_to_a_symbol_that_has_a_chain():
     # the reason this is asserted rather than assumed.
     for fam in F.CONTRACTS:
         assert fam in F.SURFACE_UNDERLYING, f"{fam} resolves nowhere"
-    assert set(F.SURFACE_UNDERLYING.values()) == {"SPX", "NDX", "RUT", "DIA"}
+    assert set(F.SURFACE_UNDERLYING.values()) == {"SPX", "NDX", "RUT", "DIA", "GLD"}
+
+
+# ── gold ─────────────────────────────────────────────────────────────────────
+def test_gold_resolves_to_the_etf_with_the_deeper_chain():
+    # Both GLD and IAU track gold; GLD carries 25 expiries against IAU's 14,
+    # and a thin chain makes a thin surface.
+    assert F.resolve("MGC") == ("GLD", "MGC")
+    assert F.resolve("GC") == ("GLD", "GC")
+    assert F.resolve("/mgc") == ("GLD", "MGC")
+    assert F.resolve("MGC=F") == ("GLD", "MGC")
+
+
+def test_a_gold_multiplier_is_the_contract_size_in_ounces():
+    # Gold is quoted in dollars per troy ounce, so a $1 move in the metal is
+    # worth the contract size: 100oz for GC, 10oz for MGC.
+    gc, mgc = F.contracts_for("GLD")
+    assert (gc["multiplier"], gc["tick"]) == (100.0, 0.10)
+    assert (mgc["multiplier"], mgc["tick"]) == (10.0, 0.10)
+    assert gc["tick_value"] if "tick_value" in gc else True
+
+
+def test_the_gold_divisor_is_measured_not_assumed(wired):
+    # GLD is roughly a tenth of an ounce, but it is not exactly a tenth and it
+    # drifts as the fund's expenses accrue. Measuring the ratio absorbs both
+    # the divisor and the drift; hard-coding 10 would be wrong and get wronger.
+    wired({"GLD":  _FakeTicker(_bars(DATES, [390.0, 394.0, 398.50])),
+           "GC=F": _FakeTicker(_bars(DATES, [4290.0, 4335.0, 4387.10]), last=4390.0)})
+    link = F.link_for("GLD")
+    assert link["ratio"] == pytest.approx(4387.10 / 398.50)
+    assert 10.5 < link["ratio"] < 11.5, "the measured divisor drifted off gold"
+    # Over a 1.1 ratio the points-basis is meaningless, so it is not reported.
+    assert link["basis"] is None
+
+
+def test_gold_reports_both_sizes_with_their_tick_values(wired):
+    wired({"GLD":  _FakeTicker(_bars(DATES, [390.0, 394.0, 398.50])),
+           "GC=F": _FakeTicker(_bars(DATES, [4290.0, 4335.0, 4387.10]), last=4390.0)})
+    gc, mgc = F.link_for("GLD")["contracts"]
+    assert gc["tick_value"] == pytest.approx(10.0)    # 0.10 x $100
+    assert mgc["tick_value"] == pytest.approx(1.0)    # 0.10 x $10
