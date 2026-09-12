@@ -1,6 +1,12 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+<script>
+  /* Applied before first paint. Left to the main script the page would render
+     one scheme and then swap to the stored one on every load. */
+  (function(){var v='color';try{v=localStorage.getItem('scanner_scheme')||'color'}catch(e){}
+   document.documentElement.setAttribute('data-scheme',v);})();
+</script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -21,6 +27,9 @@
 <div id="topbar">
   <div class="tb-row1">
     <div class="app-name">SCANNER<span>PRO</span></div>
+    <button class="scheme-btn" id="scheme-btn" onclick="toggleScheme()"
+      title="Switch between the two-colour and monochrome schemes"
+      aria-label="Colour scheme"><i class="a"></i><i class="b"></i><span>COLOR</span></button>
     <div class="vix-pill" id="vix-chip">VIX ...</div>
   </div>
   <div class="bias-row">

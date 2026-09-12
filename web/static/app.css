@@ -31,6 +31,13 @@
   --up:#ffffff;
   --dn:#86868b;
 
+  /* The three levels the gamma chart draws. Named for what they mean, not what
+     colour they are, so the scheme decides whether they separate by hue or by
+     luminance alone. */
+  --lvl-spot:var(--m4);
+  --lvl-flip:var(--t1);
+  --lvl-fut:var(--m3);
+
   /* Magnitude ramp for bars, heat and scores — light on dark, five steps. */
   --m1:#2e2e33;--m2:#4a4a51;--m3:#6f6f77;--m4:#a5a5ad;--m5:#ffffff;
 
@@ -53,6 +60,32 @@
 
   /* One easing for everything that moves. Fast out, settled in. */
   --ease:cubic-bezier(.2,.7,.2,1);
+}
+
+/* ── Two-colour scheme ───────────────────────────────────────────────────────
+   The monochrome above is a real design and stays available, but reading a
+   flow feed means knowing a call from a put at a glance, and luminance alone
+   makes that a comparison rather than a recognition. This restores hue to the
+   tokens that carry meaning and leaves everything else exactly as it is.
+
+   The magnitude ramp (--m1..--m5) deliberately stays neutral in both schemes:
+   it encodes how much, never which way, and colouring it would put hue back on
+   the axis the redesign cleared.
+
+   Values are tuned for a true-black ground -- the old palette was mixed on
+   #0a0a0f and its green vibrates against #000. */
+:root[data-scheme="color"]{
+  --up:#00e585;
+  --dn:#ff4d67;
+
+  --lvl-spot:var(--cyan);
+  --lvl-flip:var(--gold);
+  --lvl-fut:var(--purple);
+
+  --green:var(--up);--green-dim:#00b368;
+  --red:var(--dn);--red-dim:#c93a50;
+  --gold:#ffc247;--amber:#ff9f2e;
+  --purple:#b37cf7;--cyan:#35d6ff;--blue:#5a9bff;
 }
 
 html,body{height:100%;overflow:hidden;font-family:var(--ui);
@@ -602,3 +635,13 @@ th.sortable .arr{font-size:8px;margin-left:3px}
     transition-duration:.01ms !important;scroll-behavior:auto !important}
   body::before{animation:none}
 }
+
+/* Scheme toggle: two swatches showing what you are about to get. */
+.scheme-btn{display:flex;align-items:center;gap:3px;padding:5px 7px;border-radius:6px;
+  background:var(--s2);border:1px solid var(--line);cursor:pointer;flex-shrink:0;
+  min-height:28px;font-family:var(--ui)}
+.scheme-btn:active{background:var(--s3)}
+.scheme-btn i{width:8px;height:8px;border-radius:2px;display:block}
+.scheme-btn i.a{background:var(--up)}
+.scheme-btn i.b{background:var(--dn)}
+.scheme-btn span{font-size:8px;letter-spacing:.6px;color:var(--t3);margin-left:2px}

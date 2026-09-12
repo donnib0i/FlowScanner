@@ -7,6 +7,30 @@ let PIN = localStorage.getItem('scanner_pin') || '';
 // secret survives. _pa is kept as a no-op so every call site stays unchanged.
 const _pa = p => p;
 
+// ─── Colour scheme ───────────────────────────────────────────────────────────
+// Monochrome is a real design and stays one tap away, but the default is the
+// two-colour scheme: reading a flow feed means telling a call from a put at a
+// glance, and luminance alone makes that a comparison instead of a
+// recognition. Only the tokens that carry meaning change; the magnitude ramp
+// stays neutral in both.
+function _applyScheme(v){
+  document.documentElement.setAttribute('data-scheme', v);
+  try{ localStorage.setItem('scanner_scheme', v); }catch(e){}
+  const b=document.getElementById('scheme-btn');
+  if(b) b.querySelector('span').textContent = v==='color' ? 'COLOR' : 'MONO';
+}
+
+// The boot script in <head> has already set the attribute; this only brings the
+// button's label into step with it.
+document.addEventListener('DOMContentLoaded',function(){
+  _applyScheme(document.documentElement.getAttribute('data-scheme')||'color');
+});
+
+function toggleScheme(){
+  const cur=document.documentElement.getAttribute('data-scheme')||'color';
+  _applyScheme(cur==='color'?'mono':'color');
+}
+
 const _origFetch = window.fetch.bind(window);
 window.fetch = (input, init) => {
   init = init || {};
@@ -199,16 +223,24 @@ async function doFlowScan(retryCount){
   // EventSource cannot send headers, so when a PIN is set the stream
   // authenticates with a single-use ticket instead. The PIN itself stays out of
   // the URL, the access log and browser history.
-  if(PIN){
-    try{
-      const tr=await fetch('/api/sse-ticket');
-      if(_handleAuth(tr)) return;
-      if(tr.ok){
-        const tj=await tr.json();
-        if(tj.ticket) url += (url.includes('?')?'&':'?')+'ticket='+encodeURIComponent(tj.ticket);
-      }
-    }catch(e){ /* fall through: the stream will surface its own failure */ }
-  }
+  //
+  // The ticket is fetched unconditionally, not just when a PIN is already
+  // held. EventSource cannot read a status code either: against a deployment
+  // that requires a PIN the stream just fails, which is indistinguishable from
+  // the server being down, and this tab spent two retries before reporting
+  // "Server unavailable" at a server that was answering fine. The ticket call
+  // is an ordinary fetch, so a 401 there surfaces the PIN prompt the way every
+  // other tab does. With no PIN configured it simply returns a ticket.
+  try{
+    const tr=await fetch('/api/sse-ticket');
+    // A prompt is not a scan. Leaving the button reading "Scanning 8..."
+    // forever was the other half of this: the tab looked hung, not locked.
+    if(_handleAuth(tr)){ endFlowScan(null); return; }
+    if(tr.ok){
+      const tj=await tr.json();
+      if(tj.ticket) url += (url.includes('?')?'&':'?')+'ticket='+encodeURIComponent(tj.ticket);
+    }
+  }catch(e){ /* network, not auth: let the stream surface its own failure */ }
   const es=new EventSource(url);
   let gotData=false;
   es.onmessage=function(e){
@@ -1785,13 +1817,13 @@ function renderGexChart(d,containerW,u){
   // Captions on the rules are prices, so they keep both decimals; the strike
   // labels in the gutter are strikes and do not.
   const px=v=>(v*u.ratio).toFixed(2);
-  const rules=[{p:d.spot,col:'var(--m4)',lbl:'SPOT '+px(d.spot),dash:false}];
+  const rules=[{p:d.spot,col:'var(--lvl-spot)',lbl:'SPOT '+px(d.spot),dash:false}];
   if(d.flip!=null)
-    rules.push({p:d.flip,col:'var(--t1)',lbl:'FLIP '+px(d.flip),dash:true});
+    rules.push({p:d.flip,col:'var(--lvl-flip)',lbl:'FLIP '+px(d.flip),dash:true});
   // Out of hours the index print is frozen at its close and this is the only
   // line on the chart that is still moving.
   if(d.futures&&d.futures.implied_underlying>0)
-    rules.push({p:d.futures.implied_underlying,col:'var(--m4)',
+    rules.push({p:d.futures.implied_underlying,col:'var(--lvl-fut)',
                 lbl:d.futures.future+' '+d.futures.last.toFixed(2),dash:true});
   rules.forEach(r=>r.y=priceToY(r.p));
   rules.sort((a,b)=>a.y-b.y);
