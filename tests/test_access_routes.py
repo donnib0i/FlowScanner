@@ -134,9 +134,12 @@ def test_the_owner_can_change_a_plan(client, app):
 
 # ── Unsubscribe ───────────────────────────────────────────────────────────────
 def test_unsubscribing_needs_no_sign_in(client, app):
-    """An unsubscribe link that demands a login is how a sender gets reported."""
+    """An unsubscribe link that demands a login is how a sender gets reported.
+    It carries a signature instead -- see test_access_security for why a bare
+    ?email= let anyone cut a stranger off from their own updates."""
     client.post("/api/join", json={"email": "a@example.com"})
-    r = client.get("/unsubscribe?email=a@example.com")
+    tok = app._accounts.unsubscribe_token("a@example.com")
+    r = client.get(f"/unsubscribe?email=a@example.com&t={tok}")
     assert r.status_code == 200
     assert app._accounts.get_user("a@example.com")["subscribed"] == 0
     assert app._accounts.mailing_list() == []

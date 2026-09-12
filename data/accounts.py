@@ -189,6 +189,29 @@ class AccountStore:
         mac = hmac.new(self._secret, body.encode(), hashlib.sha256).digest()
         return base64.urlsafe_b64encode(mac).decode().rstrip("=")
 
+    # ── Unsubscribe links ────────────────────────────────────────────────────
+    def unsubscribe_token(self, raw_email: str) -> str:
+        """
+        A stable signature over the address, for the footer of every email.
+
+        Stable rather than expiring: an unsubscribe link has to keep working in
+        a message someone kept for a year, and the worst a leaked one does is
+        stop mail the holder did not want anyway. Signed rather than bare,
+        because /unsubscribe?email= alone lets anyone who knows an address
+        silently cut that person off from their own updates.
+        """
+        email = normalize_email(raw_email)
+        return self._sign("unsub:" + email)
+
+    def check_unsubscribe(self, raw_email: str, token: str) -> bool:
+        if not token:
+            return False
+        try:
+            expected = self.unsubscribe_token(raw_email)
+        except ValueError:
+            return False
+        return hmac.compare_digest(token, expected)
+
     # ── Administration ───────────────────────────────────────────────────────
     def get_user(self, raw_email: str) -> Optional[Dict[str, Any]]:
         email = normalize_email(raw_email)

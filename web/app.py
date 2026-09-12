@@ -1391,15 +1391,50 @@ button[disabled]{opacity:.5;cursor:default}
 
 
 # ─── Access: join, redeem, admin ─────────────────────────────────────────────
-def _origin(req: Request) -> str:
-    """The base URL to build a magic link against. Behind a proxy the scheme in
-    the URL is http, so the forwarded header is what tells us it was https."""
-    proto = req.headers.get("x-forwarded-proto", "").split(",")[0].strip()
-    host = req.headers.get("x-forwarded-host", "").split(",")[0].strip() or req.url.netloc
-    return f"{proto or req.url.scheme}://{host}"
+def _is_https(req: Request) -> bool:
+    """Whether the browser's connection is encrypted. Both signals matter: a
+    proxy that terminates TLS tells us in a header, and a direct TLS listener
+    tells us in the request's own scheme. Reading only the header shipped the
+    session cookie in the clear on any deployment without a proxy."""
+    fwd = req.headers.get("x-forwarded-proto", "").split(",")[0].strip().lower()
+    return fwd == "https" or req.url.scheme == "https"
 
 
-def _send_magic_link(email: str, link: str) -> bool:
+def _public_base(req: Request) -> str:
+    """
+    The base URL to build a magic link against -- from configuration, never
+    from the request.
+
+    A link built from the request's Host is an account takeover: an attacker
+    POSTs /api/join for a victim's address with X-Forwarded-Host set to their
+    own domain, the victim gets a genuine email from the real sender, and
+    clicking the link inside it hands over a valid one-time token. Verified
+    against a running server before this was fixed.
+
+    Order: explicit configuration, then the platform's own domain, then the
+    request -- and the request only when its host is one we already trust.
+    """
+    configured = os.environ.get("SCANNER_PUBLIC_URL", "").strip().rstrip("/")
+    if configured:
+        return configured
+    railway = os.environ.get("RAILWAY_PUBLIC_DOMAIN", "").strip()
+    if railway:
+        return f"https://{railway}"
+
+    host = req.url.netloc
+    hostname = (req.url.hostname or "").lower()
+    allowed = {h.strip().lower() for h in
+               os.environ.get("SCANNER_ALLOWED_HOSTS", "").split(",") if h.strip()}
+    local = hostname in ("localhost", "127.0.0.1", "::1", "testserver")
+    if local or (allowed and hostname in allowed) or (not allowed and not _PIN):
+        return f"{'https' if _is_https(req) else 'http'}://{host}"
+    # Nothing trustworthy to build on. Failing loudly beats a deployment that
+    # quietly mails links to whatever host the last request claimed to be.
+    raise HTTPException(503, "Set SCANNER_PUBLIC_URL to this deployment's own "
+                             "address before sending sign-in links.")
+
+
+def _send_magic_link(email: str, link: str, unsub: str = "") -> bool:
     """
     Mail the link if a sender is configured; report whether it went.
 
@@ -1426,7 +1461,8 @@ def _send_magic_link(email: str, link: str) -> bool:
                     "Here is your sign-in link. It works once and expires in "
                     f"30 minutes.\n\n{link}\n\n"
                     "If you did not ask for this, ignore it -- nothing happens "
-                    "until the link is opened."
+                    "until the link is opened.\n\n"
+                    f"Stop receiving updates: {unsub}"
                 ),
             },
             timeout=10,
@@ -1466,8 +1502,10 @@ async def api_join(req: Request):
                             headers={"Retry-After": "900"})
 
     result = _accounts.request_access(email)
-    link = f"{_origin(req)}/auth?token={result['token']}"
-    sent = _send_magic_link(email, link)
+    link = f"{_public_base(req)}/auth?token={result['token']}"
+    unsub = (f"{_public_base(req)}/unsubscribe?email={email}"
+             f"&t={_accounts.unsubscribe_token(email)}")
+    sent = _send_magic_link(email, link, unsub)
     if not sent:
         # Stdout, not the response. The owner reads the log; the visitor does
         # not get a link for an address they may not own.
@@ -1495,7 +1533,7 @@ async def api_auth(req: Request, token: str = ""):
     resp.set_cookie(
         SESSION_COOKIE, _accounts.issue_session(email),
         max_age=60 * 60 * 24 * 30, httponly=True, samesite="lax",
-        secure=req.headers.get("x-forwarded-proto", "").startswith("https"),
+        secure=_is_https(req),
         path="/")
     return resp
 
@@ -1525,12 +1563,19 @@ async def api_signout():
 
 
 @app.get("/unsubscribe", response_class=HTMLResponse)
-async def unsubscribe(req: Request, email: str = ""):
-    """One click, no sign-in required -- an unsubscribe that asks you to log in
-    first is the kind that gets a sender reported."""
+async def unsubscribe(req: Request, email: str = "", t: str = ""):
+    """
+    One click, no sign-in -- an unsubscribe that asks you to log in first is the
+    kind that gets a sender reported. The signature is what makes that safe:
+    without it, anyone who knows an address could cut that person off from
+    their own updates.
+    """
     if _accounts is None or not email:
         raise HTTPException(400, "No address given")
     _check_rate(req, "unsub", limit=20, window=300)
+    if not _accounts.check_unsubscribe(email, t.strip()):
+        raise HTTPException(400, "That unsubscribe link is not valid. Use the "
+                                 "link at the bottom of any email we sent you.")
     try:
         _accounts.set_subscribed(email, False)
     except ValueError:
