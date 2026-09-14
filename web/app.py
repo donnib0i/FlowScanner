@@ -1643,6 +1643,21 @@ async def api_admin_user(req: Request):
     return {"ok": True, "user": _accounts.get_user(email)}
 
 
+@app.post("/api/admin/user/delete")
+async def api_admin_user_delete(req: Request):
+    """Remove an account outright. For rows that should never have counted --
+    a test signup, a typo, a bot. Use status=blocked for a real person."""
+    if _accounts is None:
+        raise HTTPException(503, "Accounts are not available")
+    _check_owner(req)
+    body = await req.json()
+    try:
+        removed = _accounts.delete_user(str(body.get("email", "")))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"ok": True, "removed": removed, "counts": _accounts.counts()}
+
+
 @app.get("/", response_class=HTMLResponse)
 async def root():
     return HTML

@@ -160,3 +160,27 @@ def test_a_group_joining_from_one_network_is_not_cut_off(client):
     codes = [client.post("/api/join", json={"email": f"p{i}@example.com"}).status_code
              for i in range(10)]
     assert all(c == 200 for c in codes), codes
+
+
+def test_a_test_signup_can_be_removed_so_it_stops_holding_a_founder_seat(client, app):
+    """The five seats are a promise to real people. A test row sitting in seat
+    one silently costs somebody theirs, and blocking does not give it back."""
+    client.post("/api/join", json={"email": "test-signup@example.com"})
+    assert app._accounts.counts()["founders"] == 1
+
+    r = client.post("/api/admin/user/delete", headers={"x-pin": "owner-pin"},
+                    json={"email": "test-signup@example.com"})
+    assert r.status_code == 200 and r.json()["removed"] is True
+    assert app._accounts.get_user("test-signup@example.com") is None
+    assert app._accounts.counts()["founders"] == 0
+
+    # And the seat genuinely goes to the next real person.
+    client.post("/api/join", json={"email": "real@example.com"})
+    assert app._accounts.get_user("real@example.com")["plan"] == "founder"
+
+
+def test_a_members_session_cannot_delete_accounts(client, app):
+    client.get(f"/auth?token={link_for(app, 'member@example.com')}")
+    r = client.post("/api/admin/user/delete", json={"email": "member@example.com"})
+    assert r.status_code == 401
+    assert app._accounts.get_user("member@example.com") is not None

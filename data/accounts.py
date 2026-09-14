@@ -257,6 +257,23 @@ class AccountStore:
                 f"UPDATE users SET {column} = ? WHERE email = ?", (value, email))
             self.conn.commit()
 
+    def delete_user(self, raw_email: str) -> bool:
+        """
+        Remove an account and its links entirely.
+
+        Blocking is the right tool for a real person who has to go. This is for
+        rows that should never have counted: a test signup, a typo, a bot. It
+        matters because a founder seat is consumed by the row's existence, and
+        the five seats are a promise to real people -- one test account sitting
+        in seat 1 quietly costs somebody theirs.
+        """
+        email = normalize_email(raw_email)
+        with self._lock:
+            cur = self.conn.execute("DELETE FROM users WHERE email = ?", (email,))
+            self.conn.execute("DELETE FROM links WHERE email = ?", (email,))
+            self.conn.commit()
+            return cur.rowcount > 0
+
     def counts(self) -> Dict[str, int]:
         users = self.list_users()
         return {
