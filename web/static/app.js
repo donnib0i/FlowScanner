@@ -1902,16 +1902,13 @@ function gexPct(v){return (v>=0?'+':'')+(v*100).toFixed(2)+'%';}
 function renderGexDist(d){
   const f=d.futures, c=gexContract();
   if(!f||!c||!(c.last>0)) return '';
-  // A strike can genuinely hold both walls -- the heaviest round strike often
-  // does -- but printing the same price and the same distance on two rows is
-  // noise. Say it once, and say that it is both.
-  const both=d.call_wall!=null&&d.call_wall===d.put_wall;
-  const rows=(both
-      ? [['CALL + PUT WALL',d.call_wall,''],['ZERO-GAMMA FLIP',d.flip,'']]
-      : [['CALL WALL',d.call_wall,'gex-pos'],
-         ['ZERO-GAMMA FLIP',d.flip,''],
-         ['PUT WALL',d.put_wall,'gex-neg']])
-    .filter(r=>r[1]!=null);
+  // The walls are the extremes of net gamma per strike -- one drawn from the
+  // strikes that net long, the other from those that net short -- so they are
+  // never the same strike and never need merging.
+  const rows=[['CALL WALL',d.call_wall,'gex-pos'],
+              ['ZERO-GAMMA FLIP',d.flip,''],
+              ['PUT WALL',d.put_wall,'gex-neg']]
+             .filter(r=>r[1]!=null);
   if(!rows.length) return '';
   let out='<div class="gex-dist"><div class="gex-dist-head">'+
           'FROM '+c.code+' '+c.last.toFixed(2)+

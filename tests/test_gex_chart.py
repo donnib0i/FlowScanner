@@ -312,16 +312,9 @@ def test_the_default_size_is_the_full_contract():
     assert _dist(contract=None) == _dist(contract="ES")
 
 
-def test_one_strike_holding_both_walls_is_stated_once():
-    # The heaviest round strike often carries both sides. Two rows with the
-    # same price and the same distance is noise, not information.
-    out = _dist(call_wall=7700, flip=7597.17, put_wall=7700, contract="ES")
-    assert out.count("7707.91") == 1, "the shared wall is printed twice"
-    assert "CALL + PUT WALL" in out
-    assert ">CALL WALL<" not in out and ">PUT WALL<" not in out
-
-
-def test_walls_on_different_strikes_stay_two_rows():
+def test_the_walls_are_two_rows_because_they_are_two_strikes():
+    # call_wall comes from the strikes that net long gamma and put_wall from
+    # those that net short, so a board cannot report one strike as both.
     out = _dist(call_wall=7700, flip=7597.17, put_wall=7600, contract="ES")
     assert "CALL WALL" in out and "PUT WALL" in out
     assert "CALL + PUT WALL" not in out

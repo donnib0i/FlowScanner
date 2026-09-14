@@ -226,47 +226,65 @@ def test_a_strike_sums_across_expiries_before_it_can_be_a_wall():
     assert out["call_wall"] == 105.0, "the wall was decided by a single expiry"
 
 
-def test_a_put_contract_cannot_set_the_call_wall():
+def test_the_walls_are_the_extremes_of_net_gamma_per_strike():
     """
-    The buckets were split on the SIGN of gamma_notional, not on contract type.
-    Sign encodes dealer positioning -- long or short gamma -- and an inferred
-    dealer sign routinely lands a put on the positive side. On live GLD that put
-    14 put rows in the "calls" bucket and 31 call rows in the "puts" bucket.
-    """
-    chain = [row(105.0, "call", oi=1000), row(95.0, "put", oi=9000)]
-    # Bid-side customer volume on the put -> dealer long gamma -> POSITIVE
-    # notional on a put contract, and far larger than the call.
-    flow = {(95.0, "put"): {"bid": 5000, "ask": 100}}
-    out = G.compute(chain, SPOT, 0.03, flow=flow)
+    A wall is where dealers are most long gamma (the call wall, resistance) and
+    most short gamma (the put wall, support). That is the NET at a strike, both
+    contract types together -- which is exactly what the chart draws, so the
+    numbers and the bars agree.
 
-    put_row = next(r for r in out["profile"] if r["type"] == "put")
-    assert put_row["src"] == "inferred" and put_row["gamma_notional"] > 0, \
-        "fixture no longer produces a positive-gamma put -- re-point this test"
-    assert out["call_wall"] == 105.0, "a put contract was reported as the call wall"
-    assert out["put_wall"] == 95.0, "the put wall vanished with its sign"
-
-
-def test_the_two_walls_are_read_off_their_own_side():
+    Reading each side off its own contract type instead answers a different
+    question -- "where is the most put gamma" -- and on live GLD it returned
+    strike 400 for both walls while the chart's longest green bar sat at 415
+    and its longest red at 390.
     """
-    One strike reported as both walls tells the reader nothing, and it is what
-    the sign split produced whenever a strike held both the most positive call
-    row and the most negative put row -- which is what the heaviest strike on
-    the board usually does. Live GLD reported call wall 400 and put wall 400.
-    """
-    chain = [row(105.0, "call", oi=9000), row(95.0, "put", oi=9000),
+    chain = [row(105.0, "call", oi=9000),                 # net positive, biggest
+             row(95.0,  "put",  oi=9000),                 # net negative, biggest
              row(100.0, "call", oi=1000), row(100.0, "put", oi=1000)]
     out = G.compute(chain, SPOT, 0.03)
     assert out["call_wall"] == 105.0
     assert out["put_wall"] == 95.0
 
 
-def test_walls_may_still_coincide_when_one_strike_really_is_both():
-    # Not a bug when it is true: this strike genuinely carries both sides. The
-    # bug was reporting it when it was not.
+def test_a_strike_where_both_sides_cancel_is_not_a_wall():
+    """
+    The heaviest strike on the board is routinely heavy on both sides at once.
+    It is not a wall -- dealers are not concentrated either way there -- and
+    counting it as one is what put the same strike in both fields.
+    """
     chain = [row(100.0, "call", oi=9000), row(100.0, "put", oi=9000),
-             row(105.0, "call", oi=500), row(95.0, "put", oi=500)]
+             row(105.0, "call", oi=2000), row(95.0, "put", oi=2000)]
     out = G.compute(chain, SPOT, 0.03)
-    assert out["call_wall"] == out["put_wall"] == 100.0
+    assert out["call_wall"] == 105.0, "a strike that nets to ~0 became the call wall"
+    assert out["put_wall"] == 95.0
+
+
+def test_the_two_walls_can_never_be_the_same_strike():
+    # One is the maximum of a set, the other the minimum. Reporting a single
+    # strike as both told the reader nothing.
+    for chain in ([row(105.0, "call", oi=9000), row(95.0, "put", oi=9000)],
+                  [row(100.0, "call", oi=9000), row(100.0, "put", oi=8000),
+                   row(105.0, "call", oi=10), row(95.0, "put", oi=4000)]):
+        out = G.compute(chain, SPOT, 0.03)
+        if out["call_wall"] is not None and out["put_wall"] is not None:
+            assert out["call_wall"] != out["put_wall"]
+
+
+def test_dealer_sign_decides_the_side_not_the_contract_type():
+    """
+    A put whose dealer sign is inferred long contributes to positive net gamma
+    at its strike, and should. The wall is about where dealer gamma sits, not
+    about which contract carries it -- that is the whole reason the sign is
+    inferred from flow rather than assumed.
+    """
+    chain = [row(105.0, "call", oi=1000), row(95.0, "put", oi=9000)]
+    flow = {(95.0, "put"): {"bid": 5000, "ask": 100}}   # bid side -> dealer long
+    out = G.compute(chain, SPOT, 0.03, flow=flow)
+    put_row = next(r for r in out["profile"] if r["type"] == "put")
+    assert put_row["src"] == "inferred" and put_row["gamma_notional"] > 0, \
+        "fixture no longer produces a positive-gamma put -- re-point this test"
+    assert out["call_wall"] == 95.0, "the inferred-long put did not count as long gamma"
+    assert out["put_wall"] is None, "nothing on this board is net short gamma"
 
 
 # ── Missing IV and near-expiry clamping ───────────────────────────────────────

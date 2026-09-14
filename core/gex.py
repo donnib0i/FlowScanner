@@ -241,34 +241,34 @@ def compute(rows: List[Dict], spot: float, T: float,
     max_share = (max((abs(r["gamma_notional"]) for r in profile), default=0.0)
                  / total_mag) if total_mag else 0.0
 
-    # The walls, read off their own side of the board.
+    # The walls: where dealers are most long gamma, and most short.
     #
-    # Two things were wrong here and they compounded. The buckets were split on
-    # the SIGN of gamma_notional rather than the contract type, but sign encodes
-    # dealer positioning -- long or short gamma -- and an inferred dealer sign
-    # routinely lands a put on the positive side. On live GLD that put 14 put
-    # rows in the "calls" bucket and 31 call rows in the "puts" bucket, so a put
-    # could be reported as the call wall. And the pick was a max() over the raw
-    # profile, where every row is one (strike, type, expiry), so three rows of
-    # 1000 at one strike competed against each other instead of adding up.
+    # A wall is the extreme of NET gamma at a strike -- both contract types
+    # together, summed across expiries -- which is exactly what the chart draws,
+    # so the numbers and the bars agree. Two earlier definitions did not.
     #
-    # Together they reported the same strike as both walls: the heaviest strike
-    # on the board usually holds both the most positive call row and the most
-    # negative put row. GLD came back call wall 400, put wall 400, which tells
-    # the reader nothing.
+    # The first split the buckets on the SIGN of each row and took a max() over
+    # the raw profile, where every row is one (strike, type, expiry). Rows at
+    # one strike competed against each other instead of adding up, so the wall
+    # was the biggest single expiry-row rather than the biggest strike.
     #
-    # A wall is a strike, so gamma is summed per strike, and it is a side, so
-    # each side is read from its own contract type. Magnitude rather than signed
-    # value, because with an inferred sign "where is the put gamma" is a
-    # question about size, not direction.
-    def _wall(opt_type: str) -> Optional[float]:
-        by_strike: Dict[float, float] = {}
-        for r in profile:
-            if r.get("type") == opt_type:
-                by_strike[r["strike"]] = (by_strike.get(r["strike"], 0.0)
-                                          + abs(r["gamma_notional"]))
-        live = {k: v for k, v in by_strike.items() if v > 0}
-        return max(live, key=live.get) if live else None
+    # The second summed per strike but read each side off its own contract type.
+    # That answers a different question -- "where is the most put gamma" -- and
+    # the heaviest strike on a board is routinely heavy on both sides at once,
+    # so it won both fields while netting to nearly nothing. Live GLD returned
+    # strike 400 for both walls while the chart's longest green bar sat at 415
+    # and its longest red at 390: the two numbers named a strike that was
+    # neither.
+    #
+    # Contract type is deliberately not consulted. The dealer sign is inferred
+    # from flow precisely so that a put held long by dealers counts as long
+    # gamma; re-deriving the side from the contract type would throw that away.
+    net_by_strike: Dict[float, float] = {}
+    for r in profile:
+        net_by_strike[r["strike"]] = (net_by_strike.get(r["strike"], 0.0)
+                                      + r["gamma_notional"])
+    _longs  = {k: v for k, v in net_by_strike.items() if v > 0}
+    _shorts = {k: v for k, v in net_by_strike.items() if v < 0}
 
     if usable_oi:
         flips = _find_flips(usable, spot, T, flow)
@@ -282,8 +282,10 @@ def compute(rows: List[Dict], spot: float, T: float,
         "net_gex":   net_gex(profile),
         "flip":      flip,
         "flips":     flips,
-        "call_wall": _wall("call") if usable_oi else None,
-        "put_wall":  _wall("put") if usable_oi else None,
+        "call_wall": (max(_longs, key=_longs.get)
+                      if _longs and usable_oi else None),
+        "put_wall":  (min(_shorts, key=_shorts.get)
+                      if _shorts and usable_oi else None),
         "provenance": {
             "oi_source":       oi_source,
             "oi_asof":         oi_asof,
