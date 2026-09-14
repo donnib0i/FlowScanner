@@ -297,10 +297,16 @@ async function doFlowScan(retryCount){
     es.close();
     if(!gotData&&retryCount<2){
       const wait=retryCount===0?4:8;
-      document.getElementById('pl').textContent='Waking up... retry '+(retryCount+1)+'/2';
+      // Not "waking up". The server is usually awake and the connection simply
+      // dropped -- saying it is asleep sent people off restarting a service
+      // that was answering fine. Anything the server can explain now arrives
+      // as an __error__ event inside the stream instead.
+      document.getElementById('pl').textContent=
+        'Connection dropped \u2014 reconnecting ('+(retryCount+1)+' of 2)';
       setTimeout(function(){doFlowScan(retryCount+1)},wait*1000);
     } else {
-      endFlowScan(gotData?null:'Server unavailable - try again');
+      endFlowScan(gotData?null:'Could not reach the scan stream. Check your '+
+        'connection, then try again.');
     }
   };
 }

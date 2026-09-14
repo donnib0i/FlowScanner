@@ -162,8 +162,23 @@ class _TTLCache:
 
 _cache = _TTLCache()
 
-# Concurrent flow-scan guard
+# Concurrent flow-scan guard. The timestamp is half of it: the flag is set by a
+# worker thread that can die without clearing it -- a wedged yfinance call, a
+# killed worker -- and an Event with no expiry turns one stuck scan into an
+# endpoint that refuses every later scan until someone redeploys.
 _active_scan = threading.Event()
+_scan_started_at: float = 0.0
+SCAN_STALE_AFTER_S = 900
+
+
+def _scan_in_progress() -> bool:
+    """Whether a scan is genuinely running, rather than merely flagged."""
+    if not _active_scan.is_set():
+        return False
+    if time.monotonic() - _scan_started_at > SCAN_STALE_AFTER_S:
+        _active_scan.clear()
+        return False
+    return True
 
 def _client_ip(req: Request) -> str:
     xff = req.headers.get("x-forwarded-for", "")
@@ -653,9 +668,17 @@ async def api_flow(
         raise HTTPException(400, "No valid tickers provided — all requested symbols are ETFs")
     ticker_list = equities
 
-    if _active_scan.is_set():
-        raise HTTPException(503, detail="A scan is already running -- wait for it to finish.",
-                            headers={"Retry-After": "30"})
+    # Reported inside the stream, not as a status code: EventSource cannot read
+    # one, so a 503 here reaches the browser as an anonymous connection failure
+    # and the tab blames the server for being asleep while it is busy running
+    # this very user's scan.
+    if _scan_in_progress():
+        async def _busy():
+            yield ('data: {"__error__":"A scan is already running -- wait for '
+                   'it to finish, then try again."}\n\n')
+        return StreamingResponse(_busy(), media_type="text/event-stream",
+                                 headers={"Cache-Control": "no-cache, no-transform",
+                                          "X-Accel-Buffering": "no"})
 
     import queue as _q
     q: _q.Queue = _q.Queue()
@@ -673,6 +696,8 @@ async def api_flow(
             _active_scan.clear()
             q.put({"__done__": True})
 
+    global _scan_started_at
+    _scan_started_at = time.monotonic()
     _active_scan.set()
     try:
         threading.Thread(target=run, daemon=True).start()
