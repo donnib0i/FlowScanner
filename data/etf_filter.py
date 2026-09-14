@@ -23,6 +23,15 @@ KNOWN_ETFS = {
     "SQQQ", "SOXS", "SPXS", "TZA", "LABD", "TECS", "FNGD",
     "XLK", "XLF", "XLE", "XLV", "XLI", "XLP", "XLU", "XLB", "XLC", "XLRE",
     "GLD", "SLV", "USO", "CPER", "KWEB", "FXI", "XBI", "ARKK",
+    # Leveraged and inverse funds. Added 2026-09-14 after SDOW -- a 3x inverse
+    # Dow fund sitting in the curated universe -- passed the filter and would
+    # have reached the flow feed once the default list grew tenfold. These
+    # trade like stocks and screen like stocks; only a list catches them.
+    "SDOW", "UDOW", "SPXU", "SDS", "SSO", "QID", "QLD", "DOG", "SH", "PSQ",
+    "FAS", "FAZ", "YINN", "YANG", "NUGT", "DUST", "JNUG", "JDST",
+    "BOIL", "KOLD", "UNG", "UCO", "SCO", "GUSH", "DRIP", "ERX", "ERY",
+    "TMF", "TMV", "TLT", "TBT", "VIXY", "VIXM", "SPXL",
+    "WEBL", "WEBS", "CURE", "NAIL", "DPST", "BNKU", "HIBL", "HIBS",
 }
 
 _CACHE_PATH = os.path.join(os.path.dirname(__file__), "baselines", "etf_cache.json")

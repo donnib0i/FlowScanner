@@ -273,6 +273,9 @@ async function doFlowScan(retryCount){
     gotData=true;
     const m=JSON.parse(e.data);
     if(m.__ping__) return;
+    // Anything the server needs to say about the scan it just started, said
+    // where the user is already looking rather than swallowed.
+    if(m.__notice__){ toast(m.message||''); return; }
     if(m.__progress__){
       document.getElementById('pb').style.width=(m.i/m.n*100)+'%';
       document.getElementById('pl').textContent=m.ticker+' . '+m.i+' of '+m.n;

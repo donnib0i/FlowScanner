@@ -325,13 +325,24 @@ def _check_pin(req: Request):
 # Default flow tickers
 # Single-stocks only (plus SPX index for 0DTE). ETFs are filtered out to stay
 # consistent with the ETF-free scan universe. SPX is an index, not an ETF.
-DEFAULT_FLOW_TICKERS = filter_etfs([
+# How many names one scan may ask for. Every name is an option-chain fetch --
+# measured at ~1s each locally and slower on the delayed feed -- so this is a
+# time budget as much as a size limit: 200 names is a scan of a few minutes,
+# and the SSE timeout below has to cover it.
+MAX_SCAN_TICKERS = 250
+
+# The names a scan looks at, most-traded first. Cards stream in scan order, so
+# the head of this list is what fills the first screenful; the rest is the
+# curated universe behind it. Was twenty names, which was a sampler rather than
+# a scan -- flow you never look at is flow you never find.
+_FLOW_PRIORITY = [
     "SPX",
     "NVDA","AMD","AAPL","MSFT","META","AMZN","TSLA","GOOGL",
     "COIN","PLTR","MSTR","HOOD","MARA",
     "SOFI","AFRM","GME","HIMS",
     "GS","JPM",
-])
+]
+DEFAULT_FLOW_TICKERS = filter_etfs(_FLOW_PRIORITY + list(UNIVERSE))[:MAX_SCAN_TICKERS]
 
 # App setup
 app = FastAPI(title="Scanner Pro", docs_url=None, redoc_url=None, openapi_url=None)
@@ -652,7 +663,7 @@ async def api_flow(
 
     raw_tickers = [t.strip().upper() for t in tickers.split(",") if t.strip()]
     ticker_list: List[str] = []
-    for t in raw_tickers[:150]:
+    for t in raw_tickers[:MAX_SCAN_TICKERS]:
         try:
             ticker_list.append(_validate_ticker(t))
         except HTTPException:
@@ -698,6 +709,8 @@ async def api_flow(
 
     global _scan_started_at
     _scan_started_at = time.monotonic()
+    dropped = max(0, len(raw_tickers) - MAX_SCAN_TICKERS)
+
     _active_scan.set()
     try:
         threading.Thread(target=run, daemon=True).start()
@@ -706,10 +719,18 @@ async def api_flow(
         raise HTTPException(500, "Failed to start scan")
 
     _start = time.monotonic()
-    _SSE_TIMEOUT = 600
+    # A 250-name scan at roughly a second a name, with headroom for a slow
+    # feed. At 600 this cut off its own default scan partway through.
+    _SSE_TIMEOUT = 1800
 
     async def generate():
         import queue as _q2
+        if dropped:
+            yield ('data: ' + json.dumps({
+                "__notice__": True,
+                "message": (f"Asked for {len(raw_tickers)} names; scanning the "
+                            f"first {MAX_SCAN_TICKERS}."),
+            }) + '\n\n')
         while True:
             if time.monotonic() - _start > _SSE_TIMEOUT:
                 yield 'data: {"__error__":"Scan timeout"}\n\n'

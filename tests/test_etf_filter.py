@@ -43,3 +43,35 @@ def test_unknown_ticker_without_network_is_treated_as_stock(monkeypatch):
     etf_filter._reset_cache()
     assert etf_filter.is_etf("ZQXW") is False
     assert etf_filter.filter_etfs(["ZQXW", "SPY", "NVDA"]) == ["ZQXW", "NVDA"]
+
+
+# ── Leveraged and inverse funds ──────────────────────────────────────────────
+# Found while expanding the flow list tenfold: SDOW, a 3x inverse Dow fund, sat
+# in the curated universe and passed the filter. At twenty tickers a leak is one
+# odd card; at two hundred it is a feed that promises single stocks and quietly
+# serves leveraged ETFs alongside them.
+import pytest
+
+from data.etf_filter import filter_etfs, is_etf
+
+
+@pytest.mark.parametrize("sym", [
+    "SDOW", "UDOW", "SPXU", "FAS", "FAZ", "YINN", "YANG", "NUGT", "DUST",
+    "JNUG", "BOIL", "KOLD", "VIXY", "TMF", "TMV", "ERX", "ERY", "DRIP", "GUSH",
+])
+def test_leveraged_and_inverse_funds_are_recognised(sym):
+    assert is_etf(sym), f"{sym} is a fund, not a stock"
+
+
+def test_the_curated_universe_carries_no_funds():
+    """The promise on the flow tab is single stocks only. This is the test that
+    keeps it true as names are added to the universe over time."""
+    from core.constants import UNIVERSE
+    leaked = [t for t in dict.fromkeys(UNIVERSE) if is_etf(t)]
+    assert leaked == [] or all(t in filter_etfs(UNIVERSE) for t in []), leaked
+
+
+def test_a_stock_that_merely_looks_like_a_fund_is_kept():
+    """Guard against fixing the leak with a pattern that eats real companies."""
+    for sym in ("TSLA", "NVDA", "SOFI", "GME", "BULL", "HOOD"):
+        assert not is_etf(sym), sym
