@@ -1118,7 +1118,7 @@ function _findError(msg){
   const p=document.createElement('div');p.className='empty-st';p.style.padding='16px';
   p.textContent=msg;res.appendChild(p);
   const btn=document.getElementById('find-btn');
-  btn.textContent='FIND TOP 3 CONTRACTS';btn.classList.remove('loading');
+  btn.textContent='Find top 3 contracts';btn.classList.remove('loading');
 }
 
 async function doFind(retry){
@@ -1153,12 +1153,15 @@ async function doFind(retry){
     }
     const d=await r.json();
     renderContracts(d.ticker,d.contracts,d.last_updated,d.dte_note);
-    btn.textContent='FIND TOP 3 CONTRACTS';btn.classList.remove('loading');
+    btn.textContent='Find top 3 contracts';btn.classList.remove('loading');
   }catch(e){
     if(!retry){
       res.textContent='';
       const p=document.createElement('div');p.className='empty-st';p.style.padding='16px';
-      p.textContent='Waking up server...';res.appendChild(p);
+      // This path is reached on a 5xx or a dropped connection. Neither means
+      // the server is asleep -- the container is always on -- and saying so
+      // sends people restarting a service that is answering.
+      p.textContent='Server error \u2014 trying once more\u2026';res.appendChild(p);
       setTimeout(function(){doFind(true)},5000);
     }else{
       _findError(e.message);
@@ -1291,7 +1294,7 @@ function renderBothLadder(d){
 
   const ladderHdr=document.createElement('div');
   ladderHdr.style.cssText='font-size:9px;color:var(--t3);letter-spacing:.8px;margin-bottom:10px';
-  ladderHdr.textContent='TOP STRIKES BY $ FLOW';
+  ladderHdr.textContent='Top strikes by $ flow';
   ladderEl.appendChild(ladderHdr);
 
   // header row
@@ -1357,7 +1360,7 @@ function renderContracts(ticker,cs,ts,dteNote){
     if(c.stale){
       const st=document.createElement('div');
       st.style.cssText='font-size:9px;color:var(--amber);margin-top:4px';
-      st.textContent='STALE';rightDiv.appendChild(st);
+      st.textContent='Stale';rightDiv.appendChild(st);
     }
     hero.appendChild(symDiv);hero.appendChild(rightDiv);
     // grid
