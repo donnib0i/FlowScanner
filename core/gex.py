@@ -241,8 +241,34 @@ def compute(rows: List[Dict], spot: float, T: float,
     max_share = (max((abs(r["gamma_notional"]) for r in profile), default=0.0)
                  / total_mag) if total_mag else 0.0
 
-    calls = [r for r in profile if r["gamma_notional"] > 0]
-    puts  = [r for r in profile if r["gamma_notional"] < 0]
+    # The walls, read off their own side of the board.
+    #
+    # Two things were wrong here and they compounded. The buckets were split on
+    # the SIGN of gamma_notional rather than the contract type, but sign encodes
+    # dealer positioning -- long or short gamma -- and an inferred dealer sign
+    # routinely lands a put on the positive side. On live GLD that put 14 put
+    # rows in the "calls" bucket and 31 call rows in the "puts" bucket, so a put
+    # could be reported as the call wall. And the pick was a max() over the raw
+    # profile, where every row is one (strike, type, expiry), so three rows of
+    # 1000 at one strike competed against each other instead of adding up.
+    #
+    # Together they reported the same strike as both walls: the heaviest strike
+    # on the board usually holds both the most positive call row and the most
+    # negative put row. GLD came back call wall 400, put wall 400, which tells
+    # the reader nothing.
+    #
+    # A wall is a strike, so gamma is summed per strike, and it is a side, so
+    # each side is read from its own contract type. Magnitude rather than signed
+    # value, because with an inferred sign "where is the put gamma" is a
+    # question about size, not direction.
+    def _wall(opt_type: str) -> Optional[float]:
+        by_strike: Dict[float, float] = {}
+        for r in profile:
+            if r.get("type") == opt_type:
+                by_strike[r["strike"]] = (by_strike.get(r["strike"], 0.0)
+                                          + abs(r["gamma_notional"]))
+        live = {k: v for k, v in by_strike.items() if v > 0}
+        return max(live, key=live.get) if live else None
 
     if usable_oi:
         flips = _find_flips(usable, spot, T, flow)
@@ -256,10 +282,8 @@ def compute(rows: List[Dict], spot: float, T: float,
         "net_gex":   net_gex(profile),
         "flip":      flip,
         "flips":     flips,
-        "call_wall": (max(calls, key=lambda r: r["gamma_notional"])["strike"]
-                      if calls and usable_oi else None),
-        "put_wall":  (min(puts, key=lambda r: r["gamma_notional"])["strike"]
-                      if puts and usable_oi else None),
+        "call_wall": _wall("call") if usable_oi else None,
+        "put_wall":  _wall("put") if usable_oi else None,
         "provenance": {
             "oi_source":       oi_source,
             "oi_asof":         oi_asof,

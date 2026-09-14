@@ -206,6 +206,69 @@ def test_walls_are_none_on_an_empty_side():
     assert out["put_wall"] is None
 
 
+def test_a_strike_sums_across_expiries_before_it_can_be_a_wall():
+    """
+    A wall is a strike, not one expiry's row at a strike.
+
+    The walls were picked with max() over the raw profile, where every row is
+    one (strike, type, expiry). Three rows of 1000 at the same strike competed
+    against each other instead of adding up, so a strike holding 3000 contracts
+    lost to a thinner strike that happened to carry its size in one expiry.
+    """
+    # 105 carries 3x1000 across three expiries: 3 x 437,609 = 1,312,827 total,
+    # but only 437,609 in any single row. 110 carries 30,000 in one expiry:
+    # 822,750 -- more than any one 105 row, less than all three together.
+    chain = [row(105.0, "call", oi=1000, expiry="2026-09-14"),
+             row(105.0, "call", oi=1000, expiry="2026-09-15"),
+             row(105.0, "call", oi=1000, expiry="2026-09-16"),
+             row(110.0, "call", oi=30000, expiry="2026-09-14")]
+    out = G.compute(chain, SPOT, 0.03)
+    assert out["call_wall"] == 105.0, "the wall was decided by a single expiry"
+
+
+def test_a_put_contract_cannot_set_the_call_wall():
+    """
+    The buckets were split on the SIGN of gamma_notional, not on contract type.
+    Sign encodes dealer positioning -- long or short gamma -- and an inferred
+    dealer sign routinely lands a put on the positive side. On live GLD that put
+    14 put rows in the "calls" bucket and 31 call rows in the "puts" bucket.
+    """
+    chain = [row(105.0, "call", oi=1000), row(95.0, "put", oi=9000)]
+    # Bid-side customer volume on the put -> dealer long gamma -> POSITIVE
+    # notional on a put contract, and far larger than the call.
+    flow = {(95.0, "put"): {"bid": 5000, "ask": 100}}
+    out = G.compute(chain, SPOT, 0.03, flow=flow)
+
+    put_row = next(r for r in out["profile"] if r["type"] == "put")
+    assert put_row["src"] == "inferred" and put_row["gamma_notional"] > 0, \
+        "fixture no longer produces a positive-gamma put -- re-point this test"
+    assert out["call_wall"] == 105.0, "a put contract was reported as the call wall"
+    assert out["put_wall"] == 95.0, "the put wall vanished with its sign"
+
+
+def test_the_two_walls_are_read_off_their_own_side():
+    """
+    One strike reported as both walls tells the reader nothing, and it is what
+    the sign split produced whenever a strike held both the most positive call
+    row and the most negative put row -- which is what the heaviest strike on
+    the board usually does. Live GLD reported call wall 400 and put wall 400.
+    """
+    chain = [row(105.0, "call", oi=9000), row(95.0, "put", oi=9000),
+             row(100.0, "call", oi=1000), row(100.0, "put", oi=1000)]
+    out = G.compute(chain, SPOT, 0.03)
+    assert out["call_wall"] == 105.0
+    assert out["put_wall"] == 95.0
+
+
+def test_walls_may_still_coincide_when_one_strike_really_is_both():
+    # Not a bug when it is true: this strike genuinely carries both sides. The
+    # bug was reporting it when it was not.
+    chain = [row(100.0, "call", oi=9000), row(100.0, "put", oi=9000),
+             row(105.0, "call", oi=500), row(95.0, "put", oi=500)]
+    out = G.compute(chain, SPOT, 0.03)
+    assert out["call_wall"] == out["put_wall"] == 100.0
+
+
 # ── Missing IV and near-expiry clamping ───────────────────────────────────────
 def test_strike_with_no_usable_iv_is_excluded_and_counted():
     chain = [row(100.0, "call", iv=0.0), row(105.0, "call", iv=0.20)]
