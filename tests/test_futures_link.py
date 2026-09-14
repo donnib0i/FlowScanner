@@ -97,8 +97,37 @@ def test_the_live_future_is_reported_apart_from_the_conversion(wired):
            "ES=F": _FakeTicker(_bars(DATES, [7506.0, 7557.0, 7599.50]), last=7650.0)})
     link = F.link_for("SPX")
     assert link["last"] == 7650.0
-    assert link["change"] == pytest.approx(50.5)
-    assert link["prev_close"] == 7599.50
+
+
+def test_the_change_is_measured_against_the_PRIOR_session_not_this_one(wired):
+    """
+    The change was computed against the same session's close that the ratio is
+    synchronised on -- and yfinance's daily bar for the current session tracks
+    the live price, so that close IS the last price. The figure was therefore
+    structurally +0.00 and stayed there all day. Observed 2026-09-14: gold was
+    down 68.80 (-1.56%) on the session and the screen read "+0.00".
+    """
+    # Prior session closed at 7557.00; this session's bar is at 7599.50 and the
+    # live print is 7650.00.
+    wired({"^SPX": _FakeTicker(_bars(DATES, [7500.0, 7550.0, 7591.70])),
+           "ES=F": _FakeTicker(_bars(DATES, [7506.0, 7557.0, 7599.50]), last=7650.0)})
+    link = F.link_for("SPX")
+    assert link["prev_close"] == 7557.0, "prev_close is still this session's own close"
+    assert link["change"] == pytest.approx(93.0)
+    assert link["change_pct"] == pytest.approx(93.0 / 7557.0)
+
+
+def test_a_flat_session_still_reports_zero(wired):
+    wired({"^SPX": _FakeTicker(_bars(DATES, [7500.0, 7550.0, 7591.70])),
+           "ES=F": _FakeTicker(_bars(DATES, [7506.0, 7557.0, 7599.50]), last=7557.0)})
+    assert F.link_for("SPX")["change"] == pytest.approx(0.0)
+
+
+def test_the_ratio_still_comes_from_the_synchronised_session(wired):
+    # Moving prev_close off that session must not move the basis with it.
+    wired({"^SPX": _FakeTicker(_bars(DATES, [7500.0, 7550.0, 7591.70])),
+           "ES=F": _FakeTicker(_bars(DATES, [7506.0, 7557.0, 7599.50]), last=7650.0)})
+    assert F.link_for("SPX")["ratio"] == pytest.approx(7599.50 / 7591.70)
 
 
 def test_the_implied_index_undoes_the_basis(wired):
@@ -149,7 +178,8 @@ def test_a_dead_live_quote_falls_back_to_the_close_rather_than_zero(wired):
            "ES=F": _FakeTicker(_bars(DATES, [7506.0, 7557.0, 7599.50]), last=None)})
     link = F.link_for("SPX")
     assert link["last"] == 7599.50
-    assert link["change"] == 0.0
+    # Still a real session move, measured off the prior close.
+    assert link["change"] == pytest.approx(42.5)
 
 
 # ── the surface never dies because the futures leg did ───────────────────────

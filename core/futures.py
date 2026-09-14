@@ -135,11 +135,18 @@ def _last(t) -> float:
 
 def _synced_closes(under_sym: str, fut_sym: str):
     """
-    The most recent session close that BOTH instruments printed.
+    (underlying close, futures close, date, prior futures close).
 
-    Daily bars are used rather than live quotes precisely because the two bars
-    are stamped to the same session -- that is what makes the ratio a basis and
-    not a basis plus an overnight drift.
+    The first three are the most recent session close that BOTH instruments
+    printed. Daily bars are used rather than live quotes precisely because the
+    two bars are stamped to the same session -- that is what makes the ratio a
+    basis and not a basis plus an overnight drift.
+
+    The fourth is a different question and needs a different bar. A session's
+    daily close tracks the live price while that session is open, so measuring
+    the day's move against the same close the ratio is synchronised on gives
+    last - last: structurally +0.00, all day, every day. The move is measured
+    against the prior completed futures session instead.
     """
     from core.market_data import _yf
 
@@ -147,14 +154,22 @@ def _synced_closes(under_sym: str, fut_sym: str):
     hf = _yf(fut_sym).history(period="10d")
     if hu.empty or hf.empty:
         return None
+    fdates = sorted({d.date() for d in hf.index})
+    fclose = {d: float(hf.loc[[i for i in hf.index if i.date() == d][-1], "Close"])
+              for d in fdates}
     udates = {d.date(): d for d in hu.index}
-    for d in sorted((d.date() for d in hf.index), reverse=True):
+    for d in reversed(fdates):
         if d not in udates:
             continue
         cu = float(hu.loc[udates[d], "Close"])
-        cf = float(hf.loc[[i for i in hf.index if i.date() == d][-1], "Close"])
+        cf = fclose[d]
         if cu > 0 and cf > 0:
-            return cu, cf, d
+            # The last futures session strictly before the newest futures bar.
+            # Anchored to the futures' own calendar, not the synced date, so the
+            # day's move stays correct when the two markets' sessions differ.
+            prior = next((fclose[p] for p in reversed(fdates[:-1])
+                          if fclose.get(p, 0) > 0), cf)
+            return cu, cf, d, prior
     return None
 
 
@@ -185,7 +200,7 @@ def link_for(symbol: str) -> Optional[Dict[str, Any]]:
     synced = _synced_closes(symbol, primary["yf"])
     if not synced:
         return None
-    under_close, fut_close, asof = synced
+    under_close, fut_close, asof, prior_close = synced
     ratio = fut_close / under_close
     if not (ratio > 0) or ratio != ratio:
         return None
@@ -213,8 +228,9 @@ def link_for(symbol: str) -> Optional[Dict[str, Any]]:
         # checking the conversion by hand will reach for it first.
         "basis":      fut_close - under_close if 0.9 < ratio < 1.1 else None,
         "last":       last,
-        "prev_close": fut_close,
-        "change":     last - fut_close,
-        "change_pct": (last - fut_close) / fut_close if fut_close else 0.0,
+        # The prior completed session, never the one still printing.
+        "prev_close": prior_close,
+        "change":     last - prior_close,
+        "change_pct": (last - prior_close) / prior_close if prior_close else 0.0,
         "implied_underlying": last / ratio,
     }
