@@ -7,6 +7,7 @@ Part of the scanner core; `core.scanner` re-exports everything here.
 """
 from core import runtime as _runtime  # noqa: F401  (warnings/colorama setup)
 
+import re
 from typing import Optional, List, Dict, Tuple, Any
 import time
 import pandas as pd
@@ -54,8 +55,20 @@ _YF_TICKER_MAP: Dict[str, str] = {
 }
 
 
+# Class shares are written BRK.B by every human and BRK-B by yfinance, and the
+# dotted form does not fail cleanly -- it raises out of fast_info with a
+# KeyError, so the whole surface came back "no spot price for BRK.B". Only a
+# single trailing letter is rewritten: exchange suffixes (.TO, .DE, .AX) keep
+# their dot, and those carry no US option chain anyway.
+_CLASS_SHARE = re.compile(r"^([A-Z]{1,5})\.([A-Z])$")
+
+
 def _yf_ticker(sym: str) -> str:
-    return _YF_TICKER_MAP.get(sym.upper(), sym)
+    s = (sym or "").upper()
+    if s in _YF_TICKER_MAP:
+        return _YF_TICKER_MAP[s]
+    m = _CLASS_SHARE.match(s)
+    return f"{m[1]}-{m[2]}" if m else sym
 
 
 def _yf(sym: str) -> yf.Ticker:

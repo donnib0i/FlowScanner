@@ -810,6 +810,8 @@ async def api_flow(
                 "message": (f"Asked for {len(raw_tickers)} names; scanning the "
                             f"first {MAX_SCAN_TICKERS}."),
             }) + '\n\n')
+        found = shown = 0
+        dropped_by = {"score": 0, "bias": 0, "dte": 0}
         while True:
             if time.monotonic() - _start > _SSE_TIMEOUT:
                 yield 'data: {"__error__":"Scan timeout"}\n\n'
@@ -825,12 +827,31 @@ async def api_flow(
 
             if item.get("__signal__"):
                 s = item["data"]
+                found += 1
+                # Count what each filter removes. A scan that finds 47 signals
+                # and shows none looks identical to a scan that found nothing,
+                # and at 18:00 the default 0DTE filter drops every one of them
+                # because today's expiry died at the close.
                 if not s.get("institutional") and s["score"] < min_score:
+                    dropped_by["score"] += 1
                     continue
-                if bias == "call" and s["bias"] != "call": continue
-                if bias == "put"  and s["bias"] != "put":  continue
-                if dte  == "0dte" and s["dte"] != 0:       continue
-                if dte  == "7dte" and s["dte"] > 7:        continue
+                if bias == "call" and s["bias"] != "call":
+                    dropped_by["bias"] += 1
+                    continue
+                if bias == "put" and s["bias"] != "put":
+                    dropped_by["bias"] += 1
+                    continue
+                if dte == "0dte" and s["dte"] != 0:
+                    dropped_by["dte"] += 1
+                    continue
+                if dte == "7dte" and s["dte"] > 7:
+                    dropped_by["dte"] += 1
+                    continue
+                shown += 1
+
+            if item.get("__done__"):
+                item = {**item, "found": found, "shown": shown,
+                        "dropped": dict(dropped_by)}
 
             yield f"data: {json.dumps(item)}\n\n"
             if item.get("__done__") or item.get("__error__"):

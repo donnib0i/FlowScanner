@@ -450,13 +450,25 @@ def surface_for(symbol: str, flow: Optional[Dict] = None) -> Dict[str, Any]:
     from core.market_calendar import exchange_today
     from core.market_data import _yf, full_chain
 
+    # A futures code names the chain it hedges, here and not only in the web
+    # endpoint. The CLI and the API were resolving differently: "scanner --gex
+    # mnq" went looking for an equity called MNQ and died, while the same
+    # symbol through the API resolved to NDX. Worse, ES and MGC ARE real
+    # equities (Eversource, Vanguard Mega Cap), so the CLI silently measured
+    # the wrong instrument instead of failing. Resolving here makes every
+    # caller agree; it is a no-op on a symbol already resolved.
+    from core.futures import resolve as _resolve_future
+    requested = (symbol or "").strip().upper()
+    symbol, _preselect = _resolve_future(symbol)
+
     t = _yf(symbol)
     try:
         spot = float(t.fast_info.last_price or 0)
     except Exception:
         spot = 0.0
     if spot <= 0:
-        raise ValueError(f"no spot price for {symbol}")
+        raise ValueError(f"No price for {symbol}. Check the symbol is right and "
+                         f"still listed.")
 
     today = exchange_today()
     dated = []
@@ -492,6 +504,9 @@ def surface_for(symbol: str, flow: Optional[Dict] = None) -> Dict[str, Any]:
     out = compute(rows, spot, T=t_by_exp[chosen[0][0]], flow=flow,
                   oi_source=oi_source)
     out["symbol"] = symbol
+    out["requested"] = requested
+    out["resolved_from_future"] = bool(_preselect)
+    out["preselect_contract"] = _preselect
     out["expiries"] = [e for e, _, _ in chosen]
     out["provenance"]["expiries"] = out["expiries"]
 

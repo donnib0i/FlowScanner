@@ -281,7 +281,7 @@ async function doFlowScan(retryCount){
       document.getElementById('pl').textContent=m.ticker+' . '+m.i+' of '+m.n;
       return;
     }
-    if(m.__done__||m.__error__){es.close();endFlowScan(m.__error__);_refreshSourceBadge();return}
+    if(m.__done__||m.__error__){es.close();S.lastScanStats=m.__done__?m:null;endFlowScan(m.__error__);_refreshSourceBadge();return}
     if(m.__signal__){
       const s=m.data;
       S.signals.push(s);
@@ -322,16 +322,47 @@ function endFlowScan(err){
   document.getElementById('pb').style.width='0%';
   if(err){toast('Error: '+err,'err');return}
   if(!S.signals.length){
-    const hint=!_isMarketOpen()&&S.dte==='0dte'
-      ?'Market closed - 0DTE expired. Switch to ALL DTE.'
-      :S.dte!=='all'?'Try ALL DTE or FULL scan.':'No unusual institutional flow detected.';
+    // The scan reports what it found and what each filter removed, so this can
+    // state the fact rather than guess at it. A feed that found 47 signals and
+    // shows none is not the same as a market with nothing in it, and for most
+    // of the day the 0DTE filter is the whole difference.
+    const st=S.lastScanStats||{};
+    const drop=st.dropped||{};
+    const found=st.found||0;
+    let head='No signals', hint, fix=null;
+    if(found&&drop.dte===found){
+      head=found+' found, none match 0DTE';
+      hint=_isMarketOpen()
+        ?'Nothing expiring today. Every signal found is a later expiry.'
+        :'Today\u2019s expiry closed. Every signal found is a later expiry.';
+      fix={label:'Show all expiries',run:function(){S.dte='all';
+        const el=document.getElementById('c-dte');
+        if(el){el.textContent='ALL DTE';el.className='chip on';}
+        doFlowScan();}};
+    } else if(found&&drop.score===found){
+      head=found+' found, all below the score floor';
+      hint='Every signal scored under '+(S.minScore||40)+'.';
+    } else if(found){
+      head=found+' found, none shown';
+      hint='Filters removed them: '+
+        Object.keys(drop).filter(function(k){return drop[k]}).map(function(k){
+          return drop[k]+' by '+k;}).join(', ')+'.';
+    } else {
+      hint=S.dte!=='all'?'Try all expiries, or a full scan.'
+                        :'No unusual institutional flow detected.';
+    }
     const feed=document.getElementById('flow-feed');
     feed.textContent='';
     const wrap=document.createElement('div');wrap.className='empty-st';
-    const icon=document.createElement('div');icon.className='icon';icon.textContent='?';
-    const h=document.createElement('h3');h.textContent='No signals';
+    const h=document.createElement('h3');h.textContent=head;
     const p=document.createElement('p');p.textContent=hint;
-    wrap.appendChild(icon);wrap.appendChild(h);wrap.appendChild(p);
+    wrap.appendChild(h);wrap.appendChild(p);
+    if(fix){
+      const b=document.createElement('button');
+      b.className='load-btn';b.style.marginTop='16px';b.textContent=fix.label;
+      b.addEventListener('click',fix.run);
+      wrap.appendChild(b);
+    }
     feed.appendChild(wrap);
   } else {
     toast(S.signals.length+' signal'+(S.signals.length>1?'s':'')+' - institutional only');
