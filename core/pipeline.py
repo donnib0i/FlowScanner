@@ -16,6 +16,7 @@ import json
 import pandas as pd
 
 from core.constants import TICKER_SECTOR
+from data.sector_map import sector_for
 from core.market_data import (
     _extract_ticker_hist,
     _fetch_batch_history,
@@ -44,7 +45,7 @@ def get_forward_direction(r: Dict, sector_data: Dict[str, Dict]) -> str:
     score_dn = 0.0
 
     # 1. Sector bias — the macro tailwind/headwind (highest weight)
-    sname = TICKER_SECTOR.get(r["ticker"])
+    sname = sector_for(r["ticker"])
     if sname and sname in sector_data:
         sd  = sector_data[sname]
         mag = abs(sd["strength"])

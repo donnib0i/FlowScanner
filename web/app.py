@@ -65,6 +65,7 @@ from core.market_calendar import exchange_today, is_market_open
 from core.market_data import _yf, full_chain
 from data.unusual_flow import scan_unusual_flow, sector_flow_summary
 from data.etf_filter import filter_etfs, is_etf
+from data.sector_map import sector_for
 from data.sources import available_sources
 
 # Cache unusual flow results (expensive scan)
@@ -162,23 +163,83 @@ class _TTLCache:
 
 _cache = _TTLCache()
 
-# Concurrent flow-scan guard. The timestamp is half of it: the flag is set by a
-# worker thread that can die without clearing it -- a wedged yfinance call, a
-# killed worker -- and an Event with no expiry turns one stuck scan into an
-# endpoint that refuses every later scan until someone redeploys.
+# One flow scan at a time, shared by everyone watching it.
+#
+# This was a bare threading.Event that refused any second request. That was
+# survivable while a scan took fifteen seconds; at 190 names it takes two
+# minutes, and every tap, reload or second device inside that window got an
+# error it could not recover from. A scan is a property of the server, not of
+# the tab that asked for it, so later requests join the one already running and
+# are replayed what it has found so far.
 _active_scan = threading.Event()
 _scan_started_at: float = 0.0
 SCAN_STALE_AFTER_S = 900
 
 
+class _ScanSession:
+    """The events of one scan, and everyone currently listening to them."""
+
+    def __init__(self, tickers: int):
+        self.tickers  = tickers
+        self.started  = time.monotonic()
+        self.events: List[dict] = []
+        self.subs:   List[Any]  = []
+        self.done    = False
+        self._lock   = threading.Lock()
+
+    def publish(self, item: dict) -> None:
+        with self._lock:
+            self.events.append(item)
+            subs = list(self.subs)
+        for q in subs:
+            q.put(item)
+
+    def attach(self):
+        """A queue carrying everything so far, then everything after.
+
+        The replay matters: a viewer who joins a scan in progress and sees an
+        empty feed cannot tell that from a broken one.
+        """
+        import queue as _q
+        q: Any = _q.Queue()
+        with self._lock:
+            for e in self.events:
+                q.put(e)
+            if self.done:
+                q.put({"__done__": True})
+            else:
+                self.subs.append(q)
+        return q
+
+    def finish(self) -> None:
+        with self._lock:
+            self.done = True
+            subs = list(self.subs)
+            self.subs = []
+        for q in subs:
+            q.put({"__done__": True})
+
+    def is_live(self) -> bool:
+        return not self.done and (time.monotonic() - self.started) < SCAN_STALE_AFTER_S
+
+
+_scan_session: Optional[_ScanSession] = None
+_scan_session_lock = threading.Lock()
+
+
+def _reset_scan_session() -> None:
+    """Drop any session. For tests, and for a clean start after a restart."""
+    global _scan_session
+    with _scan_session_lock:
+        _scan_session = None
+    _active_scan.clear()
+
+
 def _scan_in_progress() -> bool:
     """Whether a scan is genuinely running, rather than merely flagged."""
-    if not _active_scan.is_set():
-        return False
-    if time.monotonic() - _scan_started_at > SCAN_STALE_AFTER_S:
-        _active_scan.clear()
-        return False
-    return True
+    with _scan_session_lock:
+        return _scan_session is not None and _scan_session.is_live()
+
 
 def _client_ip(req: Request) -> str:
     xff = req.headers.get("x-forwarded-for", "")
@@ -643,6 +704,48 @@ async def api_universe(req: Request):
     _check_rate(req, "universe", limit=10, window=60)
     return {"quick": DEFAULT_FLOW_TICKERS, "full": get_universe()}
 
+def _attach_or_start(ticker_list: List[str]):
+    """
+    Join the scan already running, or start one.
+
+    Returns (session, queue, joined). Lives outside the route so the decision
+    can be tested without driving an HTTP stream -- the streaming response is
+    only a transport for what this returns.
+    """
+    global _scan_session, _scan_started_at
+    with _scan_session_lock:
+        session = _scan_session
+        if session is not None and session.is_live():
+            return session, session.attach(), True
+        session = _ScanSession(len(ticker_list))
+        _scan_session = session
+        _scan_started_at = time.monotonic()
+        _active_scan.set()
+
+    def on_progress(info): session.publish({"__progress__": True, **info})
+    def on_signal(sig):    session.publish({"__signal__": True,
+                                            "data": _serialize_flow(sig)})
+
+    def run():
+        try:
+            scan_options_flow(ticker_list, show_progress=False,
+                              on_signal=on_signal, on_progress=on_progress)
+        except Exception:
+            session.publish({"__error__": "Scan failed -- check server logs"})
+        finally:
+            _active_scan.clear()
+            session.finish()
+
+    q = session.attach()
+    try:
+        threading.Thread(target=run, daemon=True).start()
+    except Exception:
+        _active_scan.clear()
+        _reset_scan_session()
+        raise HTTPException(500, "Failed to start scan")
+    return session, q, False
+
+
 @app.get("/api/flow")
 async def api_flow(
     req:       Request,
@@ -653,7 +756,9 @@ async def api_flow(
 ):
     """SSE stream of unusual options flow -- institutional/whale only."""
     _check_pin(req)
-    _check_rate(req, "flow", limit=3, window=60)
+    # Joining an existing scan costs nothing, so this only has to stop a
+    # genuine flood -- not a user who tapped twice or reloaded the tab.
+    _check_rate(req, "flow", limit=12, window=60)
     _validate_enum(bias, _VALID_BIAS, "bias")
     _validate_enum(dte,  _VALID_DTE_FILTER, "dte")
     if not (0 <= min_score <= 100):
@@ -679,44 +784,12 @@ async def api_flow(
         raise HTTPException(400, "No valid tickers provided — all requested symbols are ETFs")
     ticker_list = equities
 
-    # Reported inside the stream, not as a status code: EventSource cannot read
-    # one, so a 503 here reaches the browser as an anonymous connection failure
-    # and the tab blames the server for being asleep while it is busy running
-    # this very user's scan.
-    if _scan_in_progress():
-        async def _busy():
-            yield ('data: {"__error__":"A scan is already running -- wait for '
-                   'it to finish, then try again."}\n\n')
-        return StreamingResponse(_busy(), media_type="text/event-stream",
-                                 headers={"Cache-Control": "no-cache, no-transform",
-                                          "X-Accel-Buffering": "no"})
+    # Attach to a scan already running rather than refusing it. Refusing was
+    # reported as "error after error": the tab has no way to recover, and at
+    # two minutes a scan the window is wide enough to hit on every attempt.
+    session, q, joined = _attach_or_start(ticker_list)
 
-    import queue as _q
-    q: _q.Queue = _q.Queue()
-
-    def on_progress(info): q.put({"__progress__": True, **info})
-    def on_signal(sig):    q.put({"__signal__": True, "data": _serialize_flow(sig)})
-
-    def run():
-        try:
-            scan_options_flow(ticker_list, show_progress=False,
-                              on_signal=on_signal, on_progress=on_progress)
-        except Exception:
-            q.put({"__error__": "Scan failed -- check server logs"})
-        finally:
-            _active_scan.clear()
-            q.put({"__done__": True})
-
-    global _scan_started_at
-    _scan_started_at = time.monotonic()
     dropped = max(0, len(raw_tickers) - MAX_SCAN_TICKERS)
-
-    _active_scan.set()
-    try:
-        threading.Thread(target=run, daemon=True).start()
-    except Exception:
-        _active_scan.clear()
-        raise HTTPException(500, "Failed to start scan")
 
     _start = time.monotonic()
     # A 250-name scan at roughly a second a name, with headroom for a slow
@@ -725,6 +798,12 @@ async def api_flow(
 
     async def generate():
         import queue as _q2
+        if joined:
+            yield ('data: ' + json.dumps({
+                "__notice__": True,
+                "message": (f"Joined the scan already running over "
+                            f"{session.tickers} names."),
+            }) + '\n\n')
         if dropped:
             yield ('data: ' + json.dumps({
                 "__notice__": True,
@@ -842,7 +921,10 @@ async def api_scan(
         c = r.get("contract")
         rows.append({
             "ticker":     r["ticker"],
-            "sector":     TICKER_SECTOR.get(r["ticker"], "Other"),
+            # "Other" for 85% of rows was the sector column not working.
+            # sector_for reads the curated table, the constituent table and
+            # the resolved cache; "Unclassified" is honest about the rest.
+            "sector":     sector_for(r["ticker"]) or "Unclassified",
             "price":      round(r["price"], 2),
             "change_pct": round(r["change_pct"], 2),
             "rel_vol":    round(r["rel_vol"], 2),

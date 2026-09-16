@@ -38,18 +38,19 @@ def first_event(resp):
     return ""
 
 
-def test_a_second_scan_is_explained_inside_the_stream(client, app):
-    """Not a 503. The browser cannot see one, and the user is left staring at a
-    tab that claims the server is waking up."""
-    app._active_scan.set()
-    app._scan_started_at = time.monotonic()
-
-    with client.stream("GET", "/api/flow?tickers=NVDA") as r:
-        assert r.status_code == 200
-        assert "text/event-stream" in r.headers["content-type"]
-        body = first_event(r)
-    assert "__error__" in body
-    assert "already running" in body
+def test_a_second_scan_joins_rather_than_being_refused(app):
+    """This endpoint used to answer a second request with 503, and before that
+    with an in-stream error. Both were dead ends for the tab. It now joins the
+    running scan -- see test_flow_scan_sharing -- so the only thing left to
+    assert here is that nothing refuses it.
+    """
+    live = app._ScanSession(tickers=2)
+    app._scan_session = live
+    try:
+        session, q, joined = app._attach_or_start(["NVDA"])
+        assert joined is True and session is live
+    finally:
+        live.finish()
 
 
 def test_a_wedged_scan_does_not_lock_the_endpoint_forever(client, app, monkeypatch):

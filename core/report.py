@@ -13,6 +13,7 @@ from typing import Optional, List, Dict, Tuple
 import csv
 
 from core.constants import TICKER_SECTOR, _BASE_FIELDS, _TIER_COLORS
+from data.sector_map import sector_for
 from core.market_data import vix_delta_target
 from core.fmt import (
     color_change,
@@ -35,7 +36,7 @@ def print_sector_laggards(laggards: List[Dict], sector_data: Dict[str, Dict]) ->
     print(Fore.WHITE + Style.BRIGHT + "  SECTOR LAGGARDS  (catch-up plays)" + Style.RESET_ALL)
     rows = []
     for r in laggards:
-        sname = TICKER_SECTOR.get(r["ticker"], "?")
+        sname = sector_for(r["ticker"]) or "?"
         sd    = sector_data.get(sname, {})
         sec_chg = sd.get("change_pct", 0)
         lag_dir = "^CALLS" if r["lag_direction"] == "up" else "vPUTS"
@@ -345,7 +346,7 @@ def print_inline_laggards(results: List[Dict], sector_data: Dict[str, Dict], top
           + Fore.WHITE + "  (sector catch-up plays)" + Style.RESET_ALL)
     rows = []
     for r in lags:
-        sname   = TICKER_SECTOR.get(r["ticker"], "?")
+        sname   = sector_for(r["ticker"]) or "?"
         sd      = sector_data.get(sname, {})
         sec_chg = sd.get("change_pct", 0)
         sec_s   = (Fore.GREEN + f"+{sec_chg:.2f}%" + Style.RESET_ALL if sec_chg >= 0

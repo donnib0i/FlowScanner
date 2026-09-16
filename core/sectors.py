@@ -13,6 +13,7 @@ import time
 import sys
 
 from core.constants import SECTOR_ETFS, TICKER_SECTOR
+from data.sector_map import sector_for
 from core.market_data import (
     _extract_ticker_hist,
     _fetch_batch_history,
@@ -116,7 +117,7 @@ def find_sector_laggards(results: List[Dict], sector_data: Dict[str, Dict]) -> L
     laggards: List[Dict] = []
 
     for r in results:
-        sname = TICKER_SECTOR.get(r["ticker"])
+        sname = sector_for(r["ticker"])
         if not sname or sname not in strong_sectors:
             continue
 
