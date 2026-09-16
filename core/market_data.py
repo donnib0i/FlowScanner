@@ -58,8 +58,14 @@ _YF_TICKER_MAP: Dict[str, str] = {
 # Class shares are written BRK.B by every human and BRK-B by yfinance, and the
 # dotted form does not fail cleanly -- it raises out of fast_info with a
 # KeyError, so the whole surface came back "no spot price for BRK.B". Only a
-# single trailing letter is rewritten: exchange suffixes (.TO, .DE, .AX) keep
-# their dot, and those carry no US option chain anyway.
+# single trailing letter is rewritten; multi-letter exchange suffixes (.TO,
+# .DE, .AX) keep their dot and carry no US option chain anyway.
+#
+# Two single letters are venues rather than share classes -- .L is London and
+# .T is Tokyo -- and rewriting those would corrupt a symbol that was already
+# correct. They are excluded by name because there is no pattern that separates
+# VOD.L from BRK.B; it is a fact about Yahoo's namespace, not a rule.
+_VENUE_LETTERS = {"L", "T"}
 _CLASS_SHARE = re.compile(r"^([A-Z]{1,5})\.([A-Z])$")
 
 
@@ -68,7 +74,9 @@ def _yf_ticker(sym: str) -> str:
     if s in _YF_TICKER_MAP:
         return _YF_TICKER_MAP[s]
     m = _CLASS_SHARE.match(s)
-    return f"{m[1]}-{m[2]}" if m else sym
+    if m and m[2] not in _VENUE_LETTERS:
+        return f"{m[1]}-{m[2]}"
+    return sym
 
 
 def _yf(sym: str) -> yf.Ticker:

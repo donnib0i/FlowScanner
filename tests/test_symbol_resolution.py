@@ -34,11 +34,17 @@ def test_an_ordinary_ticker_is_untouched(sym):
     assert _yf_ticker(sym) == sym
 
 
-@pytest.mark.parametrize("sym", ["SHOP.TO", "BMW.DE", "BHP.AX", "VOD.L"])
-def test_an_exchange_suffix_keeps_its_dot(sym):
-    # .TO/.DE/.AX are how yfinance spells a listing venue, not a share class.
-    # Rewriting those would break the symbol; none carries a US option chain
-    # anyway, so there is nothing to gain by guessing.
+@pytest.mark.parametrize("sym", ["SHOP.TO", "BMW.DE", "BHP.AX"])
+def test_a_multi_letter_exchange_suffix_keeps_its_dot(sym):
+    # .TO/.DE/.AX spell a listing venue, not a share class. None carries a US
+    # option chain, so there is nothing to gain by guessing at them.
+    assert _yf_ticker(sym) == sym
+
+
+@pytest.mark.parametrize("sym", ["VOD.L", "7203.T"])
+def test_the_two_single_letter_venues_are_not_mistaken_for_share_classes(sym):
+    # .L is London and .T is Tokyo. No pattern separates VOD.L from BRK.B --
+    # it is a fact about Yahoo's namespace -- so they are excluded by name.
     assert _yf_ticker(sym) == sym
 
 

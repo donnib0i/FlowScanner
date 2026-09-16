@@ -1989,6 +1989,19 @@ function renderGexHead(d){
     // tick of each other, and a stat headed NQ beside a table headed MNQ reads
     // like the two disagree.
     const sel=gexContract()||{code:f.future,last:f.last};
+    // Net gamma is dollars of delta per 1% move. A futures trader hedges in
+    // contracts, not dollars, and one contract carries price x multiplier of
+    // notional -- so this is the same measurement in the unit the hedge is
+    // actually placed in. It is the only number on this screen that depends on
+    // the contract multiplier, which is the real difference between options on
+    // a future and options on shares.
+    const notional=(sel.last||f.last)*(sel.multiplier||0);
+    if(notional>0){
+      const lots=Math.abs(d.net_gex)/notional;
+      out+=gexStat('HEDGE /1% IN '+sel.code,
+                   lots>=1000?Math.round(lots).toLocaleString():lots.toFixed(1),
+                   d.net_gex>=0?'gex-pos':'gex-neg',' lots');
+    }
     out+=gexStat(sel.code+' LAST',(sel.last||f.last).toFixed(2),
                  f.change>=0?'gex-pos':'gex-neg',
                  ' '+(f.change>=0?'+':'')+f.change.toFixed(2))+
@@ -2057,6 +2070,17 @@ function renderGexProv(d){
   out+='Expiries: '+(p.expiries||[]).join(', ')+'.';
   const f=d.futures;
   if(f){
+    const sel=gexContract();
+    if(sel&&sel.multiplier)
+      out+='<br><b>Greeks</b> are Black&ndash;Scholes on the '+(d.symbol||'underlying')+
+           ' chain, because no option chain exists on the future itself. Black&ndash;76, '+
+           'the model for options ON a future, differs by less than 0.12% at the '+
+           '0&ndash;4 DTE used here &mdash; it discounts by e<sup>&minus;rT</sup> and '+
+           'takes the sensitivity against the futures price rather than spot, and both '+
+           'vanish at these tenors. What does not vanish is the contract size: an equity '+
+           'option carries 100 shares, one '+sel.code+' carries '+
+           gexSpec(sel.multiplier)+' a point, so the hedge is '+
+           gexDollars((sel.last||f.last)*sel.multiplier)+' of notional per lot.';
     out+='<br><b>'+f.future+' conversion</b> &times;'+f.ratio.toFixed(5)+
          (f.basis!=null?' ('+(f.basis>=0?'+':'')+f.basis.toFixed(2)+' pts)':'')+
          ', measured from the '+f.ratio_asof+' closes of '+f.name+' and the index '+
@@ -2079,21 +2103,35 @@ function renderGexProv(d){
   return out;
 }
 
-async function loadGEX(){
+async function loadGEX(attempt){
+  attempt = attempt||0;
   const btn=document.getElementById('gex-run-btn');
   const st=document.getElementById('gex-status');
   const sym=(document.getElementById('gex-sym').value||'SPX').trim().toUpperCase();
-  btn.disabled=true; btn.textContent='Building…';
-  st.style.display='block'; st.textContent='Fetching chains for '+sym+'...';
-  document.getElementById('gex-head').innerHTML='';
-  document.getElementById('gex-chart').innerHTML='';
-  document.getElementById('gex-prov').innerHTML='';
+  btn.disabled=true; btn.textContent=attempt?'Retrying…':'Building…';
+  st.style.display='block';
+  st.textContent=attempt?('Upstream was slow — retry '+attempt+' of 2 for '+sym)
+                        :('Fetching chains for '+sym+'...');
+  // The previous surface stays on screen until the new one is ready. Blanking
+  // all three panes first meant a failed lookup wiped a chart that was fine and
+  // left nothing to go back to.
   try{
     const r=await fetch(_pa('/api/gex?symbol='+encodeURIComponent(sym)));
     if(_handleAuth(r)) return;
     if(!r.ok){
+      // 502/503/504 out of the chain provider are transient far more often
+      // than not -- one retry turns most of them into a surface. A 4xx is the
+      // request being wrong and will stay wrong, so it is reported at once.
+      if(r.status>=500 && attempt<2){
+        btn.disabled=false;
+        return loadGEX(attempt+1);
+      }
       const msg=await r.json().catch(()=>({}));
-      st.textContent=(msg.detail||('Request failed ('+r.status+')'));
+      const detail=msg.detail||'';
+      st.textContent = detail ||
+        (r.status>=500 ? 'The chain provider did not answer for '+sym+
+                         '. It is usually back within a minute.'
+                       : 'Could not build '+sym+' ('+r.status+').');
       return;
     }
     const d=await r.json();
@@ -2125,6 +2163,9 @@ async function loadGEX(){
       return;
     }
     st.style.display='none';
+    document.getElementById('gex-head').innerHTML='';
+    document.getElementById('gex-chart').innerHTML='';
+    document.getElementById('gex-prov').innerHTML='';
     _gexData=d;
     // A symbol with no futures counterpart cannot stay switched to a unit it
     // does not have, and a contract code from the previous symbol's family
@@ -2139,7 +2180,8 @@ async function loadGEX(){
     }
     drawGex();
   }catch(e){
-    st.textContent='Could not build the surface.';
+    if(attempt<2){ btn.disabled=false; return loadGEX(attempt+1); }
+    st.textContent='No answer building '+sym+'. Check the connection and try again.';
   }finally{
     btn.disabled=false; btn.innerHTML='Build gamma surface';
   }
