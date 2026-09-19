@@ -245,7 +245,7 @@ async function doFlowScan(retryCount){
   const btn=document.getElementById('scan-btn');
   btn.textContent='Scanning '+n+'…';btn.className='scan-btn loading';
   const minScore=S.whale?60:40;
-  const url=_pa('/api/flow?tickers='+tickers+'&dte='+S.dte+'&min_score='+minScore);
+  let url=_pa('/api/flow?tickers='+tickers+'&dte='+S.dte+'&min_score='+minScore);
   // EventSource cannot send headers, so when a PIN is set the stream
   // authenticates with a single-use ticket instead. The PIN itself stays out of
   // the URL, the access log and browser history.
@@ -257,16 +257,22 @@ async function doFlowScan(retryCount){
   // "Server unavailable" at a server that was answering fine. The ticket call
   // is an ordinary fetch, so a 401 there surfaces the PIN prompt the way every
   // other tab does. With no PIN configured it simply returns a ticket.
+  //
+  // The ticket is appended OUTSIDE the try below. It used to be appended
+  // inside it, to a `const` -- which throws, and the catch was written to
+  // swallow network errors, so it swallowed that too. The stream then opened
+  // with no ticket and 401'd, and the tab reported the server as unavailable.
+  // It passed every local test because with no PIN configured the ticket is
+  // never checked; it failed on production from the day a PIN was set.
+  let ticket='';
   try{
     const tr=await fetch('/api/sse-ticket');
     // A prompt is not a scan. Leaving the button reading "Scanning 8..."
     // forever was the other half of this: the tab looked hung, not locked.
     if(_handleAuth(tr)){ endFlowScan(null); return; }
-    if(tr.ok){
-      const tj=await tr.json();
-      if(tj.ticket) url += (url.includes('?')?'&':'?')+'ticket='+encodeURIComponent(tj.ticket);
-    }
+    if(tr.ok) ticket=((await tr.json())||{}).ticket||'';
   }catch(e){ /* network, not auth: let the stream surface its own failure */ }
+  if(ticket) url+=(url.includes('?')?'&':'?')+'ticket='+encodeURIComponent(ticket);
   const es=new EventSource(url);
   let gotData=false;
   es.onmessage=function(e){
