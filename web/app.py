@@ -83,6 +83,13 @@ def _get_insider_universe() -> list:
 _PIN             = os.environ.get("SCANNER_PIN", "").strip()
 _REQUIRE_PIN     = os.environ.get("SCANNER_REQUIRE_PIN", "").strip() in ("1", "true", "yes")
 _ALLOW_PIN_QUERY = os.environ.get("SCANNER_ALLOW_PIN_QUERY", "").strip() in ("1", "true", "yes")
+# Owner-only mode. Sign-ups close, existing account sessions stop counting as
+# a way in, and the gate says the scanner is being updated rather than that it
+# is private. The PIN is the only key. Flip it off to reopen -- nothing is
+# deleted, the accounts table just stops being consulted while it is on.
+_OWNER_ONLY      = os.environ.get("SCANNER_OWNER_ONLY", "").strip() in ("1", "true", "yes")
+_UPDATING_NOTICE = ("Scanner Pro is being updated. It will be back shortly "
+                    "&mdash; check again in a little while.")
 # Number of trusted proxies appending to X-Forwarded-For. Production sits behind
 # a CDN edge *and* Railway's proxy, so the chain is [real_client, cdn_edge] and
 # the real caller is the 2nd entry from the right. With this at 1 the limiter
@@ -366,7 +373,8 @@ def _check_pin(req: Request):
     # A signed session cookie is the normal way in for everyone who is not
     # Dante. The PIN stays as the owner's key: it is how he reaches the admin
     # routes and how he gets in on a machine that has never seen a magic link.
-    if _account_email(req):
+    # In owner-only mode the cookie proves nothing: the PIN is the only key.
+    if not _OWNER_ONLY and _account_email(req):
         return
     supplied = req.headers.get("x-pin", "").strip()
     if not supplied:
@@ -1629,6 +1637,11 @@ async def api_join(req: Request):
     already a member: a join form that says "you already have an account" is a
     membership oracle for anyone who can guess addresses.
     """
+    if _OWNER_ONLY:
+        # Refused before a link is minted or a mail is sent, so a closed door
+        # does not still fill the accounts table with people who cannot get in.
+        raise HTTPException(503, "Scanner Pro is being updated and is not taking "
+                                 "new sign-ups right now. Check back shortly.")
     if _accounts is None:
         raise HTTPException(503, "Accounts are not available")
     # Two limits, because they stop different things. The per-IP limit is loose
@@ -1689,6 +1702,10 @@ async def api_auth(req: Request, token: str = ""):
 
 @app.get("/join", response_class=HTMLResponse)
 async def join_page():
+    if _OWNER_ONLY:
+        return HTMLResponse(_JOIN_PAGE.replace(
+            "{{NOTICE}}", f'<div class="notice updating">{_UPDATING_NOTICE}</div>'
+                          '<style>#f,h1,.card>p{display:none}</style>'))
     return HTMLResponse(_JOIN_PAGE.replace("{{NOTICE}}", ""))
 
 
@@ -1784,7 +1801,9 @@ async def api_admin_user_delete(req: Request):
 
 @app.get("/", response_class=HTMLResponse)
 async def root():
-    return HTML
+    # The gate is drawn client-side on the first 401, so the page carries the
+    # mode with it rather than making the gate guess from a status code.
+    return HTML.replace("__OWNER_ONLY__", "true" if _OWNER_ONLY else "false", 1)
 
 # HTML is stored in a separate variable below
 # ---- Page source ------------------------------------------------------------

@@ -2,6 +2,9 @@
 <html lang="en">
 <head>
 <script>
+  /* Owner-only mode, stamped in by the server: the gate reads it to say
+     "being updated" rather than "private", and to hide sign-up. */
+  window.__OWNER_ONLY = __OWNER_ONLY__;
   /* Applied before first paint. Left to the main script the page would render
      one scheme and then swap to the stored one on every load. */
   (function(){var v='color';try{v=localStorage.getItem('scanner_scheme')||'color'}catch(e){}

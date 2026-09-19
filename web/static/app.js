@@ -45,13 +45,19 @@ window.fetch = (input, init) => {
 // to go, and the owner still needs a way in that does not involve email.
 function _promptPin(msg){
   if(document.getElementById('gate')) return;
+  // Owner-only: the door is closed for an update, not locked against you. Say
+  // that, and do not offer a sign-up that would be refused.
+  const updating=!!window.__OWNER_ONLY;
+  if(updating) msg='Scanner Pro is being updated. It will be back shortly '+
+                   '&mdash; check again in a little while.';
   const g=document.createElement('div');
   g.id='gate';
   g.innerHTML=
     '<div class="gate-card">'+
       '<div class="gate-mark">SCANNER<span>PRO</span></div>'+
+      (updating?'<div class="gate-updating"><span class="dot"></span>UPDATING</div>':'')+
       '<div class="gate-msg">'+(msg||'This scanner is private.')+'</div>'+
-      '<a class="gate-go" href="/join">Request access</a>'+
+      (updating?'':'<a class="gate-go" href="/join">Request access</a>')+
       '<button class="gate-alt" id="gate-pin">Owner sign-in</button>'+
       '<div class="gate-pinrow" id="gate-pinrow" hidden>'+
         '<input id="gate-pinin" type="password" inputmode="numeric" '+

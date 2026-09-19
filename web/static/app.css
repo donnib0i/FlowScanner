@@ -609,6 +609,13 @@ th.sortable .arr{font-size:8px;margin-left:3px}
   border:1px solid var(--line);border-radius:12px;color:var(--t2);font-family:var(--ui);
   font-size:13px;font-weight:500;cursor:pointer;transition:all .18s var(--ease)}
 .gate-alt:hover{border-color:var(--line2);color:var(--t1)}
+.gate-updating{display:inline-flex;align-items:center;gap:8px;font-size:9px;
+  letter-spacing:1.2px;color:var(--t1);border:1px solid var(--line2);border-radius:999px;
+  padding:6px 12px 6px 10px;margin-bottom:16px}
+.gate-updating .dot{width:7px;height:7px;border-radius:50%;background:var(--up);
+  animation:gatePulse 1.6s ease-in-out infinite}
+@keyframes gatePulse{0%,100%{opacity:1}50%{opacity:.25}}
+@media (prefers-reduced-motion:reduce){.gate-updating .dot{animation:none}}
 .gate-pinrow{display:flex;gap:8px;margin-top:10px}
 .gate-pinrow input{flex:1;min-width:0;background:transparent;border:1px solid var(--line);
   border-radius:12px;color:var(--t1);font-family:var(--num);font-size:15px;
