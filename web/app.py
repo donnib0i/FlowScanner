@@ -386,7 +386,13 @@ def _check_pin(req: Request):
         supplied = req.query_params.get("pin", "").strip()
     if not hmac.compare_digest(supplied.encode("utf-8", errors="replace"),
                                _PIN.encode("utf-8")):
-        if not _rl.allow(f"{ip}:auth_fail", 10, 300):
+        # Only a WRONG pin is a guess. A missing one is a visitor who has not
+        # signed in yet -- and the page polls several endpoints on load, so
+        # counting those 401s burned the whole brute-force allowance in
+        # seconds and turned the gate into a wall of 429s that the gate does
+        # not draw itself over. The limiter exists to slow an attacker down,
+        # not to lock out someone who has not typed anything.
+        if supplied and not _rl.allow(f"{ip}:auth_fail", 10, 300):
             raise HTTPException(429, detail="Too many failed attempts -- try later",
                                 headers={"Retry-After": "300"})
         raise HTTPException(401, "Unauthorized")

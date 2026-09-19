@@ -111,3 +111,35 @@ def test_the_gate_says_updating_and_hides_sign_up_when_owner_only():
     assert "(updating?'':'<a class=\"gate-go\" href=\"/join\">" in body
     # owner sign-in is unconditional -- Dante still needs a way in
     assert "'<button class=\"gate-alt\" id=\"gate-pin\">Owner sign-in</button>'" in body
+
+
+# ── a visitor who has not signed in is not a brute-forcer ────────────────────
+def test_a_missing_pin_does_not_burn_the_brute_force_allowance(app_in):
+    # The page polls several endpoints on load. Counting a MISSING pin as a
+    # failed guess locked every visitor out within seconds of arriving, and
+    # the lockout is a 429 the gate did not draw itself over -- so instead of
+    # "being updated" they saw a dead page.
+    m, c = app_in(owner_only=True)
+    for _ in range(25):
+        assert c.get("/api/vix").status_code == 401, "a missing pin was rate-limited"
+
+
+def test_a_wrong_pin_still_is(app_in):
+    m, c = app_in(owner_only=True)
+    codes = [c.get("/api/vix", headers={"X-Pin": "000000"}).status_code for _ in range(12)]
+    assert 429 in codes, "wrong-pin guesses are no longer throttled"
+
+
+def test_the_right_pin_works_during_someone_elses_lockout(app_in):
+    # The limiter must never be a way to lock the owner out.
+    m, c = app_in(owner_only=True)
+    for _ in range(12):
+        c.get("/api/vix", headers={"X-Pin": "000000"})
+    assert c.get("/api/vix", headers={"X-Pin": "213085"}).status_code != 401
+
+
+def test_the_gate_is_drawn_over_a_lockout_too():
+    js = open("web/static/app.js").read()
+    body = js.split("function _handleAuth(resp){")[1].split("\n}\n")[0]
+    assert "429" in body and "_promptPin(" in body.split("429")[1], \
+        "a 429 on auth leaves the visitor with a dead page"

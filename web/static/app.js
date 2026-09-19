@@ -88,6 +88,11 @@ function _handleAuth(resp){
     _promptPin('This scanner is private. Request access, or sign in as the owner.');
     return true;
   }
+  // A locked-out visitor still needs a door to look at, not a dead page.
+  if(resp.status === 429 && !PIN){
+    _promptPin('Too many sign-in attempts from this connection. Wait a few minutes and try again.');
+    return true;
+  }
   return false;
 }
 
