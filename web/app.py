@@ -705,6 +705,45 @@ async def api_vix(req: Request):
     return {"vix": round(vix, 2), "delta_target": round(tgt, 3), "regime": reg,
             "ts": datetime.now().strftime("%H:%M:%S")}
 
+@app.get("/api/bars")
+async def api_bars(req: Request, symbol: str = "SPX", interval: str = "1m"):
+    """
+    Today's session for the chart beside the flow feed. Measured freshness:
+    the response says when its last bar printed and how long ago that was,
+    and the chart repeats it rather than claiming "live".
+    """
+    _check_pin(req)
+    _check_rate(req, "bars", limit=40, window=60)
+    from core.bars import chart_symbol, session_bars
+    interval = _validate_enum(interval, {"1m", "2m", "5m"}, "interval")
+    # A futures code is normalised before validation, so /ES and ES=F work
+    # without widening the ticker pattern to accept "/" and "=".
+    _, label = chart_symbol(symbol)
+    symbol = _validate_ticker(label)
+
+    # Twenty seconds: a chart polling every thirty never fetches the same
+    # session twice for nothing, and a bar is a minute wide anyway.
+    key = f"bars:{symbol}:{interval}"
+    hit = _cache.get(key)
+    if hit is not None:
+        return hit
+    loop = asyncio.get_event_loop()
+
+    def _build():
+        try:
+            return session_bars(symbol, interval)
+        except ValueError as e:
+            raise HTTPException(503, str(e))
+
+    with contextlib.redirect_stdout(io.StringIO()):
+        try:
+            data = await asyncio.wait_for(loop.run_in_executor(None, _build), timeout=30.0)
+        except asyncio.TimeoutError:
+            raise HTTPException(504, "Bars timed out")
+    _cache.set(key, data, ttl_secs=20)
+    return data
+
+
 @app.get("/api/status")
 async def api_status(req: Request):
     _check_pin(req)

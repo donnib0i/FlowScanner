@@ -679,3 +679,54 @@ th.sortable .arr{font-size:8px;margin-left:3px}
 .scheme-btn i.a{background:var(--up)}
 .scheme-btn i.b{background:var(--dn)}
 .scheme-btn span{font-size:8px;letter-spacing:.6px;color:var(--t3);margin-left:2px}
+
+/* ── Session chart beside the flow feed ────────────────────────────────────
+   One column on a phone -- the chart sits above the feed and folds away --
+   and two columns from 900px, where "beside" is literal: the chart is a sticky
+   left rail and the feed scrolls next to it. */
+.flow-layout{display:block}
+.flow-side{background:var(--s1);border-bottom:1px solid var(--line);
+  display:flex;flex-direction:column}
+.chart-head{display:flex;align-items:center;gap:8px;padding:8px 12px;min-height:36px;
+  font-family:var(--num);font-size:11px}
+.chart-sym{font-family:var(--num);font-weight:600;font-size:12px;letter-spacing:.3px;
+  color:var(--t1);background:var(--s2);border:1px solid var(--line);border-radius:6px;
+  padding:4px 9px;cursor:pointer;min-height:26px}
+.chart-sym:active{background:var(--s3)}
+.chart-last{font-weight:600;color:var(--t1);font-variant-numeric:tabular-nums}
+.chart-chg{font-size:10px;font-variant-numeric:tabular-nums}
+.chart-fresh{margin-left:auto;font-family:var(--ui);font-size:9px;color:var(--t3);
+  letter-spacing:.2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.chart-lvl{font-family:var(--ui);font-size:9px;letter-spacing:.6px;text-transform:uppercase;
+  color:var(--t2);background:transparent;border:1px solid var(--line);border-radius:6px;
+  padding:4px 8px;cursor:pointer;min-height:26px;flex-shrink:0}
+.chart-lvl:disabled{opacity:.5;cursor:default}
+.chart-fold{background:transparent;border:none;color:var(--t2);font-size:14px;
+  cursor:pointer;padding:0 2px;line-height:1;flex-shrink:0}
+.chart-body{height:170px;position:relative;overflow:hidden}
+.flow-side.folded .chart-body{display:none}
+.chart-empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+  font-size:10px;color:var(--t3);padding:0 16px;text-align:center}
+
+/* The drawing. Every colour goes through a token so both schemes work. */
+.ch-wick{stroke-width:1}
+.ch-wick.up{stroke:var(--up)}.ch-wick.dn{stroke:var(--dn)}
+.ch-body.up{fill:var(--up)}.ch-body.dn{fill:var(--dn)}
+.ch-rule{stroke-width:1}
+.ch-lbl{font-family:var(--num);font-size:8px}
+.ch-pc{stroke:var(--t3);fill:var(--t3)}
+.ch-vwap{stroke:var(--m4);fill:var(--m4);opacity:.9}
+.ch-cw{stroke:var(--up);fill:var(--up)}
+.ch-pw{stroke:var(--dn);fill:var(--dn)}
+.ch-flip{stroke:var(--lvl-flip);fill:var(--lvl-flip)}
+.ch-flip.unstable{opacity:.35}
+.ch-last{stroke:var(--lvl-spot);fill:var(--lvl-spot);stroke-width:1}
+.ch-time{font-family:var(--num);font-size:8px;fill:var(--t3)}
+
+@media (min-width:900px){
+  .flow-layout{display:grid;grid-template-columns:minmax(360px,42%) 1fr;align-items:start}
+  .flow-side{position:sticky;top:0;border-bottom:none;border-right:1px solid var(--line);
+    height:calc(100dvh - 140px);min-height:420px}
+  .chart-body{flex:1;height:auto}
+  .flow-side.folded{height:auto}
+}

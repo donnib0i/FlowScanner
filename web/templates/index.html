@@ -47,6 +47,22 @@
 </div>
 <div id="content">
   <div class="tab-pane active" id="tab-flow">
+  <div class="flow-layout">
+    <aside class="flow-side" id="flow-side">
+      <div class="chart-head">
+        <button class="chart-sym" id="chart-sym" onclick="chartPromptSymbol()"
+          title="Change chart symbol">SPX</button>
+        <span class="chart-last" id="chart-last">&mdash;</span>
+        <span class="chart-chg" id="chart-chg"></span>
+        <span class="chart-fresh" id="chart-fresh"></span>
+        <button class="chart-lvl" id="chart-lvl" onclick="chartLoadLevels()"
+          title="Draw the gamma levels on the chart">Levels</button>
+        <button class="chart-fold" id="chart-fold" onclick="chartToggle()"
+          aria-label="Collapse chart">&#8963;</button>
+      </div>
+      <div class="chart-body" id="chart-body"></div>
+    </aside>
+    <div class="flow-main">
     <div class="filter-bar">
       <button class="chip" id="c-dte" onclick="tDte()">0DTE</button>
       <button class="chip" id="c-whale" onclick="tWhale()">Whale+</button>
@@ -87,6 +103,8 @@
       </div>
     </div>
     <div id="hot-feed" style="display:none"></div>
+      </div>
+  </div>
   </div>
   <div class="tab-pane" id="tab-scan">
     <div class="scan-controls">

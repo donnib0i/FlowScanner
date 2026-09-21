@@ -306,3 +306,36 @@ def test_dealer_sign_is_inferred_from_the_chain_by_default():
     d = get()
     assert d["provenance"]["inferred_pct"] > 0, \
         "sign inference is wired but produced nothing"
+
+
+# ── /api/bars ─────────────────────────────────────────────────────────────────
+def _stub_bars(monkeypatch):
+    import core.bars
+    monkeypatch.setattr(core.bars, "session_bars", lambda sym, interval="1m": {
+        "symbol": sym, "yf_symbol": sym, "interval": interval, "session": "2026-09-19",
+        "bars": [{"t": 1, "o": 1, "h": 1, "l": 1, "c": 1, "v": 1}], "prev_close": 1.0,
+        "vwap": 1.0, "last": 1.0, "asof": "2026-09-19T13:30:00+00:00", "lag_min": 3.0,
+        "source": "yfinance"})
+
+
+def test_bars_normalises_a_futures_code_before_validating(monkeypatch):
+    _stub_bars(monkeypatch)
+    webapp._cache._store.clear() if hasattr(webapp._cache, "_store") else None
+    for typed, label in (("/ES", "ES"), ("MNQ=F", "MNQ"), ("mnq", "MNQ")):
+        r = client.get(f"/api/bars?symbol={typed}")
+        assert r.status_code == 200, r.text
+        assert r.json()["symbol"] == label
+    assert client.get("/api/bars?symbol=A/B").status_code == 400
+
+
+def test_bars_refuses_an_interval_it_did_not_offer(monkeypatch):
+    _stub_bars(monkeypatch)
+    assert client.get("/api/bars?symbol=SPX&interval=7m").status_code == 400
+    assert client.get("/api/bars?symbol=SPX&interval=5m").status_code == 200
+
+
+def test_bars_carries_its_own_freshness(monkeypatch):
+    _stub_bars(monkeypatch)
+    d = client.get("/api/bars?symbol=QQQ").json()
+    for k in ("asof", "lag_min", "source", "prev_close", "vwap", "last"):
+        assert k in d, f"missing {k}"

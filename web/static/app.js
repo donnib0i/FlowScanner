@@ -213,6 +213,8 @@ function showTab(n,btn){
   document.getElementById('tab-'+n).classList.add('active');
   btn.classList.add('active');
   if(n!=='flow') document.getElementById('flow-bar').classList.remove('on');
+  // The chart polls only while it can be seen.
+  if(n==='flow') chartStart(); else chartStop();
 }
 
 const dteOpts=['swing','7dte','0dte','all'];
@@ -503,6 +505,11 @@ function renderFlowCard(s){
   const tickEl=document.createElement('div');
   tickEl.className='card-ticker';
   tickEl.textContent=s.ticker+(s.hits>1?' x'+s.hits:'');
+  // The ticker itself charts the name; the rest of the head still opens the
+  // detail, so seeing the print and seeing the tape are one tap apart.
+  tickEl.title='Chart '+s.ticker;
+  tickEl.onclick=function(e){ e.stopPropagation(); chartSetSymbol(s.ticker);
+    document.getElementById('flow-side').scrollIntoView({block:'nearest',behavior:'smooth'}); };
   const subEl=document.createElement('div');
   subEl.className='card-sub';
   subEl.style.color=s.bias==='call'?'var(--green)':'var(--red)';
@@ -1704,6 +1711,201 @@ async function loadUOA(force){
     btn.disabled=false; btn.textContent='▶ SCAN UNUSUAL FLOW';
   }
 }
+
+// ─── Session chart beside the flow feed ──────────────────────────────────────
+// Today's one-minute candles for one symbol, with the levels a 0DTE read is
+// made against drawn on top: prior close, VWAP, and -- once a gamma surface
+// has been built for the same symbol -- the call wall, put wall and flip.
+//
+// It never says "live". Every response carries the timestamp of its last bar,
+// and the header repeats the lag as measured, because the feed on this
+// deployment is delayed and a chart that hides that is a chart you size a
+// position against wrongly.
+const CH={sym:'SPX', data:null, timer:null, folded:false, levels:null};
+
+function chartSetSymbol(sym){
+  sym=(sym||'').trim().toUpperCase(); if(!sym) return;
+  CH.sym=sym; CH.levels=null;
+  document.getElementById('chart-sym').textContent=sym;
+  loadChart();
+}
+
+function chartPromptSymbol(){
+  const v=prompt('Chart symbol', CH.sym);
+  if(v) chartSetSymbol(v);
+}
+
+function chartToggle(){
+  CH.folded=!CH.folded;
+  document.getElementById('flow-side').classList.toggle('folded', CH.folded);
+  document.getElementById('chart-fold').innerHTML=CH.folded?'&#8964;':'&#8963;';
+  try{ localStorage.setItem('scanner_chart_folded', CH.folded?'1':''); }catch(e){}
+  if(!CH.folded) loadChart();
+}
+
+// The chart draws the gamma levels only when the surface it has was measured
+// for the same symbol; MNQ resolves to NDX, so the comparison is against what
+// the surface says it measured, not what was typed.
+function chartLevelsFor(sym){
+  if(!_gexData) return null;
+  const want=(sym||'').toUpperCase();
+  const measured=(_gexData.symbol||'').toUpperCase();
+  const asked=(_gexData.requested||'').toUpperCase();
+  if(want!==measured && want!==asked) return null;
+  // Levels are on the measured chain; a futures chart needs them in contract
+  // prices, which is what the ratio is for.
+  const f=_gexData.futures;
+  const isFut=f&&f.contracts&&f.contracts.some(c=>c.code===want);
+  const r=isFut?f.ratio:1;
+  return {call_wall:_gexData.call_wall!=null?_gexData.call_wall*r:null,
+          put_wall:_gexData.put_wall!=null?_gexData.put_wall*r:null,
+          flip:_gexData.flip!=null?_gexData.flip*r:null,
+          flip_stable:!!(_gexData.provenance&&_gexData.provenance.flip_stable)};
+}
+
+async function chartLoadLevels(){
+  const btn=document.getElementById('chart-lvl');
+  btn.disabled=true; btn.textContent='Building…';
+  try{
+    const r=await fetch(_pa('/api/gex?symbol='+encodeURIComponent(CH.sym)));
+    if(_handleAuth(r)) return;
+    if(r.ok){ const d=await r.json(); if(d.provenance&&d.provenance.oi_usable) _gexData=d; }
+  }catch(e){}
+  finally{ btn.disabled=false; btn.textContent='Levels'; }
+  if(CH.data) renderChart(CH.data);
+}
+
+// One-minute bars are the right resolution on a wide screen and a smear on a
+// phone: 390 of them in 370px is under a pixel each, and a candle you cannot
+// see is a line chart that costs more. Aim for about four pixels a bar.
+function chartInterval(){
+  const w=(document.getElementById('chart-body')||{}).clientWidth||320;
+  return w>=1200?'1m':(w>=640?'2m':'5m');
+}
+
+async function loadChart(){
+  if(CH.folded) return;
+  try{
+    const r=await fetch(_pa('/api/bars?symbol='+encodeURIComponent(CH.sym)+'&interval='+chartInterval()));
+    if(_handleAuth(r)) return;
+    if(!r.ok){
+      const m=await r.json().catch(()=>({}));
+      document.getElementById('chart-body').innerHTML=
+        '<div class="chart-empty">'+(m.detail||('No chart for '+CH.sym))+'</div>';
+      document.getElementById('chart-fresh').textContent='';
+      return;
+    }
+    CH.data=await r.json();
+    renderChart(CH.data);
+  }catch(e){
+    document.getElementById('chart-body').innerHTML='<div class="chart-empty">Chart unavailable.</div>';
+  }
+}
+
+function chartFreshness(d){
+  const lag=d.lag_min, t=new Date(d.asof);
+  const hm=t.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',hour12:false,timeZone:'America/New_York'});
+  if(lag<2) return 'last bar '+hm+' ET';
+  if(lag<90) return 'last bar '+hm+' ET · '+Math.round(lag)+' min ago';
+  return 'closed · last bar '+hm+' ET';
+}
+
+function renderChart(d){
+  const body=document.getElementById('chart-body');
+  const W=Math.max(280,body.clientWidth||320), H=CH.folded?0:(body.clientHeight||170);
+  const bars=d.bars; if(!bars||!bars.length){ body.innerHTML='<div class="chart-empty">No bars yet.</div>'; return; }
+  const lv=chartLevelsFor(d.symbol); CH.levels=lv;
+
+  // Header: last, change from prior close, freshness.
+  const last=d.last, pc=d.prev_close;
+  document.getElementById('chart-last').textContent=last.toFixed(2);
+  const chg=document.getElementById('chart-chg');
+  if(pc){ const c=last-pc; chg.textContent=(c>=0?'+':'')+c.toFixed(2)+' ('+((c/pc)*100).toFixed(2)+'%)';
+          chg.className='chart-chg '+(c>=0?'gex-pos':'gex-neg'); }
+  else { chg.textContent=''; }
+  document.getElementById('chart-fresh').textContent=chartFreshness(d);
+  if(CH.folded) return;
+
+  // Price range covers the bars and every level that will be drawn, so a wall
+  // outside today's range still lands on the canvas instead of being clipped.
+  let lo=Infinity, hi=-Infinity;
+  bars.forEach(b=>{ if(b.l<lo)lo=b.l; if(b.h>hi)hi=b.h; });
+  [pc, d.vwap, lv&&lv.call_wall, lv&&lv.put_wall, lv&&lv.flip].forEach(v=>{
+    if(v!=null&&isFinite(v)){ if(v<lo)lo=v; if(v>hi)hi=v; }
+  });
+  const pad=(hi-lo)*0.06||1; lo-=pad; hi+=pad;
+
+  const padL=6, padR=52, padT=8, padB=18;
+  const plotW=W-padL-padR, plotH=H-padT-padB;
+  const n=bars.length, slot=plotW/Math.max(n,1);
+  const x=i=>padL+i*slot+slot/2;
+  const y=v=>padT+(hi-v)/(hi-lo)*plotH;
+  const cw=Math.max(1,Math.min(6,slot*0.7));
+
+  let svg='<svg width="'+W+'" height="'+H+'" viewBox="0 0 '+W+' '+H+'" style="display:block" role="img" aria-label="'+d.symbol+' session chart">';
+
+  // Horizontal rules: measured levels only, each named where it sits.
+  const rule=(v,cls,lbl,dash)=>{
+    if(v==null||!isFinite(v)) return '';
+    const yy=y(v).toFixed(1);
+    return '<line x1="'+padL+'" y1="'+yy+'" x2="'+(W-padR)+'" y2="'+yy+'" class="ch-rule '+cls+'"'+
+           (dash?' stroke-dasharray="3 3"':'')+'/>'+
+           '<text x="'+(W-padR+4)+'" y="'+(+yy+3)+'" class="ch-lbl '+cls+'">'+lbl+'</text>';
+  };
+  if(pc) svg+=rule(pc,'ch-pc','PC '+pc.toFixed(2),true);
+  if(d.vwap) svg+=rule(d.vwap,'ch-vwap','VWAP',false);
+  if(lv){
+    if(lv.call_wall!=null) svg+=rule(lv.call_wall,'ch-cw','CW '+lv.call_wall.toFixed(2),false);
+    if(lv.put_wall!=null)  svg+=rule(lv.put_wall,'ch-pw','PW '+lv.put_wall.toFixed(2),false);
+    // An unstable flip is drawn faint: the tab already says it is an artifact
+    // of where spot sits, and the chart should not make it look like a level.
+    if(lv.flip!=null) svg+=rule(lv.flip,'ch-flip'+(lv.flip_stable?'':' unstable'),'FLIP '+lv.flip.toFixed(2),true);
+  }
+
+  // Candles.
+  bars.forEach((b,i)=>{
+    const up=b.c>=b.o, cx=x(i);
+    const yo=y(b.o), yc=y(b.c), top=Math.min(yo,yc), h=Math.max(1,Math.abs(yo-yc));
+    svg+='<line x1="'+cx.toFixed(1)+'" y1="'+y(b.h).toFixed(1)+'" x2="'+cx.toFixed(1)+'" y2="'+y(b.l).toFixed(1)+
+         '" class="ch-wick '+(up?'up':'dn')+'"/>';
+    svg+='<rect x="'+(cx-cw/2).toFixed(1)+'" y="'+top.toFixed(1)+'" width="'+cw.toFixed(1)+'" height="'+h.toFixed(1)+
+         '" class="ch-body '+(up?'up':'dn')+'"/>';
+  });
+
+  // Last price, always on top.
+  svg+=rule(last,'ch-last',last.toFixed(2),false);
+
+  // Time axis: three ticks is enough to orient on a 6.5 hour session.
+  const tk=[0,Math.floor(n/2),n-1];
+  tk.forEach(i=>{
+    const t=new Date(bars[i].t*1000).toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',hour12:false,timeZone:'America/New_York'});
+    svg+='<text x="'+x(i).toFixed(1)+'" y="'+(H-4)+'" class="ch-time" text-anchor="'+(i===0?'start':i===n-1?'end':'middle')+'">'+t+'</text>';
+  });
+  svg+='</svg>';
+  body.innerHTML=svg;
+}
+
+// Poll while the flow tab is visible and the page is in the foreground. A
+// background tab hitting the server every 30 seconds is cost for nothing.
+function chartStart(){
+  chartStop();
+  loadChart();
+  CH.timer=setInterval(()=>{ if(document.visibilityState==='visible'&&!CH.folded) loadChart(); },30000);
+}
+function chartStop(){ if(CH.timer){ clearInterval(CH.timer); CH.timer=null; } }
+
+document.addEventListener('DOMContentLoaded',function(){
+  try{ if(localStorage.getItem('scanner_chart_folded')==='1'){ CH.folded=true;
+       document.getElementById('flow-side').classList.add('folded');
+       document.getElementById('chart-fold').innerHTML='&#8964;'; } }catch(e){}
+  chartStart();
+});
+window.addEventListener('resize',()=>{
+  if(!CH.data||CH.folded) return;
+  // A width change that crosses an interval boundary needs new bars, not a
+  // redraw of the old ones at the wrong density.
+  if(chartInterval()!==CH.data.interval) loadChart(); else renderChart(CH.data);
+});
 
 // ─── GEX: dealer gamma exposure ─────────────────────────────────────────────
 // Measured quantities only. Nothing here says where price is going, because
