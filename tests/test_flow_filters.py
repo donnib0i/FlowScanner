@@ -27,7 +27,9 @@ def _run(state, signal):
     node = shutil.which("node")
     if not node:
         pytest.skip("node not installed — predicate behaviour unverified")
-    block = "const FLOW_FILTERS={" + JS.split("const FLOW_FILTERS={")[1].split("\n};")[0] + "\n};"
+    # The predicates read the swing window constants declared just above them.
+    consts = "".join(l + "\n" for l in JS.splitlines() if l.startswith("const SWING_DTE_"))
+    block = consts + "const FLOW_FILTERS={" + JS.split("const FLOW_FILTERS={")[1].split("\n};")[0] + "\n};"
     fn    = "function flowPasses(s){" + JS.split("function flowPasses(s){")[1].split("\n}")[0] + "\n}"
     src = (f"const S={json.dumps(state)};\n{block}\n{fn}\n"
            f"process.stdout.write(String(flowPasses({json.dumps(signal)})));")
@@ -65,13 +67,19 @@ def test_a_golden_sweep_counts_as_a_sweep():
     assert _run(_state(fSweeps=True), _s(has_sweep=False, golden=True))
 
 
-def test_0dte_and_swing_are_opposite_halves():
-    """Every dated signal lands in exactly one of the two — no silent gap."""
-    for dte in (0, 1, 7, 45):
-        in_0dte  = _run(_state(fDte="0dte"),  _s(dte=dte))
-        in_swing = _run(_state(fDte="swing"), _s(dte=dte))
-        assert in_0dte != in_swing, f"{dte}DTE fell into both or neither"
+def test_swing_is_the_7_to_45_day_window():
+    """Swing used to mean "anything that is not 0DTE", which admitted a 1-DTE
+    lotto ticket. A swing is held across days to weeks: 7-45 DTE. The gap
+    between 0DTE and 7 DTE is deliberate -- those are weeklies, a third trade."""
+    for dte in (7, 21, 45):
+        assert _run(_state(fDte="swing"), _s(dte=dte)), f"{dte}DTE should be a swing"
+    for dte in (0, 1, 6, 46, 90):
+        assert not _run(_state(fDte="swing"), _s(dte=dte)), f"{dte}DTE is not a swing"
+
+
+def test_0dte_is_exactly_today():
     assert _run(_state(fDte="0dte"), _s(dte=0))
+    assert not _run(_state(fDte="0dte"), _s(dte=1))
 
 
 def test_min_premium_is_a_floor_not_a_ceiling():

@@ -14,6 +14,7 @@ import math
 import pandas as pd
 
 from core.constants import (
+    SWING_DTE_MIN, SWING_DTE_MAX,
     DEEP_ITM_PCT,
     DEEP_ITM_VOL,
     LADDER_DELTA_MAX,
@@ -395,7 +396,7 @@ def get_best_contract(ticker: str, direction: str, price: float,
                       target_price: float = 0.0) -> Optional[Dict]:
     """
     direction: "up" → calls, "down" → puts.
-    dte_mode: "0dte" (same-day only), "weekly" (2–7 DTE), "monthly" (8–45 DTE), "all" (no constraint)
+    dte_mode: "0dte" (same-day only), "weekly" (2–7 DTE), "swing" (7–45 DTE), "all" (no constraint)
     VIX is used to set the ideal delta target (high VIX → further OTM).
     Returns the contract with the best composite score or None.
     """
@@ -435,8 +436,11 @@ def get_best_contract(ticker: str, direction: str, price: float,
                 [e for e in future if 2 <= dte(e) <= 7]
                 or [e for e in future if dte(e) <= 14]
             )
-        elif dte_mode == "monthly":
-            cands = [e for e in future if 8 <= dte(e) <= 45]
+        elif dte_mode in ("swing", "monthly"):
+            # A swing is held across days to weeks. 7-45 DTE gives it time to
+            # work without paying monthly-plus theta; the fallback widens to 90
+            # rather than collapsing to a weekly, which is a different trade.
+            cands = [e for e in future if SWING_DTE_MIN <= dte(e) <= SWING_DTE_MAX]
             if not cands:
                 cands = [e for e in future if dte(e) <= 90]
         else:  # "all" — no constraint
@@ -447,7 +451,7 @@ def get_best_contract(ticker: str, direction: str, price: float,
             cands = list(exps[:2])
 
         # Base delta target varies by DTE mode; VIX further adjusts within each mode
-        _mode_delta = {"0dte": 0.20, "weekly": 0.25, "monthly": 0.30, "all": 0.35}
+        _mode_delta = {"0dte": 0.20, "weekly": 0.25, "swing": 0.30, "monthly": 0.30, "all": 0.35}
         target_delta = _mode_delta.get(dte_mode, 0.35)
         # Apply VIX overlay only if VIX is known and moves the target further OTM
         vix_dt = vix_delta_target(vix)

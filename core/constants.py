@@ -242,6 +242,15 @@ _TIER_COLORS = {
 # ─── Dealer gamma exposure (GEX) ──────────────────────────────────────────────
 # Starting points, not calibrated values. See
 # docs/superpowers/specs/2026-09-06-dealer-gamma-exposure-design.md
+# The scanner's horizon. It was built for 0DTE and looked at nothing past 14
+# days, which made a 30-day swing position literally invisible to it. These
+# define the window every tab reads: "swing" is 7-45 DTE, and the chain fetch
+# reaches far enough to contain it.
+SWING_DTE_MIN           = 7
+SWING_DTE_MAX           = 45
+FLOW_DTE_MAX            = 45     # how far out the flow scanner fetches chains
+FLOW_MAX_EXPIRIES       = 8      # chains read per ticker: ~5 near + ~3 swing Fridays
+
 GEX_EXPIRIES            = 3      # near expiries included, plus front monthly OPEX
 GEX_CONCENTRATION_FLAG  = 0.50   # one strike holding this share of the surface is flagged
 GEX_MIN_OI_COVERAGE     = 0.10   # min share of strikes carrying OI for a usable surface

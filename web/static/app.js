@@ -107,9 +107,9 @@ function _isMarketOpen(){
 }
 
 const S={
-  dte:_isMarketOpen()?'0dte':'all',
+  dte:'swing',
   whale:false,full:false,
-  dir:'up',dteMode:'0dte',
+  dir:'up',dteMode:'swing',
   scanning:false,scanRunning:false,
   callFlow:0,putFlow:0,
   signals:[],hotContracts:[],
@@ -121,19 +121,22 @@ const S={
   // rescan to change; these narrow a scan already paid for, in place.
   fSweeps:false,fDte:'all',fMin:0,fWhale:false,
 };
+// The swing window. Mirrors SWING_DTE_MIN/MAX in core/constants.py; declared
+// ahead of FLOW_FILTERS because the tests slice that block out on its own.
+const SWING_DTE_MIN=7, SWING_DTE_MAX=45;
 const FLOW_FILTERS={
   // Sweep only became worth filtering on once it stopped firing on 72% of
   // contracts. A golden sweep is a sweep that also cleared the size bar.
   sweeps:function(s){return !!(s.has_sweep||s.golden)},
   dte0:function(s){return s.dte===0},
-  swing:function(s){return s.dte>0},
+  swing:function(s){return !!s.swing_contract||(s.dte>=SWING_DTE_MIN&&s.dte<=SWING_DTE_MAX)},
   whale:function(s){return s.score>=70||s.tier==='whale'||s.tier==='block'},
   minPrem:function(s,v){return (s.total||0)>=v},
 };
 const FLOW_MIN_STEPS=[0,500000,1000000,5000000];
 const FLOW_MIN_LBLS=['MIN $','MIN $500K','MIN $1M','MIN $5M'];
-const FLOW_DTE_OPTS=['all','0dte','swing'];
-const FLOW_DTE_LBLS={'all':'ANY DTE','0dte':'0DTE','swing':'SWING'};
+const FLOW_DTE_OPTS=['swing','all','0dte'];
+const FLOW_DTE_LBLS={'all':'ANY DTE','0dte':'0DTE','swing':'SWING 7–45'};
 const FLOW_SORT_KEYS={
   premium:function(s){return s.total||0},
   score:function(s){return s.score||0},
@@ -145,7 +148,7 @@ const FLOW_SORT_KEYS={
 };
 
 (function(){
-  const lbl={'0dte':'0DTE','7dte':'7 DTE','all':'ALL DTE'};
+  const lbl={'swing':'SWING','0dte':'0DTE','7dte':'7 DTE','all':'ALL DTE'};
   const el=document.getElementById('c-dte');
   el.textContent=lbl[S.dte]||'0DTE';
   el.className='chip'+(S.dte!=='all'?' on':'');
@@ -212,8 +215,8 @@ function showTab(n,btn){
   if(n!=='flow') document.getElementById('flow-bar').classList.remove('on');
 }
 
-const dteOpts=['0dte','7dte','all'];
-const dteLbls={'0dte':'0DTE','7dte':'7 DTE','all':'ALL DTE'};
+const dteOpts=['swing','7dte','0dte','all'];
+const dteLbls={'swing':'SWING','0dte':'0DTE','7dte':'7 DTE','all':'ALL DTE'};
 function tDte(){
   S.dte=dteOpts[(dteOpts.indexOf(S.dte)+1)%3];
   const el=document.getElementById('c-dte');
@@ -348,10 +351,13 @@ function endFlowScan(err){
     const found=st.found||0;
     let head='No signals', hint, fix=null;
     if(found&&drop.dte===found){
-      head=found+' found, none match 0DTE';
-      hint=_isMarketOpen()
-        ?'Nothing expiring today. Every signal found is a later expiry.'
-        :'Today\u2019s expiry closed. Every signal found is a later expiry.';
+      // Name the window that did the dropping -- it is no longer always 0DTE.
+      const win={'0dte':'0DTE','7dte':'7 DTE','swing':'the 7\u201345 day swing window'}[S.dte]||S.dte;
+      head=found+' found, none in '+win;
+      hint=S.dte==='0dte'
+        ?(_isMarketOpen()?'Nothing expiring today. Every signal found is a later expiry.'
+                         :'Today\u2019s expiry closed. Every signal found is a later expiry.')
+        :'Every signal found expires outside that window.';
       fix={label:'Show all expiries',run:function(){S.dte='all';
         const el=document.getElementById('c-dte');
         if(el){el.textContent='ALL DTE';el.className='chip on';}
@@ -503,6 +509,18 @@ function renderFlowCard(s){
   const dtePart=s.dte===0?' 0DTE':s.dte>=0?' '+s.dte+'DTE':'';
   subEl.textContent=s.ts+' . '+s.bias.toUpperCase()+' FLOW'+dtePart;
   titleDiv.appendChild(tickEl);titleDiv.appendChild(subEl);
+  // The swing line. The headline contract is whichever strike had the most
+  // volume against open interest, which is nearly always a day or two out;
+  // the position a swing trader wants is the one carrying premium 7-45 days
+  // out, and it deserves its own line rather than burial in the ladder.
+  const sc=s.swing_contract;
+  if(sc){
+    const sw=document.createElement('div');
+    sw.className='card-swing';
+    sw.textContent='Swing: '+(sc.type==='call'?'C':'P')+' '+sc.strike+' \u00b7 '+sc.dte+'DTE \u00b7 '+sc.flow+
+      (sc.sweep?' \u00b7 sweep':'');
+    titleDiv.appendChild(sw);
+  }
 
   const premDiv=document.createElement('div');
   premDiv.className='card-premium';
@@ -1158,7 +1176,7 @@ function setDir(d){
 }
 function setDteMode(m){
   S.dteMode=m;
-  ['0dte','weekly','all'].forEach(function(k){
+  ['swing','weekly','0dte','all'].forEach(function(k){
     document.getElementById('dt-'+k).className='dte-btn'+(k===m?' on':'');
   });
 }
@@ -1377,7 +1395,7 @@ function renderBothLadder(d){
 function renderContracts(ticker,cs,ts,dteNote){
   if(!Array.isArray(cs)) cs=[cs];
   const isCall=S.dir==='up';
-  const dteLbl={'0dte':'0DTE','weekly':'WEEKLY','all':'ALL'}[S.dteMode]||'';
+  const dteLbl={'swing':'SWING','0dte':'0DTE','weekly':'WEEKLY','all':'ALL'}[S.dteMode]||'';
   const res=document.getElementById('find-result');
   res.textContent='';
   if(dteNote){

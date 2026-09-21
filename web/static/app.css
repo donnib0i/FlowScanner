@@ -245,6 +245,8 @@ body::after{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
 .card-ticker{font-size:21px;font-weight:600;letter-spacing:-.035em;color:var(--t1)}
 .card-sub{font-size:11px;color:var(--t3);margin-top:2px;font-family:var(--num);
   font-variant-numeric:tabular-nums}
+.card-swing{font-size:11px;color:var(--t1);margin-top:4px;font-family:var(--num);
+  font-variant-numeric:tabular-nums;letter-spacing:-.01em}
 .card-premium{text-align:right;flex-shrink:0}
 .card-amount{font-size:19px;font-weight:600;letter-spacing:-.03em;font-family:var(--num);
   font-variant-numeric:tabular-nums}

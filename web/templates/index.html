@@ -105,9 +105,10 @@
         <option value="chg">BY CHANGE%</option>
       </select>
       <select class="sel" id="scan-dte">
+        <option value="swing" selected>Swing (7–45 DTE)</option>
+        <option value="weekly">Weekly (2–7 DTE)</option>
         <option value="0dte">0DTE</option>
-        <option value="weekly">Weekly</option>
-        <option value="all">ALL</option>
+        <option value="all">Any expiry</option>
       </select>
       <span class="scan-stat" id="scan-stat"></span>
     </div>
@@ -154,14 +155,17 @@
         <button class="dir-btn dn" id="d-dn" onclick="setDir('down')">&#9660; PUTS</button>
       </div>
       <div class="dte-row">
-        <button class="dte-btn on" id="dt-0dte" onclick="setDteMode('0dte')">
-          0DTE<span class="dte-sub">Today only</span>
+        <button class="dte-btn on" id="dt-swing" onclick="setDteMode('swing')">
+          Swing<span class="dte-sub">7–45 days</span>
         </button>
         <button class="dte-btn" id="dt-weekly" onclick="setDteMode('weekly')">
-          WEEKLY<span class="dte-sub">7 days</span>
+          Weekly<span class="dte-sub">2–7 days</span>
+        </button>
+        <button class="dte-btn" id="dt-0dte" onclick="setDteMode('0dte')">
+          0DTE<span class="dte-sub">Today only</span>
         </button>
         <button class="dte-btn" id="dt-all" onclick="setDteMode('all')">
-          ALL<span class="dte-sub">Best fit</span>
+          Any<span class="dte-sub">Best fit</span>
         </button>
       </div>
       <button class="find-go" id="find-btn" onclick="doFind()">Find top 3 contracts</button>

@@ -7,6 +7,7 @@ Part of the scanner core; `core.scanner` re-exports everything here.
 from core import runtime as _runtime  # noqa: F401  (warnings/colorama setup)
 
 from colorama import Fore, Style
+from core.constants import FLOW_DTE_MAX, FLOW_MAX_EXPIRIES
 from core.market_calendar import exchange_today, is_market_open
 from core.repeat_hits import RepeatHitTracker
 from datetime import datetime
@@ -99,7 +100,7 @@ def scan_options_flow(tickers: List[str], show_progress: bool = True,
                 sys.stdout.flush()
             tt_signals = scan_options_flow_tt(
                 tickers, _TT_USER, _TT_PASS,
-                window_secs=90, max_dte=14,
+                window_secs=90, max_dte=FLOW_DTE_MAX,
                 show_progress=show_progress,
             )
             if tt_signals:
@@ -177,7 +178,17 @@ def _scan_options_flow_yf(tickers: List[str], show_progress: bool = True,
             if not exps:
                 continue
 
-            near_exps = [e for e in exps if 0 <= dte_of(e) <= 14] or list(exps[:2])
+            # Which expiries to read. Taking the first N is wrong for names with
+            # daily expiries: the first three on NVDA are today, tomorrow and
+            # the day after, so a 30-day swing position never entered the scan
+            # no matter how far the window reached. Sample the window instead:
+            # every expiry inside a week (where 0DTE and weeklies live) plus the
+            # standard Fridays out to the swing horizon, which is where swing
+            # open interest actually sits.
+            dated = [(e, dte_of(e)) for e in exps if 0 <= dte_of(e) <= FLOW_DTE_MAX]
+            near  = [e for e, d in dated if d <= 7]
+            swing = [e for e, d in dated if d > 7]
+            near_exps = (near + swing[::2])[:FLOW_MAX_EXPIRIES] or list(exps[:2])
 
             call_flow = put_flow = 0.0
             dte0_flow = dte1_7_flow = dte8p_flow = 0.0
@@ -197,7 +208,7 @@ def _scan_options_flow_yf(tickers: List[str], show_progress: bool = True,
             except Exception:
                 cur_price = 0.0
 
-            for exp in near_exps[:3]:
+            for exp in near_exps:
                 d = dte_of(exp)
                 try:
                     chain = _option_chain(t, ticker, exp)

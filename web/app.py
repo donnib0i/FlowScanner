@@ -66,6 +66,7 @@ from core.market_data import _yf, full_chain
 from data.unusual_flow import scan_unusual_flow, sector_flow_summary
 from data.etf_filter import filter_etfs, is_etf
 from data.sector_map import sector_for
+from core.constants import SWING_DTE_MIN, SWING_DTE_MAX
 from data.sources import available_sources
 
 # Cache unusual flow results (expensive scan)
@@ -107,8 +108,8 @@ elif len(_PIN) < 6:
 _VALID_DIRECTION  = {"up", "down"}
 _VALID_DTE_TYPE   = {"weekly", "0dte", "swing"}
 _VALID_BIAS       = {"both", "call", "put"}
-_VALID_DTE_FILTER = {"all", "0dte", "7dte"}
-_VALID_DTE_MODE   = {"0dte", "weekly", "all"}
+_VALID_DTE_FILTER = {"all", "0dte", "7dte", "swing"}
+_VALID_DTE_MODE   = {"0dte", "weekly", "swing", "all"}
 
 _TICKER_RE = re.compile(r'^[A-Z0-9\^\.\-]{1,12}$')
 
@@ -566,6 +567,22 @@ def _strike_ladder(sig: Dict) -> Dict:
         r["fmt"] = _fmt(r["total"])
     return {"rows": rows, "spot": spot}
 
+def _swing_pick(contracts: List[Dict]) -> Optional[Dict]:
+    """The largest-premium contract inside the swing window, or None."""
+    inside = [c for c in contracts
+              if SWING_DTE_MIN <= (c.get("dte") if c.get("dte") is not None else -1) <= SWING_DTE_MAX]
+    if not inside:
+        return None
+    c = max(inside, key=lambda c: c.get("flow", 0))
+    return {
+        "strike": c.get("strike", 0), "exp": c.get("exp", "")[-5:], "dte": c.get("dte", -1),
+        "type": c.get("type", "call"), "vol": c.get("vol", 0), "oi": c.get("oi", 0),
+        "vol_oi": round(c.get("vol_oi", 0), 1), "mid": round(c.get("mid", 0), 2),
+        "flow": _fmt(c.get("flow", 0)), "flow_raw": c.get("flow", 0),
+        "sweep": c.get("sweep", False), "tier": c.get("premium_tier", "retail"),
+    }
+
+
 def _serialize_flow(sig: Dict) -> Dict:
     tc    = sig.get("top_contract") or {}
     all_c = sig.get("call_contracts", []) + sig.get("put_contracts", [])
@@ -637,6 +654,14 @@ def _serialize_flow(sig: Dict) -> Dict:
         "dte0":       _fmt(sig.get("dte0_flow", 0)),
         "dte1_7":     _fmt(sig.get("dte1_7_flow", 0)),
         "dte8p":      _fmt(sig.get("dte8p_flow", 0)),
+        # Raw premium by horizon, and the best contract inside the swing window.
+        # The headline contract is picked on vol/OI, which is always highest a
+        # day or two from expiry -- so a card can sit on $44M of 30-day flow and
+        # still be labelled "4 DTE". A swing filter has to read the bucket, not
+        # the headline, and a swing trader needs the swing contract on the card.
+        "swing_flow":     sig.get("dte8p_flow", 0),
+        "near_flow":      sig.get("dte0_flow", 0) + sig.get("dte1_7_flow", 0),
+        "swing_contract": _swing_pick(all_c),
         "strike":     tc.get("strike", 0),
         "exp":        tc.get("exp", "")[-5:],
         "dte":        tc.get("dte", -1),
@@ -765,7 +790,7 @@ async def api_flow(
     req:       Request,
     tickers:   str = Query(",".join(DEFAULT_FLOW_TICKERS)),
     bias:      str = Query("both"),
-    dte:       str = Query("all"),
+    dte:       str = Query("swing"),
     min_score: int = Query(40),
 ):
     """SSE stream of unusual options flow -- institutional/whale only."""
@@ -861,6 +886,9 @@ async def api_flow(
                 if dte == "7dte" and s["dte"] > 7:
                     dropped_by["dte"] += 1
                     continue
+                if dte == "swing" and not s.get("swing_contract"):
+                    dropped_by["dte"] += 1
+                    continue
                 shown += 1
 
             if item.get("__done__"):
@@ -884,7 +912,7 @@ async def api_scan(
     req:      Request,
     filter:   str = Query("any"),
     sort:     str = Query("setup"),
-    dte_mode: str = Query("0dte"),
+    dte_mode: str = Query("swing"),
     dynamic:  str = Query("false"),
 ):
     """Full ticker scan -- 232 tickers ranked by setup quality. Cached 5 min."""
@@ -1128,7 +1156,7 @@ async def api_sector_plays(req: Request, name: str, dte_mode: str = Query("all")
             "plays": data["plays"], "last_updated": datetime.now().strftime("%H:%M:%S")}
 
 # Expiry window each dte_mode promises the user, mirroring get_best_contract().
-_DTE_WINDOWS = {"0dte": (0, 0), "weekly": (2, 7)}
+_DTE_WINDOWS = {"0dte": (0, 0), "weekly": (2, 7), "swing": (SWING_DTE_MIN, SWING_DTE_MAX)}
 
 def _dte_note(dte_mode: str, contracts: list) -> Optional[str]:
     """
@@ -1143,7 +1171,8 @@ def _dte_note(dte_mode: str, contracts: list) -> Optional[str]:
     d = contracts[0].get("dte")
     if d is None or lo <= d <= hi:
         return None
-    label = "0DTE" if dte_mode == "0dte" else "WEEKLY (2-7DTE)"
+    label = {"0dte": "0DTE", "weekly": "WEEKLY (2-7DTE)"}.get(
+        dte_mode, f"SWING ({SWING_DTE_MIN}-{SWING_DTE_MAX}DTE)")
     return f"No {label} contracts available — showing nearest expiry ({d}DTE)"
 
 @app.get("/api/find")
@@ -1222,6 +1251,9 @@ async def api_find_both(
             cands = [e for e in future if dte(e) == 0] or [e for e in future if dte(e) <= 1]
         elif dte_mode == "weekly":
             cands = [e for e in future if 2 <= dte(e) <= 7] or [e for e in future if dte(e) <= 14]
+        elif dte_mode == "swing":
+            cands = ([e for e in future if SWING_DTE_MIN <= dte(e) <= SWING_DTE_MAX]
+                     or [e for e in future if dte(e) <= 90])
         else:
             cands = future
         if not cands:
