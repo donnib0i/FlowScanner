@@ -34,6 +34,8 @@ from core.constants import (
 )
 from core.greeks import _MIN_T, bs_greeks, implied_vol
 
+MIN_REAL_IV = 0.005
+
 # Re-exported under shorter names so callers and tests read cleanly.
 MIN_T          = _MIN_T
 FLIP_TOLERANCE = GEX_FLIP_TOLERANCE
@@ -62,7 +64,10 @@ def _resolve_iv(r: Dict, spot: float, T: float) -> Optional[float]:
     deletes them from the profile and drags the flip toward the money.
     """
     iv = _num(r.get("iv"))
-    if iv > 0.0:
+    # Out of hours yfinance reports 1e-05 rather than 0 -- a placeholder, not a
+    # volatility. Taken at face value it collapses every strike's gamma to a
+    # spike at the money, so anything below half a vol point is a hole.
+    if iv >= MIN_REAL_IV:
         return iv
     bid, ask, last = _num(r.get("bid")), _num(r.get("ask")), _num(r.get("last"))
     mid = (bid + ask) / 2.0 if (bid > 0 and ask > 0) else last
@@ -392,7 +397,23 @@ def merge_open_interest(rows: List[Dict], stats: Dict) -> int:
         dv = _num(rec.get("day_volume"))
         if dv > 0 and _num(r.get("volume")) <= 0:
             r["volume"] = int(dv)
+        # Same rule for the quote: only holes. After the close yfinance has
+        # bid = ask = 0 and IV = 1e-05, which leaves nothing to price gamma or
+        # infer the dealer's side from.
+        iv = _num(rec.get("iv"))
+        if iv >= MIN_REAL_IV and _num(r.get("iv")) < MIN_REAL_IV:
+            r["iv"] = iv
+        bid, ask = _num(rec.get("bid")), _num(rec.get("ask"))
+        if ask > 0 and _num(r.get("bid")) <= 0 and _num(r.get("ask")) <= 0:
+            r["bid"], r["ask"] = bid, ask
     return filled
+
+
+def _fetch_cboe_oi(symbol: str, expiries: List[str]) -> Dict:
+    """Indirection point, as below. CBOE needs no credentials, so unlike
+    dxFeed it works on the Railway container too."""
+    from data.cboe_chain import fetch_chain_stats
+    return fetch_chain_stats(symbol, list(expiries))
 
 
 def _fetch_live_oi(symbol: str, expiries: List[str], spot: float = 0.0) -> Dict:
@@ -420,21 +441,29 @@ def backfill_open_interest(symbol: str, rows: List[Dict],
 
     yfinance is asked first: it is the fetch the caller has already made, and
     intraday it answers in full. Outside market hours it reports zeros instead
-    -- which is precisely when the next session is being planned -- so the same
-    settled number is read from dxFeed's Summary event and used to fill the
-    holes. Intraday this costs nothing: coverage passes and no fetch is made.
+    -- which is precisely when the next session is being planned -- so the
+    holes are filled from CBOE's public delayed snapshot, and only if that
+    still leaves the surface unusable, from dxFeed's Summary event (which needs
+    a TastyTrade session). Intraday this costs nothing: coverage passes and no
+    fetch is made.
     """
     before = _oi_coverage(rows)
     if before >= GEX_MIN_OI_COVERAGE:
         return "yfinance"
-    try:
-        stats = _fetch_live_oi(symbol, expiries, spot)
-    except Exception:
+    sources = ["yfinance"] if before > 0.0 else []
+    for name, fetch in (("cboe", lambda: _fetch_cboe_oi(symbol, expiries)),
+                        ("dxfeed", lambda: _fetch_live_oi(symbol, expiries, spot))):
+        try:
+            stats = fetch()
+        except Exception:
+            continue
+        if merge_open_interest(rows, stats):
+            sources.append(name)
+        if _oi_coverage(rows) >= GEX_MIN_OI_COVERAGE:
+            break
+    if not sources or sources == ["yfinance"]:
         return "yfinance"
-    filled = merge_open_interest(rows, stats)
-    if not filled:
-        return "yfinance"
-    return "dxfeed" if before <= 0.0 else "yfinance+dxfeed"
+    return "+".join(sources)
 
 
 def surface_for(symbol: str, flow: Optional[Dict] = None) -> Dict[str, Any]:

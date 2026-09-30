@@ -109,6 +109,9 @@ def surface(monkeypatch):
         return rows
 
     monkeypatch.setattr(market_data, "full_chain", chain)
+    # CBOE off by default so these tests exercise the dxFeed path in isolation
+    # and never touch the network; the CBOE tests below turn it back on.
+    monkeypatch.setattr(G, "_fetch_cboe_oi", lambda symbol, expiries: {})
     return state
 
 
@@ -235,3 +238,55 @@ def test_a_reading_is_cached_and_an_empty_result_is_not(monkeypatch):
     assert T.fetch_open_interest("SPY", ["2026-09-18"]) != {}     # retried
     assert T.fetch_open_interest("SPY", ["2026-09-18"]) != {}     # served from cache
     assert len(calls) == 2
+
+
+def _cboe(monkeypatch, result):
+    calls = []
+    def fetch(symbol, expiries):
+        calls.append(symbol)
+        return result
+    monkeypatch.setattr(G, "_fetch_cboe_oi", fetch)
+    return calls
+
+
+def _full(expiries, **extra):
+    return {(e, k, kind): {"oi": 1000, "day_volume": 5000, **extra}
+            for e in expiries for k in (90.0, 95.0, 100.0, 105.0, 110.0)
+            for kind in ("call", "put")}
+
+
+def test_cboe_fills_an_empty_chain_without_touching_dxfeed(surface, monkeypatch):
+    EXPS = ["2026-09-09", "2026-09-10", "2026-09-11", "2026-09-18"]
+    calls = _cboe(monkeypatch, _full(EXPS))
+    _feed(surface, monkeypatch)
+    out = G.surface_for("SPX")
+    assert calls == ["SPX"]
+    assert surface["calls"] == [], "dxFeed consulted although CBOE was enough"
+    assert out["provenance"]["oi_source"] == "cboe"
+    assert out["provenance"]["oi_usable"] is True
+
+
+def test_dxfeed_is_the_fallback_when_cboe_is_down(surface, monkeypatch):
+    def boom(symbol, expiries):
+        raise RuntimeError("cboe down")
+    monkeypatch.setattr(G, "_fetch_cboe_oi", boom)
+    _feed(surface, monkeypatch)
+    out = G.surface_for("SPX")
+    assert out["provenance"]["oi_source"] == "dxfeed"
+
+
+def test_placeholder_iv_and_empty_quotes_are_filled_but_real_ones_kept():
+    rows = [{"expiry": "e", "strike": 100.0, "type": "call", "oi": 0,
+             "iv": 1e-05, "bid": 0.0, "ask": 0.0},
+            {"expiry": "e", "strike": 105.0, "type": "call", "oi": 0,
+             "iv": 0.30, "bid": 1.0, "ask": 1.2}]
+    stats = {("e", 100.0, "call"): {"oi": 10, "iv": 0.18, "bid": 2.0, "ask": 2.2},
+             ("e", 105.0, "call"): {"oi": 10, "iv": 0.25, "bid": 9.0, "ask": 9.9}}
+    G.merge_open_interest(rows, stats)
+    assert (rows[0]["iv"], rows[0]["bid"], rows[0]["ask"]) == (0.18, 2.0, 2.2)
+    assert (rows[1]["iv"], rows[1]["bid"], rows[1]["ask"]) == (0.30, 1.0, 1.2)
+
+
+def test_a_placeholder_iv_is_not_taken_as_a_volatility():
+    r = {"strike": 100.0, "type": "call", "iv": 1e-05, "bid": 0, "ask": 0, "last": 0}
+    assert G._resolve_iv(r, 100.0, 0.1) is None
