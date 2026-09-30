@@ -9,7 +9,7 @@ Open:  http://localhost:8765
 """
 
 from __future__ import annotations
-import asyncio, collections, contextlib, hmac, io, json, logging, os, re, secrets, sys, threading, time
+import asyncio, collections, contextlib, hashlib, hmac, io, json, logging, os, re, secrets, sys, threading, time
 
 logger = logging.getLogger(__name__)
 from datetime import datetime
@@ -393,9 +393,22 @@ def _check_pin(req: Request):
         # seconds and turned the gate into a wall of 429s that the gate does
         # not draw itself over. The limiter exists to slow an attacker down,
         # not to lock out someone who has not typed anything.
-        if supplied and not _rl.allow(f"{ip}:auth_fail", 10, 300):
-            raise HTTPException(429, detail="Too many failed attempts -- try later",
-                                headers={"Retry-After": "300"})
+        # A brute-forcer tries DIFFERENT values; repeating one wrong value
+        # learns nothing. That distinction matters because the page fans out
+        # ~18 API calls on load, each carrying whatever is in localStorage --
+        # so charging the allowance per REQUEST spent all ten guesses on the
+        # first typo and locked the owner out of his own scanner for five
+        # minutes. One mistyped PIN is one guess, however many calls carry it.
+        #
+        # The value is keyed by digest, never in the clear: limiter keys are
+        # long-lived in memory and this one would otherwise hold a secret
+        # somebody very nearly typed correctly.
+        if supplied:
+            seen = hashlib.sha256(supplied.encode("utf-8", errors="replace")).hexdigest()[:16]
+            first_time = _rl.allow(f"{ip}:auth_val:{seen}", 1, 300)
+            if first_time and not _rl.allow(f"{ip}:auth_fail", 10, 300):
+                raise HTTPException(429, detail="Too many failed attempts -- try later",
+                                    headers={"Retry-After": "300"})
         raise HTTPException(401, "Unauthorized")
 
 # Default flow tickers
@@ -497,7 +510,7 @@ async def _security_headers(request: Request, call_next):
         "img-src 'self' data:; "
         "frame-ancestors 'none'"
     )
-    if request.url.path == "/":
+    if request.url.path in ("/", "/app"):
         h["Cache-Control"] = "no-store, no-cache, must-revalidate"
         h["Pragma"]        = "no-cache"
     elif request.url.path.startswith("/api/") and "cache-control" not in response.headers:
@@ -704,45 +717,6 @@ async def api_vix(req: Request):
            "Calm" if vix >= 13 else "Complacent")
     return {"vix": round(vix, 2), "delta_target": round(tgt, 3), "regime": reg,
             "ts": datetime.now().strftime("%H:%M:%S")}
-
-@app.get("/api/bars")
-async def api_bars(req: Request, symbol: str = "SPX", interval: str = "1m"):
-    """
-    Today's session for the chart beside the flow feed. Measured freshness:
-    the response says when its last bar printed and how long ago that was,
-    and the chart repeats it rather than claiming "live".
-    """
-    _check_pin(req)
-    _check_rate(req, "bars", limit=40, window=60)
-    from core.bars import chart_symbol, session_bars
-    interval = _validate_enum(interval, {"1m", "2m", "5m"}, "interval")
-    # A futures code is normalised before validation, so /ES and ES=F work
-    # without widening the ticker pattern to accept "/" and "=".
-    _, label = chart_symbol(symbol)
-    symbol = _validate_ticker(label)
-
-    # Twenty seconds: a chart polling every thirty never fetches the same
-    # session twice for nothing, and a bar is a minute wide anyway.
-    key = f"bars:{symbol}:{interval}"
-    hit = _cache.get(key)
-    if hit is not None:
-        return hit
-    loop = asyncio.get_event_loop()
-
-    def _build():
-        try:
-            return session_bars(symbol, interval)
-        except ValueError as e:
-            raise HTTPException(503, str(e))
-
-    with contextlib.redirect_stdout(io.StringIO()):
-        try:
-            data = await asyncio.wait_for(loop.run_in_executor(None, _build), timeout=30.0)
-        except asyncio.TimeoutError:
-            raise HTTPException(504, "Bars timed out")
-    _cache.set(key, data, ttl_secs=20)
-    return data
-
 
 @app.get("/api/status")
 async def api_status(req: Request):
@@ -1499,7 +1473,7 @@ async def manifest():
         "name": "Scanner Pro",
         "short_name": "Scanner",
         "description": "Options Flow + Market Scanner",
-        "start_url": "/",
+        "start_url": "/app",
         "display": "standalone",
         "background_color": "#000000",
         "theme_color": "#000000",
@@ -1768,7 +1742,7 @@ async def api_auth(req: Request, token: str = ""):
             "{{NOTICE}}",
             "That link has expired or has already been used. "
             "Enter your email and we will send a fresh one."), status_code=401)
-    resp = _Response(status_code=303, headers={"Location": "/"})
+    resp = _Response(status_code=303, headers={"Location": "/app"})
     resp.set_cookie(
         SESSION_COOKIE, _accounts.issue_session(email),
         max_age=60 * 60 * 24 * 30, httponly=True, samesite="lax",
@@ -1878,6 +1852,16 @@ async def api_admin_user_delete(req: Request):
 
 @app.get("/", response_class=HTMLResponse)
 async def root():
+    """
+    The front door. A visitor gets the landing page; someone who already holds
+    the PIN is sent on to /app by the page's own head script before it paints,
+    so the installed PWA -- whose icon points here -- still opens the scanner.
+    """
+    return LANDING.replace("__OWNER_ONLY__", "true" if _OWNER_ONLY else "false", 1)
+
+
+@app.get("/app", response_class=HTMLResponse)
+async def app_page():
     # The gate is drawn client-side on the first 401, so the page carries the
     # mode with it rather than making the gate guess from a status code.
     return HTML.replace("__OWNER_ONLY__", "true" if _OWNER_ONLY else "false", 1)
@@ -1900,6 +1884,7 @@ def _build_html() -> str:
     return (_read("templates", "index.html")
             .replace("{{APP_CSS}}", _read("static", "app.css"))
             .replace("{{APP_JS}}", _read("static", "app.js")))
+LANDING = _read("templates", "landing.html")
 
 
 HTML = _build_html()

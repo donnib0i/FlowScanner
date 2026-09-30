@@ -99,7 +99,9 @@ def _fetch_series(series_id: str, api_key: str, limit: int = 3) -> Optional["Obs
             return Observation(float(val), when)
         return None
     except Exception as exc:
-        logger.debug("FRED fetch failed for %s: %s", series_id, exc)
+        # Only the exception type: a requests error's message carries the full
+        # URL, and the URL carries api_key.
+        logger.debug("FRED fetch failed for %s: %s", series_id, type(exc).__name__)
         return None
 
 

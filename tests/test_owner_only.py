@@ -95,11 +95,14 @@ def test_the_join_page_is_normal_with_the_switch_off(app_in):
 
 
 # ── the door says what is happening ──────────────────────────────────────────
-def test_the_app_page_carries_the_mode_to_the_gate(app_in):
+def test_both_pages_carry_the_mode(app_in):
+    # The app's gate and the landing's access box both read it.
     m, c = app_in(owner_only=True)
-    assert "window.__OWNER_ONLY = true;" in c.get("/").text
+    assert "window.__OWNER_ONLY = true;" in c.get("/app").text
+    assert "__OWNER_ONLY = true" in c.get("/").text
     m, c = app_in(owner_only=False)
-    assert "window.__OWNER_ONLY = false;" in c.get("/").text
+    assert "window.__OWNER_ONLY = false;" in c.get("/app").text
+    assert "__OWNER_ONLY = false" in c.get("/").text
 
 
 def test_the_gate_says_updating_and_hides_sign_up_when_owner_only():
@@ -124,12 +127,6 @@ def test_a_missing_pin_does_not_burn_the_brute_force_allowance(app_in):
         assert c.get("/api/vix").status_code == 401, "a missing pin was rate-limited"
 
 
-def test_a_wrong_pin_still_is(app_in):
-    m, c = app_in(owner_only=True)
-    codes = [c.get("/api/vix", headers={"X-Pin": "000000"}).status_code for _ in range(12)]
-    assert 429 in codes, "wrong-pin guesses are no longer throttled"
-
-
 def test_the_right_pin_works_during_someone_elses_lockout(app_in):
     # The limiter must never be a way to lock the owner out.
     m, c = app_in(owner_only=True)
@@ -143,3 +140,50 @@ def test_the_gate_is_drawn_over_a_lockout_too():
     body = js.split("function _handleAuth(resp){")[1].split("\n}\n")[0]
     assert "429" in body and "_promptPin(" in body.split("429")[1], \
         "a 429 on auth leaves the visitor with a dead page"
+
+
+# ── one typo is one guess, not eighteen ──────────────────────────────────────
+def test_one_wrong_pin_entry_does_not_burn_the_whole_allowance(app_in):
+    """
+    The page fans out ~18 API calls on load, every one carrying whatever PIN is
+    in localStorage. Counting each request as a separate failed guess meant a
+    single typo spent the entire 10-per-5-minutes budget before the gate had
+    even redrawn -- so the owner mistyped once and was locked out for five
+    minutes, which reads as "the PIN doesn't work, takes hella tries".
+
+    A brute-forcer tries DIFFERENT values. Repeating one wrong value learns
+    nothing, so it costs one guess however many requests carry it.
+    """
+    m, c = app_in(owner_only=True)
+    codes = [c.get("/api/vix", headers={"X-Pin": "000000"}).status_code
+             for _ in range(18)]
+    assert 429 not in codes, "one mistyped PIN locked the visitor out"
+
+
+def test_distinct_wrong_pins_are_still_throttled(app_in):
+    """The limiter must still stop someone walking the keyspace."""
+    m, c = app_in(owner_only=True)
+    codes = [c.get("/api/vix", headers={"X-Pin": f"{i:06d}"}).status_code
+             for i in range(12)]
+    assert 429 in codes, "distinct wrong-pin guesses are no longer throttled"
+
+
+def test_the_right_pin_works_after_a_typo_storm(app_in):
+    """The whole point: a typo must not stand between Dante and his scanner."""
+    m, c = app_in(owner_only=True)
+    for _ in range(18):
+        c.get("/api/vix", headers={"X-Pin": "000000"})
+    assert c.get("/api/vix", headers={"X-Pin": "213085"}).status_code != 401
+
+
+def test_a_locked_out_visitor_with_a_stored_pin_still_sees_the_gate():
+    """
+    _handleAuth drew the gate on a 429 only when no PIN was stored. Anyone who
+    had typed one -- which is everyone who just got locked out -- got a silent
+    dead page instead of "wait a few minutes".
+    """
+    js = open("web/static/app.js").read()
+    body = js.split("function _handleAuth(resp){")[1].split("\n}\n")[0]
+    seg = body.split("429")[1]
+    assert "_promptPin(" in seg, "a 429 on auth leaves the visitor with a dead page"
+    assert "!PIN" not in seg, "the gate is still conditional on having no PIN"

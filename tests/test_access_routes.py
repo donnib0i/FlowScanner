@@ -70,7 +70,8 @@ def test_a_bad_address_is_refused(client):
 def test_a_link_signs_you_in_and_the_api_then_answers(client, app):
     tok = link_for(app, "dante@example.com")
     r = client.get(f"/auth?token={tok}", follow_redirects=False)
-    assert r.status_code == 303 and r.headers["location"] == "/"
+    # Into the scanner, not the landing page: a redeemed link is a sign-in.
+    assert r.status_code == 303 and r.headers["location"] == "/app"
     assert client.cookies.get("scanner_session")
 
     me = client.get("/api/me").json()
