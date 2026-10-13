@@ -152,7 +152,7 @@
     <div>
       <div class="eyebrow rev"><span class="dot"></span> SPX / QQQ OPTIONS FLOW · DEALER GAMMA</div>
       <h1 class="rev">See where<br>the money<br><span class="it">moves.</span></h1>
-      <p class="lede rev">A scanner that watches options flow across 200+ tickers and surfaces the big, unusual orders as they hit the tape &mdash; with the dealer gamma map drawn on the chart beside them. No noise. Just the flow.</p>
+      <p class="lede rev">A scanner that checks options activity across 200+ tickers and surfaces the contracts trading far outside their normal size &mdash; with a dealer gamma map for SPX, QQQ and the futures. No noise. Just the flow.</p>
       <div class="cta rev">
         <a href="#access" class="btn btn-primary">Open the scanner
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#0a0a0a" stroke-width="1.8" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
@@ -184,8 +184,8 @@
       <p>Most flow feeds dump everything on you. This one filters for the orders that actually stand out, so you can read the tape in seconds.</p>
     </div>
     <div class="cards">
-      <div class="card rev"><div class="num">01</div><div><h3>Honest about its data</h3><p>Flow across SPX, QQQ and 200+ tickers, and every screen says exactly how fresh its data is. Never a delay you have to guess at.</p></div></div>
-      <div class="card rev"><div class="num">02</div><div><h3>Unusual only</h3><p>Sweeps, blocks and outsized premium get flagged. The routine stuff stays out of your way.</p></div></div>
+      <div class="card rev"><div class="num">01</div><div><h3>Honest about its data</h3><p>Flow across SPX, QQQ and 200+ tickers. Quotes are delayed about 15 minutes, and every screen says exactly how fresh its data is. Never a delay you have to guess at.</p></div></div>
+      <div class="card rev"><div class="num">02</div><div><h3>Unusual only</h3><p>Volume far above open interest and outsized premium get flagged. The routine stuff stays out of your way.</p></div></div>
       <div class="card rev"><div class="num">03</div><div><h3>Made by a trader</h3><p>Built for how flow actually gets used during the session. Fast to scan, nothing extra.</p></div></div>
     </div>
   </div>
@@ -198,7 +198,7 @@
       <h2 style="margin-top: 24px;">Three steps.<br><span class="it">That's it.</span></h2>
     </div>
     <div class="steps">
-      <div class="step rev"><div class="big">01</div><div><h3>It scans</h3><p>The engine watches every print across the watchlist while the market is open.</p></div></div>
+      <div class="step rev"><div class="big">01</div><div><h3>It scans</h3><p>The engine pulls the option chains across the watchlist and compares today&rsquo;s activity with what is normal for each contract.</p></div></div>
       <div class="step rev"><div class="big">02</div><div><h3>It flags</h3><p>Anything unusual in size, type or timing lands on your tape.</p></div></div>
       <div class="step rev"><div class="big">03</div><div><h3>You decide</h3><p>It's data, not signals. What you do with the flow is your call.</p></div></div>
     </div>
@@ -210,15 +210,16 @@
     <div class="access-box rev">
       <div class="kicker">ACCESS</div>
       <h2>Ready to <span class="it">watch the tape?</span></h2>
+      <p id="signup" style="margin:4px 0 8px;"><a href="/join" class="btn btn-primary">Get free access</a></p>
+      <p style="margin:0 0 4px; font-size:14px; color:#8a8a87;">Free while in beta. Sign in with a one-time email link &mdash; no password.</p>
       <div style="display:flex; flex-direction:column; align-items:center; gap:12px; margin-top:8px;">
-        <label for="pin" style="font-size:14px; color:var(--mute);">Enter your access PIN</label>
+        <label for="pin" style="font-size:13px; color:var(--mute);">Owner sign-in</label>
         <form class="pin-row" id="pinform" novalidate>
           <input id="pin" type="password" inputmode="numeric" maxlength="12" autocomplete="off" placeholder="••••••" aria-describedby="pinMsg">
           <button type="submit" class="btn btn-primary" id="enter">Enter</button>
         </form>
         <div class="pin-msg" id="pinMsg" role="status" aria-live="polite"></div>
       </div>
-      <p id="signup" style="margin:0; font-size:15px; color:#8a8a87;">No PIN yet? <a href="/join">Request access</a></p>
     </div>
   </div>
 </section>

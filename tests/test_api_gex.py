@@ -306,3 +306,31 @@ def test_dealer_sign_is_inferred_from_the_chain_by_default():
     d = get()
     assert d["provenance"]["inferred_pct"] > 0, \
         "sign inference is wired but produced nothing"
+
+
+def test_concurrent_requests_for_one_symbol_share_a_single_build(monkeypatch):
+    """Public traffic: many members asking for SPX at once must cost one chain
+    download, not one each. Driven on a single event loop, as uvicorn runs."""
+    import asyncio
+    import httpx
+    import time as _t
+    calls = []
+
+    def slow_surface(symbol):
+        calls.append(symbol)
+        _t.sleep(0.3)
+        return {"spot": 100.0, "net_gex": 1.0, "flip": None, "call_wall": None,
+                "put_wall": None, "profile": [], "provenance": {}}
+
+    monkeypatch.setattr(webapp, "gex_surface_for", slow_surface)
+    monkeypatch.setattr(webapp, "_check_pin", lambda req: None)
+    monkeypatch.setattr(webapp, "_check_rate", lambda *a, **k: None)
+
+    async def run():
+        transport = httpx.ASGITransport(app=webapp.app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+            rs = await asyncio.gather(*[c.get("/api/gex?symbol=QQQ") for _ in range(6)])
+        return [r.status_code for r in rs]
+
+    assert asyncio.run(run()) == [200] * 6
+    assert calls == ["QQQ"], f"built {len(calls)} times"

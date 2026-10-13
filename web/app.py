@@ -171,6 +171,27 @@ class _TTLCache:
 
 _cache = _TTLCache()
 
+# Shared builds for the expensive, user-independent endpoints. Every member
+# asking for the SPX surface gets the same answer, so once the scanner is public
+# twenty clicks must not mean twenty chain downloads from Yahoo and CBOE -- that
+# is how a free data source rate-limits the whole deploy. One build per key at a
+# time; whoever arrives while it runs waits for it and shares the result.
+_BUILD_LOCKS: Dict[str, asyncio.Lock] = {}
+
+
+async def _shared(key: str, ttl_secs: int, build):
+    hit = _cache.get(key)
+    if hit is not None:
+        return hit
+    lock = _BUILD_LOCKS.setdefault(key, asyncio.Lock())
+    async with lock:
+        hit = _cache.get(key)
+        if hit is not None:
+            return hit
+        value = await build()
+        _cache.set(key, value, ttl_secs=ttl_secs)
+        return value
+
 # One flow scan at a time, shared by everyone watching it.
 #
 # This was a bare threading.Event that refused any second request. That was
@@ -1056,15 +1077,23 @@ async def api_gex(req: Request, symbol: str = "SPX"):
         except ValueError as e:
             raise HTTPException(503, str(e))
 
-    with contextlib.redirect_stdout(io.StringIO()):
-        try:
-            data = await asyncio.wait_for(
-                loop.run_in_executor(None, _build), timeout=60.0
-            )
-        except asyncio.TimeoutError:
-            raise HTTPException(504, "GEX build timed out")
+    async def _run():
+        with contextlib.redirect_stdout(io.StringIO()):
+            try:
+                built = await asyncio.wait_for(
+                    loop.run_in_executor(None, _build), timeout=60.0
+                )
+            except asyncio.TimeoutError:
+                raise HTTPException(504, "GEX build timed out")
+        built["last_updated"] = datetime.now().strftime("%H:%M:%S")
+        return built
 
-    data["last_updated"] = datetime.now().strftime("%H:%M:%S")
+    # Copied: the fields below differ per request (MNQ vs NDX) and must not
+    # leak into the shared entry.
+    data = dict(await _shared(f"gex:{symbol}", 60, _run))
+    data["last_updated_shared"] = data["last_updated"]
+
+    data["last_updated"] = data.pop("last_updated_shared")
     # What was asked for vs what the surface was actually measured on. The
     # client says so on screen rather than quietly answering a different
     # question than the one typed.
@@ -1079,6 +1108,10 @@ async def api_sectors(req: Request):
     _check_pin(req)
     _check_rate(req, "sectors", limit=5, window=60)
     loop = asyncio.get_event_loop()
+    return await _shared("sectors", 120, lambda: _sectors_build(loop))
+
+
+async def _sectors_build(loop):
     with contextlib.redirect_stdout(io.StringIO()):
         try:
             data = await asyncio.wait_for(
@@ -1720,10 +1753,13 @@ async def api_join(req: Request):
              f"&t={_accounts.unsubscribe_token(email)}")
     sent = _send_magic_link(email, link, unsub)
     if not sent:
-        # Stdout, not the response. The owner reads the log; the visitor does
-        # not get a link for an address they may not own.
-        logging.warning("MAGIC LINK for %s: %s", email, link)
-        print(f"\n  Sign-in link for {email}\n  {link}\n", flush=True)
+        # Never the response -- the visitor does not get a link for an address
+        # they may not own -- and never the log either. The link is a login
+        # credential, and Railway keeps stdout in a persistent, project-visible
+        # log: printing it there let anyone who can read the logs sign in as
+        # that member. The owner mints one on demand from /api/admin/link.
+        logging.warning("sign-in email not sent (mail unconfigured or failed); "
+                        "mint a link with POST /api/admin/link")
     return {"ok": True, "emailed": sent,
             "message": ("Check your email for a sign-in link."
                         if sent else
@@ -1833,6 +1869,27 @@ async def api_admin_user(req: Request):
     except ValueError as e:
         raise HTTPException(400, str(e))
     return {"ok": True, "user": _accounts.get_user(email)}
+
+
+@app.post("/api/admin/link")
+async def api_admin_link(req: Request):
+    """
+    A fresh sign-in link for one member, returned to the owner only. This is
+    the fallback when the mail provider is unconfigured or a send failed: the
+    owner pastes it into a DM. Issuing a link supersedes any earlier unused one.
+    """
+    if _accounts is None:
+        raise HTTPException(503, "Accounts are not available")
+    _check_owner(req)
+    body = await req.json()
+    try:
+        email = normalize_email(str(body.get("email", "")))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    if _accounts.get_user(email) is None:
+        raise HTTPException(404, "No such member")
+    token = _accounts.request_access(email)["token"]
+    return {"ok": True, "email": email, "link": f"{_public_base(req)}/auth?token={token}"}
 
 
 @app.post("/api/admin/user/delete")

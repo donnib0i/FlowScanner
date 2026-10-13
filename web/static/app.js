@@ -2234,7 +2234,7 @@ async function loadGEX(attempt){
 // 15-minute snapshot, so a badge claiming otherwise would be a lie the user
 // sizes positions against.
 const FRESHNESS = {
-  flow:    {t:'Quotes delayed ~15m (yfinance). This deployment cannot stream OPRA — run locally with TastyTrade for that.', c:'is-lagged'},
+  flow:    {t:'Quotes and chains delayed ~15m. Flow is read from the option chains, not a live trade tape.', c:'is-lagged'},
   scan:    {t:'Quotes and history delayed ~15m (yfinance).', c:'is-lagged'},
   sectors: {t:'Sector quotes delayed ~15m (yfinance).', c:'is-lagged'},
   find:    {t:'Chains and quotes delayed ~15m (yfinance).', c:'is-lagged'},

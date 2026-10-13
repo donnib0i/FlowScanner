@@ -185,3 +185,34 @@ def test_a_members_session_cannot_delete_accounts(client, app):
     r = client.post("/api/admin/user/delete", json={"email": "member@example.com"})
     assert r.status_code == 401
     assert app._accounts.get_user("member@example.com") is not None
+
+
+# ── The link is a credential: never in the log ───────────────────────────────
+def test_an_unsent_link_is_not_written_to_the_log(client, caplog, capsys):
+    import logging
+    with caplog.at_level(logging.DEBUG):
+        client.post("/api/join", json={"email": "logged@example.com"})
+    out = capsys.readouterr().out + caplog.text
+    assert "/auth?token=" not in out
+
+
+def test_the_owner_can_mint_a_link_and_it_signs_in(client):
+    client.post("/api/join", json={"email": "dm@example.com"})
+    r = client.post("/api/admin/link", json={"email": "dm@example.com"},
+                    headers={"X-Pin": "owner-pin"})
+    assert r.status_code == 200
+    tok = r.json()["link"].split("token=")[1]
+    assert client.get(f"/auth?token={tok}", follow_redirects=False).status_code in (302, 303, 307)
+
+
+def test_minting_a_link_needs_the_pin(client):
+    client.post("/api/join", json={"email": "dm2@example.com"})
+    assert client.post("/api/admin/link", json={"email": "dm2@example.com"}).status_code == 401
+    assert client.post("/api/admin/link", json={"email": "dm2@example.com"},
+                       headers={"X-Pin": "wrong"}).status_code == 401
+
+
+def test_minting_for_a_stranger_is_refused(client):
+    r = client.post("/api/admin/link", json={"email": "nobody@example.com"},
+                    headers={"X-Pin": "owner-pin"})
+    assert r.status_code == 404

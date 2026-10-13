@@ -21,3 +21,20 @@ def _isolate_baseline_store(tmp_path_factory):
         tmp_path_factory.mktemp("baseline") / "baseline.db")
     yield
     os.environ.pop("SCANNER_BASELINE_DB", None)
+
+
+@pytest.fixture(autouse=True)
+def _fresh_shared_cache():
+    """The web app shares GEX and sector builds across requests for a minute
+    or two. Between tests that sharing would serve one test's surface to the
+    next, so every test starts with an empty cache."""
+    try:
+        import web.app as webapp
+    except Exception:
+        yield
+        return
+    webapp._cache._store.clear()
+    webapp._BUILD_LOCKS.clear()
+    yield
+    webapp._cache._store.clear()
+    webapp._BUILD_LOCKS.clear()
