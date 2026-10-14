@@ -329,6 +329,8 @@
     var su = document.getElementById('signup');
     su.innerHTML = '<a href="/app" class="btn btn-primary">Open the scanner</a>';
     document.getElementById('signup-note').textContent = 'Free while in beta. No account needed.';
+    ['pinform', 'pinMsg'].forEach(function (id) { var el = document.getElementById(id); if (el) el.style.display = 'none'; });
+    var lab = document.querySelector('label[for="pin"]'); if (lab) lab.style.display = 'none';
     Array.prototype.forEach.call(document.querySelectorAll('a[href="#access"]'), function (a) {
       a.setAttribute('href', '/app');
     });
