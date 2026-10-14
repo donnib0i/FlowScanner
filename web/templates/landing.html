@@ -5,6 +5,7 @@
 <script>
   /* Stamped in by the server: whether sign-ups are open. */
   window.__OWNER_ONLY = __OWNER_ONLY__;
+  window.__PUBLIC = __PUBLIC__;
   /* Someone who already holds the PIN -- the owner, on the phone the PWA is
      installed on -- goes straight to the app before this page paints. The
      landing is the front door for everyone else. */
@@ -211,7 +212,7 @@
       <div class="kicker">ACCESS</div>
       <h2>Ready to <span class="it">watch the tape?</span></h2>
       <p id="signup" style="margin:4px 0 8px;"><a href="/join" class="btn btn-primary">Get free access</a></p>
-      <p style="margin:0 0 4px; font-size:14px; color:#8a8a87;">Free while in beta. Sign in with a one-time email link &mdash; no password.</p>
+      <p id="signup-note" style="margin:0 0 4px; font-size:14px; color:#8a8a87;">Free while in beta. Sign in with a one-time email link &mdash; no password.</p>
       <div style="display:flex; flex-direction:column; align-items:center; gap:12px; margin-top:8px;">
         <label for="pin" style="font-size:13px; color:var(--mute);">Owner sign-in</label>
         <form class="pin-row" id="pinform" novalidate>
@@ -323,6 +324,15 @@
 
   /* Owner-only mode: sign-ups are closed and the page says so, instead of
      offering a link that would be refused. */
+  /* Public mode: no sign-up step. Every "open" button goes straight in. */
+  if (window.__PUBLIC && !window.__OWNER_ONLY) {
+    var su = document.getElementById('signup');
+    su.innerHTML = '<a href="/app" class="btn btn-primary">Open the scanner</a>';
+    document.getElementById('signup-note').textContent = 'Free while in beta. No account needed.';
+    Array.prototype.forEach.call(document.querySelectorAll('a[href="#access"]'), function (a) {
+      a.setAttribute('href', '/app');
+    });
+  }
   if (window.__OWNER_ONLY) {
     var s = document.getElementById('signup');
     s.innerHTML = '<span class="updating"><span class="dot"></span>UPDATING</span>' +

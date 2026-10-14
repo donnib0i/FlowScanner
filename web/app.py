@@ -89,6 +89,10 @@ _ALLOW_PIN_QUERY = os.environ.get("SCANNER_ALLOW_PIN_QUERY", "").strip() in ("1"
 # is private. The PIN is the only key. Flip it off to reopen -- nothing is
 # deleted, the accounts table just stops being consulted while it is on.
 _OWNER_ONLY      = os.environ.get("SCANNER_OWNER_ONLY", "").strip() in ("1", "true", "yes")
+# Public mode. The scanner opens to anyone, no sign-in: the read endpoints stop
+# asking for a credential while the admin routes still take the PIN alone.
+# Owner-only wins over it, so one variable locks the doors again in a hurry.
+_PUBLIC          = os.environ.get("SCANNER_PUBLIC", "").strip() in ("1", "true", "yes")
 _UPDATING_NOTICE = ("Scanner Pro is being updated. It will be back shortly "
                     "&mdash; check again in a little while.")
 # Number of trusted proxies appending to X-Forwarded-For. Production sits behind
@@ -387,6 +391,8 @@ def _pin_banner(pin: str) -> str:
 
 
 def _check_pin(req: Request):
+    if _PUBLIC and not _OWNER_ONLY:
+        return
     if not _PIN:
         if _REQUIRE_PIN:
             raise HTTPException(503, "Server auth not configured")
@@ -955,100 +961,103 @@ async def api_scan(
     _validate_enum(dte_mode, _VALID_DTE_MODE, "dte_mode")
 
     cache_key = f"scan:{filter}:{sort}:{dte_mode}:{dynamic}"
-    cached = _cache.get(cache_key)
-    if cached:
-        return JSONResponse(content=cached)
+    async def _build():
 
-    loop = asyncio.get_event_loop()
-    mo = is_market_open()
+        loop = asyncio.get_event_loop()
+        mo = is_market_open()
 
-    tickers = await loop.run_in_executor(None, get_universe)
+        tickers = await loop.run_in_executor(None, get_universe)
 
-    with contextlib.redirect_stdout(io.StringIO()):
+        with contextlib.redirect_stdout(io.StringIO()):
+            try:
+                results = await asyncio.wait_for(
+                    loop.run_in_executor(None, lambda: scan_tickers(tickers, show_progress=False)),
+                    timeout=120.0
+                )
+            except asyncio.TimeoutError:
+                raise HTTPException(504, "Ticker scan timed out")
+
         try:
-            results = await asyncio.wait_for(
-                loop.run_in_executor(None, lambda: scan_tickers(tickers, show_progress=False)),
-                timeout=120.0
-            )
-        except asyncio.TimeoutError:
-            raise HTTPException(504, "Ticker scan timed out")
+            with contextlib.redirect_stdout(io.StringIO()):
+                sector_data = await loop.run_in_executor(None, scan_sectors)
+            apply_forward_directions(results, sector_data)
+            find_sector_laggards(results, sector_data)
+        except Exception:
+            sector_data = {}
 
-    try:
-        with contextlib.redirect_stdout(io.StringIO()):
-            sector_data = await loop.run_in_executor(None, scan_sectors)
-        apply_forward_directions(results, sector_data)
-        find_sector_laggards(results, sector_data)
-    except Exception:
-        sector_data = {}
+        try:
+            vix = await loop.run_in_executor(None, fetch_vix)
+            with contextlib.redirect_stdout(io.StringIO()):
+                await loop.run_in_executor(
+                    None, lambda: enrich_contracts(results, top_n=15, vix=vix, dte_mode=dte_mode)
+                )
+        except Exception:
+            vix = -1.0
 
-    try:
-        vix = await loop.run_in_executor(None, fetch_vix)
-        with contextlib.redirect_stdout(io.StringIO()):
-            await loop.run_in_executor(
-                None, lambda: enrich_contracts(results, top_n=15, vix=vix, dte_mode=dte_mode)
-            )
-    except Exception:
-        vix = -1.0
+        filtered = apply_filter(results, filter)
+        ordered  = apply_sort(filtered, sort)
 
-    filtered = apply_filter(results, filter)
-    ordered  = apply_sort(filtered, sort)
+        def _grade(r):
+            s = r["setup_q"] * 50 + r["opt_score"] * 0.30 + (20 if r.get("contract") else 0)
+            return "A" if s >= 75 else "B" if s >= 55 else "C" if s >= 35 else "D"
 
-    def _grade(r):
-        s = r["setup_q"] * 50 + r["opt_score"] * 0.30 + (20 if r.get("contract") else 0)
-        return "A" if s >= 75 else "B" if s >= 55 else "C" if s >= 35 else "D"
+        def _contract_out(c):
+            if not c:
+                return None
+            return {
+                "label":  c.get("label", ""),
+                "strike": c.get("strike", 0),
+                "exp":    c.get("exp", "")[-5:] if c.get("exp") else "",
+                "dte":    c.get("dte", -1),
+                "type":   c.get("type", "call"),
+                "mid":    round(c.get("mid", 0), 2),
+                "delta":  round(c.get("delta", 0), 3),
+                "iv":     round((c.get("iv", 0) or 0) * 100, 1),
+                "score":  c.get("score", 0),
+                "roi":    round(c.get("roi", 0) or 0, 1),
+            }
 
-    def _contract_out(c):
-        if not c:
-            return None
-        return {
-            "label":  c.get("label", ""),
-            "strike": c.get("strike", 0),
-            "exp":    c.get("exp", "")[-5:] if c.get("exp") else "",
-            "dte":    c.get("dte", -1),
-            "type":   c.get("type", "call"),
-            "mid":    round(c.get("mid", 0), 2),
-            "delta":  round(c.get("delta", 0), 3),
-            "iv":     round((c.get("iv", 0) or 0) * 100, 1),
-            "score":  c.get("score", 0),
-            "roi":    round(c.get("roi", 0) or 0, 1),
+        rows = []
+        for r in ordered:
+            c = r.get("contract")
+            rows.append({
+                "ticker":     r["ticker"],
+                # "Other" for 85% of rows was the sector column not working.
+                # sector_for reads the curated table, the constituent table and
+                # the resolved cache; "Unclassified" is honest about the rest.
+                "sector":     sector_for(r["ticker"]) or "Unclassified",
+                "price":      round(r["price"], 2),
+                "change_pct": round(r["change_pct"], 2),
+                "rel_vol":    round(r["rel_vol"], 2),
+                "setup":      r.get("signal_combo", r.get("hv_regime", "")),
+                "opt_score":  r["opt_score"],
+                "setup_q":    round(r["setup_q"], 3),
+                "grade":      _grade(r),
+                "direction":  r.get("direction", "up"),
+                "contract":   _contract_out(c),
+                "gap_pct":    round(r.get("gap_pct", 0), 2),
+                "high_vol":   bool(r.get("high_vol")),
+                "inside_day": bool(r.get("inside_day")),
+                "is_laggard": bool(r.get("is_laggard")),
+            })
+
+        result = {
+            "results":      rows,
+            "total":        len(results),
+            "filtered":     len(filtered),
+            "vix":          round(vix, 2),
+            "market_open":  mo,
+            "last_updated": datetime.now().strftime("%H:%M:%S"),
+            "filter":       filter,
+            "sort":         sort,
         }
+        return result
 
-    rows = []
-    for r in ordered:
-        c = r.get("contract")
-        rows.append({
-            "ticker":     r["ticker"],
-            # "Other" for 85% of rows was the sector column not working.
-            # sector_for reads the curated table, the constituent table and
-            # the resolved cache; "Unclassified" is honest about the rest.
-            "sector":     sector_for(r["ticker"]) or "Unclassified",
-            "price":      round(r["price"], 2),
-            "change_pct": round(r["change_pct"], 2),
-            "rel_vol":    round(r["rel_vol"], 2),
-            "setup":      r.get("signal_combo", r.get("hv_regime", "")),
-            "opt_score":  r["opt_score"],
-            "setup_q":    round(r["setup_q"], 3),
-            "grade":      _grade(r),
-            "direction":  r.get("direction", "up"),
-            "contract":   _contract_out(c),
-            "gap_pct":    round(r.get("gap_pct", 0), 2),
-            "high_vol":   bool(r.get("high_vol")),
-            "inside_day": bool(r.get("inside_day")),
-            "is_laggard": bool(r.get("is_laggard")),
-        })
-
-    result = {
-        "results":      rows,
-        "total":        len(results),
-        "filtered":     len(filtered),
-        "vix":          round(vix, 2),
-        "market_open":  mo,
-        "last_updated": datetime.now().strftime("%H:%M:%S"),
-        "filter":       filter,
-        "sort":         sort,
-    }
-    _cache.set(cache_key, result, ttl_secs=300)
+    # One build per filter combination at a time, shared by everyone who asks
+    # while it runs: public traffic must not mean one 230-ticker scan each.
+    result = await _shared(cache_key, 300, _build)
     return JSONResponse(content=result)
+
 
 @app.get("/api/gex")
 async def api_gex(req: Request, symbol: str = "SPX"):
@@ -1914,7 +1923,9 @@ async def root():
     the PIN is sent on to /app by the page's own head script before it paints,
     so the installed PWA -- whose icon points here -- still opens the scanner.
     """
-    return LANDING.replace("__OWNER_ONLY__", "true" if _OWNER_ONLY else "false", 1)
+    return (LANDING
+            .replace("__OWNER_ONLY__", "true" if _OWNER_ONLY else "false", 1)
+            .replace("__PUBLIC__", "true" if _PUBLIC else "false", 1))
 
 
 @app.get("/app", response_class=HTMLResponse)

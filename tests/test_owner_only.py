@@ -187,3 +187,59 @@ def test_a_locked_out_visitor_with_a_stored_pin_still_sees_the_gate():
     seg = body.split("429")[1]
     assert "_promptPin(" in seg, "a 429 on auth leaves the visitor with a dead page"
     assert "!PIN" not in seg, "the gate is still conditional on having no PIN"
+
+
+# ── Public mode ───────────────────────────────────────────────────────────────
+import importlib as _il
+
+
+def _reload_with(monkeypatch, **env):
+    for k in ("SCANNER_PUBLIC", "SCANNER_OWNER_ONLY", "SCANNER_PIN", "SCANNER_REQUIRE_PIN"):
+        monkeypatch.delenv(k, raising=False)
+    for k, v in env.items():
+        monkeypatch.setenv(k, v)
+    import web.app as webapp
+    _il.reload(webapp)
+    from fastapi.testclient import TestClient
+    return webapp, TestClient(webapp.app)
+
+
+def test_public_mode_opens_the_read_api_without_a_credential(monkeypatch):
+    webapp, c = _reload_with(monkeypatch, SCANNER_PUBLIC="1", SCANNER_PIN="owner-pin",
+                             SCANNER_REQUIRE_PIN="1")
+    try:
+        assert c.get("/api/status").status_code == 200
+    finally:
+        monkeypatch.delenv("SCANNER_PUBLIC")
+        _il.reload(webapp)
+
+
+def test_public_mode_keeps_admin_routes_behind_the_pin(monkeypatch):
+    webapp, c = _reload_with(monkeypatch, SCANNER_PUBLIC="1", SCANNER_PIN="owner-pin")
+    try:
+        assert c.get("/api/admin/users").status_code == 401
+        assert c.get("/api/admin/users", headers={"X-Pin": "owner-pin"}).status_code in (200, 503)
+    finally:
+        monkeypatch.delenv("SCANNER_PUBLIC")
+        _il.reload(webapp)
+
+
+def test_owner_only_overrides_public(monkeypatch):
+    webapp, c = _reload_with(monkeypatch, SCANNER_PUBLIC="1", SCANNER_OWNER_ONLY="1",
+                             SCANNER_PIN="owner-pin")
+    try:
+        assert c.get("/api/status").status_code == 401
+    finally:
+        monkeypatch.delenv("SCANNER_PUBLIC")
+        monkeypatch.delenv("SCANNER_OWNER_ONLY")
+        _il.reload(webapp)
+
+
+def test_the_landing_page_learns_it_is_public(monkeypatch):
+    webapp, c = _reload_with(monkeypatch, SCANNER_PUBLIC="1", SCANNER_PIN="owner-pin")
+    try:
+        body = c.get("/").text
+        assert "window.__PUBLIC = true;" in body
+    finally:
+        monkeypatch.delenv("SCANNER_PUBLIC")
+        _il.reload(webapp)
