@@ -161,3 +161,60 @@ def test_the_rate_limit_leaves_room_for_a_reload(app, monkeypatch):
         with client.stream("GET", "/api/flow?tickers=NVDA") as r:
             codes.append(r.status_code)
     assert codes.count(200) >= 5, codes
+
+
+# ── Replaying a recent scan ──────────────────────────────────────────────────
+def _finished(app, names, ago=60, failed=False):
+    import time as _t
+    s = app._ScanSession(len(names), names)
+    s.publish({"__signal__": True, "data": {"ticker": names[0], "score": 90,
+               "bias": "call", "dte": 30, "swing_contract": True, "institutional": True}})
+    if failed:
+        s.publish({"__error__": "boom"})
+    s.finish()
+    s.finished = _t.monotonic() - ago
+    app._scan_session = s
+    return s
+
+
+def _must_not_run(*a, **k):
+    raise AssertionError("a new scan was started")
+
+
+def test_a_recent_finished_scan_is_replayed_without_new_work(app, monkeypatch):
+    monkeypatch.setattr(app, "scan_options_flow", _must_not_run)
+    prev = _finished(app, ["NVDA", "AMD"], ago=120)
+    session, q, joined = app._attach_or_start(["AMD", "NVDA"])
+    assert session is prev and joined
+
+
+def test_the_replay_says_how_old_it_is_and_still_ends(app, monkeypatch):
+    monkeypatch.setattr(app, "scan_options_flow", _must_not_run)
+    _finished(app, ["NVDA"], ago=180)
+    with TestClient(app.app).stream("GET", "/api/flow?tickers=NVDA") as r:
+        evs = events(r)
+    assert any("finished 3 min ago" in e.get("message", "") for e in evs), evs
+    assert any(e.get("__signal__") for e in evs)
+    assert any(e.get("__done__") for e in evs)
+
+
+def test_an_old_scan_is_not_replayed(app, monkeypatch):
+    started = []
+    monkeypatch.setattr(app, "scan_options_flow", lambda *a, **k: started.append(1) or [])
+    prev = _finished(app, ["NVDA"], ago=app.FLOW_REPLAY_TTL_S + 5)
+    session, _, joined = app._attach_or_start(["NVDA"])
+    assert session is not prev and not joined
+
+
+def test_a_different_ticker_set_gets_its_own_scan(app, monkeypatch):
+    monkeypatch.setattr(app, "scan_options_flow", lambda *a, **k: [])
+    prev = _finished(app, ["NVDA"], ago=30)
+    session, _, joined = app._attach_or_start(["AMD"])
+    assert session is not prev and not joined
+
+
+def test_a_failed_scan_is_never_replayed(app, monkeypatch):
+    monkeypatch.setattr(app, "scan_options_flow", lambda *a, **k: [])
+    prev = _finished(app, ["NVDA"], ago=30, failed=True)
+    session, _, joined = app._attach_or_start(["NVDA"])
+    assert session is not prev and not joined

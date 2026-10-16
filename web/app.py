@@ -207,14 +207,20 @@ async def _shared(key: str, ttl_secs: int, build):
 _active_scan = threading.Event()
 _scan_started_at: float = 0.0
 SCAN_STALE_AFTER_S = 900
+# How long a finished flow scan is served to the next visitor instead of
+# starting another. Shorter than the feed's own ~15 minute delay.
+FLOW_REPLAY_TTL_S = 600
 
 
 class _ScanSession:
     """The events of one scan, and everyone currently listening to them."""
 
-    def __init__(self, tickers: int):
+    def __init__(self, tickers: int, names: Optional[List[str]] = None):
         self.tickers  = tickers
+        self.names    = frozenset(names or ())
         self.started  = time.monotonic()
+        self.finished: Optional[float] = None
+        self.failed   = False
         self.events: List[dict] = []
         self.subs:   List[Any]  = []
         self.done    = False
@@ -222,6 +228,8 @@ class _ScanSession:
 
     def publish(self, item: dict) -> None:
         with self._lock:
+            if item.get("__error__"):
+                self.failed = True
             self.events.append(item)
             subs = list(self.subs)
         for q in subs:
@@ -247,10 +255,22 @@ class _ScanSession:
     def finish(self) -> None:
         with self._lock:
             self.done = True
+            self.finished = time.monotonic()
             subs = list(self.subs)
             self.subs = []
         for q in subs:
             q.put({"__done__": True})
+
+    def replayable_for(self, names: List[str]) -> bool:
+        """A finished, clean scan of the same names, recent enough to serve as is.
+
+        The deployed feed is ~15 minutes delayed, so a scan that finished a few
+        minutes ago is as current as a fresh one would be -- and costs nothing,
+        where a fresh one costs every visitor a minute or two of waiting.
+        """
+        return (self.done and not self.failed and self.finished is not None
+                and time.monotonic() - self.finished < FLOW_REPLAY_TTL_S
+                and self.names == frozenset(names))
 
     def is_live(self) -> bool:
         return not self.done and (time.monotonic() - self.started) < SCAN_STALE_AFTER_S
@@ -796,7 +816,9 @@ def _attach_or_start(ticker_list: List[str]):
         session = _scan_session
         if session is not None and session.is_live():
             return session, session.attach(), True
-        session = _ScanSession(len(ticker_list))
+        if session is not None and session.replayable_for(ticker_list):
+            return session, session.attach(), True
+        session = _ScanSession(len(ticker_list), ticker_list)
         _scan_session = session
         _scan_started_at = time.monotonic()
         _active_scan.set()
@@ -877,7 +899,15 @@ async def api_flow(
 
     async def generate():
         import queue as _q2
-        if joined:
+        if joined and session.done:
+            mins = max(1, int((time.monotonic() - session.finished) // 60))
+            yield ('data: ' + json.dumps({
+                "__notice__": True,
+                "message": (f"Showing the scan of {session.tickers} names that "
+                            f"finished {mins} min ago. A fresh one runs after "
+                            f"{FLOW_REPLAY_TTL_S // 60} min."),
+            }) + '\n\n')
+        elif joined:
             yield ('data: ' + json.dumps({
                 "__notice__": True,
                 "message": (f"Joined the scan already running over "
@@ -1531,10 +1561,44 @@ _ICON_SVG = (
     '</svg>'
 )
 
+_STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+
+
+def _static_bytes(name: str) -> bytes:
+    with open(os.path.join(_STATIC_DIR, name), "rb") as f:
+        return f.read()
+
+
+_ICON_CACHE = {"Cache-Control": "public, max-age=604800"}
+
+
+# Real PNG/ICO rendered from _ICON_SVG. iOS ignores an SVG served under a .png
+# name, and every browser asks for /favicon.ico whatever the page declares --
+# 13 of the first public day's 16 404s were that one path.
 @app.get("/apple-touch-icon.png")
+@app.get("/apple-touch-icon-precomposed.png")
 async def apple_touch_icon():
-    return _Response(content=_ICON_SVG.encode(), media_type="image/svg+xml",
-                     headers={"Cache-Control": "public, max-age=86400"})
+    return _Response(content=_static_bytes("apple-touch-icon.png"),
+                     media_type="image/png", headers=_ICON_CACHE)
+
+
+@app.get("/favicon.ico")
+async def favicon():
+    return _Response(content=_static_bytes("favicon.ico"),
+                     media_type="image/x-icon", headers=_ICON_CACHE)
+
+
+@app.get("/favicon-32.png")
+async def favicon_png():
+    return _Response(content=_static_bytes("favicon-32.png"),
+                     media_type="image/png", headers=_ICON_CACHE)
+
+
+@app.get("/robots.txt")
+async def robots():
+    # The landing page may be indexed; the API and the app shell may not.
+    return _Response(content=b"User-agent: *\nAllow: /$\nDisallow: /api/\nDisallow: /app\n",
+                     media_type="text/plain", headers=_ICON_CACHE)
 
 # The join page is served as its own small document rather than a tab inside
 # the app: someone who is not signed in should never receive the app's markup,
@@ -1544,6 +1608,7 @@ _JOIN_PAGE = """<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#000000">
+<link rel="icon" href="/favicon-32.png" type="image/png">
 <title>Scanner &mdash; request access</title>
 <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>

@@ -27,3 +27,6 @@ data/*.db
 
 # Brokerage OAuth grant — never in the repo (it is public)
 .tt_oauth.json
+
+# App icons are source, not exports
+!web/static/*.png
