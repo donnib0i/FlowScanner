@@ -721,6 +721,9 @@ def _serialize_flow(sig: Dict) -> Dict:
         # the headline, and a swing trader needs the swing contract on the card.
         "swing_flow":     sig.get("dte8p_flow", 0),
         "near_flow":      sig.get("dte0_flow", 0) + sig.get("dte1_7_flow", 0),
+        # Raw buckets for the 0DTE / Weekly / Overall windows on the client.
+        "dte0_raw":       sig.get("dte0_flow", 0),
+        "dte1_7_raw":     sig.get("dte1_7_flow", 0),
         "swing_contract": _swing_pick(all_c),
         "strike":     tc.get("strike", 0),
         "exp":        tc.get("exp", "")[-5:],
@@ -1286,7 +1289,16 @@ async def api_find(
     except asyncio.TimeoutError:
         raise HTTPException(504, "Contract lookup timed out")
     if not contracts:
-        return JSONResponse({"error": f"No contracts found for {ticker} ({dte_mode})"}, status_code=404)
+        # Say why, so the reader knows which button to press next. Most single
+        # stocks list no daily expiries, so 0DTE is empty for them by design.
+        why = {
+            "0dte":   f"{ticker} has no options expiring today. Daily expiries "
+                      f"exist only on index products and a handful of mega-caps "
+                      f"-- try Weekly.",
+            "weekly": f"No liquid {ticker} contracts expire in the next week -- "
+                      f"try Swing or All.",
+        }.get(dte_mode, f"No liquid {ticker} contracts matched ({dte_mode}).")
+        return JSONResponse({"error": why}, status_code=404)
     if isinstance(contracts, dict):
         contracts = [contracts]
     return {"contracts": contracts, "ticker": ticker, "direction": direction,

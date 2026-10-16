@@ -113,7 +113,6 @@ function _isMarketOpen(){
 }
 
 const S={
-  dte:'swing',
   whale:false,full:false,
   dir:'up',dteMode:'swing',
   scanning:false,scanRunning:false,
@@ -135,14 +134,20 @@ const FLOW_FILTERS={
   // contracts. A golden sweep is a sweep that also cleared the size bar.
   sweeps:function(s){return !!(s.has_sweep||s.golden)},
   dte0:function(s){return s.dte===0},
+  // Expiry windows. A signal is one ticker's flow across every expiry the scan
+  // read, so "0DTE" can't mean only the headline contract: a name whose biggest
+  // print is a monthly but that also traded heavily into today's expiry belongs
+  // in the 0DTE view. In the window = top contract is, or 25%+ of its flow is.
+  win0dte:function(s){const t=s.total||0;
+    return s.dte===0||(t>0&&(s.dte0_raw||0)/t>=0.25)},
+  winWeekly:function(s){const t=s.total||0;
+    return (s.dte>=0&&s.dte<=7)||(t>0&&((s.dte0_raw||0)+(s.dte1_7_raw||0))/t>=0.25)},
   swing:function(s){return !!s.swing_contract||(s.dte>=SWING_DTE_MIN&&s.dte<=SWING_DTE_MAX)},
   whale:function(s){return s.score>=70||s.tier==='whale'||s.tier==='block'},
   minPrem:function(s,v){return (s.total||0)>=v},
 };
 const FLOW_MIN_STEPS=[0,500000,1000000,5000000];
 const FLOW_MIN_LBLS=['MIN $','MIN $500K','MIN $1M','MIN $5M'];
-const FLOW_DTE_OPTS=['swing','all','0dte'];
-const FLOW_DTE_LBLS={'all':'ANY DTE','0dte':'0DTE','swing':'SWING 7–45'};
 const FLOW_SORT_KEYS={
   premium:function(s){return s.total||0},
   score:function(s){return s.score||0},
@@ -153,12 +158,25 @@ const FLOW_SORT_KEYS={
   pc:function(s){return s.pc_ratio||0},
 };
 
-(function(){
-  const lbl={'swing':'SWING','0dte':'0DTE','7dte':'7 DTE','all':'ALL DTE'};
-  const el=document.getElementById('c-dte');
-  el.textContent=lbl[S.dte]||'0DTE';
-  el.className='chip'+(S.dte!=='all'?' on':'');
-})();
+// Expiry window for the flow feed: 0DTE / Weekly / Overall. The scan always
+// reads every expiry (dte=all) and the window filters on the client, so
+// switching is instant and never costs a rescan.
+S.flowWin=(function(){try{const v=localStorage.getItem('flow_win');
+  return ['0dte','weekly','all'].indexOf(v)>=0?v:'all';}catch(e){return 'all';}})();
+function _paintFlowWin(){
+  ['0dte','weekly','all'].forEach(function(k){
+    const b=document.getElementById('fw-'+k); if(!b) return;
+    b.className='seg-btn'+(S.flowWin===k?' on':'');
+    b.setAttribute('aria-pressed',S.flowWin===k?'true':'false');
+  });
+}
+function setFlowWin(w){
+  S.flowWin=w; _paintFlowWin();
+  try{localStorage.setItem('flow_win',w);}catch(e){}
+  if(S.signals.length) sortFlowFeed();
+  if(S.view==='hot') renderHot();
+}
+_paintFlowWin();
 
 function _loadVix(attempt){
   attempt=attempt||0;
@@ -221,14 +239,6 @@ function showTab(n,btn){
   if(n!=='flow') document.getElementById('flow-bar').classList.remove('on');
 }
 
-const dteOpts=['swing','7dte','0dte','all'];
-const dteLbls={'swing':'SWING','0dte':'0DTE','7dte':'7 DTE','all':'ALL DTE'};
-function tDte(){
-  S.dte=dteOpts[(dteOpts.indexOf(S.dte)+1)%3];
-  const el=document.getElementById('c-dte');
-  el.textContent=dteLbls[S.dte];
-  el.className='chip'+(S.dte!=='all'?' on':'');
-}
 function tWhale(){
   S.whale=!S.whale;
   document.getElementById('c-whale').className='chip'+(S.whale?' on':'');
@@ -265,7 +275,7 @@ async function doFlowScan(retryCount){
   const btn=document.getElementById('scan-btn');
   btn.textContent='Scanning '+n+'…';btn.className='scan-btn loading';
   const minScore=S.whale?60:40;
-  let url=_pa('/api/flow?tickers='+tickers+'&dte='+S.dte+'&min_score='+minScore);
+  let url=_pa('/api/flow?tickers='+tickers+'&dte=all&min_score='+minScore);
   // EventSource cannot send headers, so when a PIN is set the stream
   // authenticates with a single-use ticket instead. The PIN itself stays out of
   // the URL, the access log and browser history.
@@ -356,19 +366,7 @@ function endFlowScan(err){
     const drop=st.dropped||{};
     const found=st.found||0;
     let head='No signals', hint, fix=null;
-    if(found&&drop.dte===found){
-      // Name the window that did the dropping -- it is no longer always 0DTE.
-      const win={'0dte':'0DTE','7dte':'7 DTE','swing':'the 7\u201345 day swing window'}[S.dte]||S.dte;
-      head=found+' found, none in '+win;
-      hint=S.dte==='0dte'
-        ?(_isMarketOpen()?'Nothing expiring today. Every signal found is a later expiry.'
-                         :'Today\u2019s expiry closed. Every signal found is a later expiry.')
-        :'Every signal found expires outside that window.';
-      fix={label:'Show all expiries',run:function(){S.dte='all';
-        const el=document.getElementById('c-dte');
-        if(el){el.textContent='ALL DTE';el.className='chip on';}
-        doFlowScan();}};
-    } else if(found&&drop.score===found){
+    if(found&&drop.score===found){
       head=found+' found, all below the score floor';
       hint='Every signal scored under '+(S.minScore||40)+'.';
     } else if(found){
@@ -377,8 +375,7 @@ function endFlowScan(err){
         Object.keys(drop).filter(function(k){return drop[k]}).map(function(k){
           return drop[k]+' by '+k;}).join(', ')+'.';
     } else {
-      hint=S.dte!=='all'?'Try all expiries, or a full scan.'
-                        :'No unusual institutional flow detected.';
+      hint='No unusual institutional flow detected. Try a full scan.';
     }
     const feed=document.getElementById('flow-feed');
     feed.textContent='';
@@ -691,8 +688,8 @@ function flowPasses(s){
   // Chips stack: every one that is on must pass. OR-ing them would put back
   // exactly the noise the reader turned a chip on to remove.
   if(S.fSweeps&&!FLOW_FILTERS.sweeps(s)) return false;
-  if(S.fDte==='0dte'&&!FLOW_FILTERS.dte0(s)) return false;
-  if(S.fDte==='swing'&&!FLOW_FILTERS.swing(s)) return false;
+  if(S.flowWin==='0dte'&&!FLOW_FILTERS.win0dte(s)) return false;
+  if(S.flowWin==='weekly'&&!FLOW_FILTERS.winWeekly(s)) return false;
   if(S.fWhale&&!FLOW_FILTERS.whale(s)) return false;
   if(S.fMin>0&&!FLOW_FILTERS.minPrem(s,S.fMin)) return false;
   return true;
@@ -700,13 +697,6 @@ function flowPasses(s){
 function tFlowSweeps(){
   S.fSweeps=!S.fSweeps;
   document.getElementById('f-sweeps').className='chip'+(S.fSweeps?' on':'');
-  sortFlowFeed();
-}
-function tFlowDte(){
-  S.fDte=FLOW_DTE_OPTS[(FLOW_DTE_OPTS.indexOf(S.fDte)+1)%FLOW_DTE_OPTS.length];
-  const el=document.getElementById('f-dte');
-  el.textContent=FLOW_DTE_LBLS[S.fDte];
-  el.className='chip'+(S.fDte!=='all'?' on':'');
   sortFlowFeed();
 }
 function tFlowMin(){
@@ -739,10 +729,18 @@ function sortFlowFeed(){
   updateFlowFilterCount(shown.length);
   if(!shown.length){
     const wrap=document.createElement('div');wrap.className='empty-st';
-    const h=document.createElement('h3');h.textContent='Nothing matches';
+    const winLbl={'0dte':'0DTE','weekly':'this week\u2019s expiries'}[S.flowWin];
+    const h=document.createElement('h3');
+    h.textContent=winLbl?'No '+(S.flowWin==='0dte'?'0DTE':'weekly')+' flow':'Nothing matches';
     const p=document.createElement('p');
-    p.textContent=S.signals.length+' signal'+(S.signals.length>1?'s':'')+' hidden by the filters.';
-    wrap.appendChild(h);wrap.appendChild(p);feed.appendChild(wrap);
+    p.textContent=S.signals.length+' signal'+(S.signals.length>1?'s':'')+
+      (winLbl?' found, none concentrated in '+winLbl+
+        (S.flowWin==='0dte'&&!_isMarketOpen()?' (today\u2019s expiry has closed)':'')+'.'
+       :' hidden by the filters.');
+    wrap.appendChild(h);wrap.appendChild(p);
+    if(winLbl){const b=document.createElement('button');b.className='chip';
+      b.textContent='Show overall';b.onclick=function(){setFlowWin('all')};wrap.appendChild(b);}
+    feed.appendChild(wrap);
   }
 }
 function toggleDetail(head){
@@ -772,6 +770,11 @@ function renderHot(){
   const deduped=S.hotContracts.filter(function(c){
     const k=c.ticker+'-'+c.strike+'-'+c.type+'-'+c.exp;
     if(seen.has(k))return false;seen.add(k);return true;
+  }).filter(function(c){
+    // Contracts carry their own expiry, so the window applies exactly here.
+    if(S.flowWin==='0dte') return c.dte===0;
+    if(S.flowWin==='weekly') return c.dte>=0&&c.dte<=7;
+    return true;
   });
   const calls=deduped.filter(function(c){return c.type==='call'})
     .sort(function(a,b){return(b.vol_oi||0)-(a.vol_oi||0)}).slice(0,12);

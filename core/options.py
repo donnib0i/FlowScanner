@@ -30,7 +30,7 @@ from core.constants import (
     MIN_VOL,
     WIDE_SPREAD_PCT,
 )
-from core.greeks import bs_delta, bs_greeks, norm_cdf, norm_pdf  # noqa: F401  (re-exported)
+from core.greeks import bs_delta, bs_greeks, implied_vol, norm_cdf, norm_pdf  # noqa: F401  (re-exported)
 from core.market_data import _option_chain, _yf, vix_delta_target
 from core.fmt import fmt_flow, fmt_num
 
@@ -45,7 +45,7 @@ def _num(v, default=0.0) -> float:
 
 
 def ladder_rows(raw, opt_type: str, price: float, dte: int,
-                top_n: int = 8) -> List[Dict]:
+                top_n: int = 8, minutes_left: Optional[float] = None) -> List[Dict]:
     """
     Clean, score and rank one side of an option chain for the calls-vs-puts ladder.
 
@@ -59,7 +59,17 @@ def ladder_rows(raw, opt_type: str, price: float, dte: int,
     chain's own IV, not a moneyness approximation.
     """
     rows: List[Dict] = []
-    T = max(dte, 0) / 365.0
+    # Time to expiry on the intraday clock. A flat dte/365 is exactly zero for a
+    # 0DTE contract, where Black-Scholes delta snaps to 0 or 1 -- so every strike
+    # failed the delta band and the 0DTE ladder was always empty. Same rule as
+    # core.gex.years_to_expiry, kept local to avoid an import cycle.
+    from core.greeks import _MIN_T
+    if minutes_left is None:
+        try:
+            minutes_left = max(float(minutes_to_close()), 0.0)
+        except Exception:
+            minutes_left = 0.0
+    T = max(max(dte, 0) / 365.0 + minutes_left / (365.0 * 1440.0), _MIN_T)
 
     for r in raw:
         strike = _num(r.get("strike"))
@@ -82,6 +92,15 @@ def ladder_rows(raw, opt_type: str, price: float, dte: int,
             continue
 
         iv = _num(r.get("impliedVolatility"))
+        # yfinance's IV is unreliable on the last day: 1e-05 placeholders, and
+        # single-digit vols on at-the-money 0DTE contracts that are plainly
+        # priced far richer. Either one puts delta at exactly 0 or 1 and empties
+        # the ladder. Near expiry, or whenever the quoted IV is a placeholder,
+        # back it out of the contract's own price instead.
+        if dte <= 1 or iv < 0.005:
+            solved = implied_vol(mid, price, strike, T, opt_type=opt_type)
+            if solved and solved > 0:
+                iv = solved
         delta = abs(bs_delta(price, strike, T, iv, opt_type))
         if not (LADDER_DELTA_MIN <= delta <= LADDER_DELTA_MAX):
             continue

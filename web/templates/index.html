@@ -49,14 +49,17 @@
 <div id="content">
   <div class="tab-pane active" id="tab-flow">
     <div class="filter-bar">
-      <button class="chip" id="c-dte" onclick="tDte()">0DTE</button>
+      <div class="seg" role="group" aria-label="Expiry window">
+        <button class="seg-btn" id="fw-0dte" onclick="setFlowWin('0dte')" title="Signals whose top contract expires today, or with 25%+ of their flow in today's expiry">0DTE</button>
+        <button class="seg-btn" id="fw-weekly" onclick="setFlowWin('weekly')" title="Expiring within 7 days (includes 0DTE)">Weekly</button>
+        <button class="seg-btn" id="fw-all" onclick="setFlowWin('all')" title="Every expiry the scan reads, 0 to 45 days">Overall</button>
+      </div>
       <button class="chip" id="c-whale" onclick="tWhale()">Whale+</button>
       <button class="chip" id="c-scope" onclick="tScope()">Quick</button>
       <button class="scan-btn" id="scan-btn" onclick="doFlowScan()">Scan</button>
     </div>
     <div class="filter-bar flow-filters" id="flow-filter-bar" style="display:none">
       <button class="chip" id="f-sweeps" onclick="tFlowSweeps()" title="Only signals carrying a sweep">Sweeps</button>
-      <button class="chip" id="f-dte" onclick="tFlowDte()" title="0DTE only / swing only / any">Any DTE</button>
       <button class="chip" id="f-min" onclick="tFlowMin()" title="Premium floor">Min $</button>
       <button class="chip" id="f-whale" onclick="tFlowWhale()" title="Whale score 70+ or block/whale tier">Whale+</button>
       <span class="filter-count" id="flow-filter-count"></span>

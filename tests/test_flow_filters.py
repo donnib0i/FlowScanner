@@ -38,7 +38,7 @@ def _run(state, signal):
     return out.stdout.strip() == "true"
 
 
-DEFAULTS = {"fSweeps": False, "fDte": "all", "fMin": 0, "fWhale": False}
+DEFAULTS = {"fSweeps": False, "flowWin": "all", "fMin": 0, "fWhale": False}
 
 
 def _state(**kw):
@@ -67,19 +67,26 @@ def test_a_golden_sweep_counts_as_a_sweep():
     assert _run(_state(fSweeps=True), _s(has_sweep=False, golden=True))
 
 
-def test_swing_is_the_7_to_45_day_window():
-    """Swing used to mean "anything that is not 0DTE", which admitted a 1-DTE
-    lotto ticket. A swing is held across days to weeks: 7-45 DTE. The gap
-    between 0DTE and 7 DTE is deliberate -- those are weeklies, a third trade."""
-    for dte in (7, 21, 45):
-        assert _run(_state(fDte="swing"), _s(dte=dte)), f"{dte}DTE should be a swing"
-    for dte in (0, 1, 6, 46, 90):
-        assert not _run(_state(fDte="swing"), _s(dte=dte)), f"{dte}DTE is not a swing"
+def test_overall_shows_every_expiry():
+    for dte in (0, 3, 7, 21, 45):
+        assert _run(_state(flowWin="all"), _s(dte=dte))
 
 
-def test_0dte_is_exactly_today():
-    assert _run(_state(fDte="0dte"), _s(dte=0))
-    assert not _run(_state(fDte="0dte"), _s(dte=1))
+def test_0dte_window_is_today_or_a_real_share_of_todays_flow():
+    """A signal is one ticker across every expiry. Its headline contract can be a
+    monthly while a quarter of its money went into today's expiry -- that name
+    belongs in the 0DTE view. A sliver of 0DTE flow does not."""
+    assert _run(_state(flowWin="0dte"), _s(dte=0))
+    assert _run(_state(flowWin="0dte"), _s(dte=21, total=4e6, dte0_raw=1e6))
+    assert not _run(_state(flowWin="0dte"), _s(dte=21, total=4e6, dte0_raw=1e5))
+    assert not _run(_state(flowWin="0dte"), _s(dte=1))
+
+
+def test_weekly_window_is_seven_days_including_today():
+    for dte in (0, 1, 7):
+        assert _run(_state(flowWin="weekly"), _s(dte=dte)), f"{dte}DTE is weekly"
+    assert not _run(_state(flowWin="weekly"), _s(dte=21))
+    assert _run(_state(flowWin="weekly"), _s(dte=21, total=4e6, dte1_7_raw=8e5, dte0_raw=3e5))
 
 
 def test_min_premium_is_a_floor_not_a_ceiling():
@@ -132,9 +139,16 @@ def test_sweep_count_spans_contracts_the_chips_never_show():
 # ── UI wiring ─────────────────────────────────────────────────────────────────
 def test_the_chips_are_on_the_flow_tab():
     bar = HTML.split('id="flow-filter-bar"')[1].split("</div>")[0]
-    for cid in ("f-sweeps", "f-dte", "f-min", "f-whale"):
+    for cid in ("f-sweeps", "f-min", "f-whale"):
         assert f'id="{cid}"' in bar, f"{cid} is missing from the flow filter bar"
-    assert bar.count('class="chip"') == 4, "chips must reuse the existing .chip style"
+    assert bar.count('class="chip"') == 3, "chips must reuse the existing .chip style"
+
+
+def test_the_expiry_window_is_one_control_with_three_choices():
+    for w in ("0dte", "weekly", "all"):
+        assert f"setFlowWin('{w}')" in HTML, f"{w} button missing"
+    # The scan reads every expiry; the window is applied on the client.
+    assert "&dte=all&" in JS
 
 
 def test_the_filter_bar_hides_until_there_is_something_to_filter():

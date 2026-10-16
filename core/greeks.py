@@ -52,8 +52,13 @@ def bs_delta(S: float, K: float, T: float, sigma: float, opt_type: str = "call")
     sigma = max(sigma, _MIN_SIGMA)
     if S <= 0 or K <= 0:
         return (1.0 if opt_type == "call" else -1.0) if S > K else 0.0
-    # Near expiry: d1 → ±∞ and delta collapses to 0/1. Use limit directly.
-    if T < 0.0001:   # < ~52 minutes — digital payoff regime
+    # Only when the distribution has genuinely collapsed is delta a step. This
+    # used to trigger below ~52 minutes (T < 1e-4), which made every delta in the
+    # last hour of the session exactly 0 or 1: an at-the-money 0DTE call with
+    # 40 minutes left and a 49% IV has a delta near 0.4, not 0. The formula is
+    # well-behaved down to seconds; the step is the limit only once sigma*sqrt(T)
+    # is too small to move d1 off +/-infinity.
+    if sigma * math.sqrt(T) < 1e-6:
         if opt_type == "call":
             return 1.0 if S >= K else 0.0
         else:

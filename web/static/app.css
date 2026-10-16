@@ -195,6 +195,13 @@ body::after{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
 .chip:hover{border-color:var(--line2);color:var(--t1)}
 .chip:active{transform:scale(.96)}
 .chip.on{background:var(--t1);border-color:var(--t1);color:var(--ink);font-weight:600}
+.seg{display:flex;border:1px solid var(--line);border-radius:999px;padding:2px;flex-shrink:0;gap:2px}
+.seg-btn{background:transparent;border:0;border-radius:999px;padding:6px 12px;min-height:30px;
+  font-size:11px;font-weight:500;color:var(--t2);cursor:pointer;white-space:nowrap;font-family:var(--ui);
+  transition:background .18s var(--ease),color .18s var(--ease)}
+.seg-btn:hover{color:var(--t1)}
+.seg-btn.on{background:var(--t1);color:var(--ink);font-weight:600}
+.seg-btn:focus-visible{outline:2px solid var(--t1);outline-offset:2px}
 .filter-count{font-size:10px;color:var(--t3);font-family:var(--num);margin-left:2px}
 
 .scan-btn{background:var(--t1);color:var(--ink);border:1px solid var(--t1);border-radius:999px;

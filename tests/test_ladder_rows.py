@@ -117,3 +117,28 @@ def test_at_the_money_strike_survives_the_delta_cap():
     rows = ladder_rows([_row(225.0, 46805, 6260, bid=1.77, ask=1.81)],
                        "call", PRICE, DTE)
     assert [r["strike"] for r in rows] == [225.0]
+
+
+def test_a_0dte_ladder_is_not_empty_during_the_session():
+    """dte/365 is zero for today's expiry, where delta snaps to 0 or 1 and every
+    strike fell outside the delta band. With 3 hours left the near-the-money
+    strikes are well inside it."""
+    raw = [_row(k, 5000, 1000, bid=1.0, ask=1.1, iv=0.25) for k in (98, 100, 102)]
+    rows = ladder_rows(raw, "call", 100.0, 0, minutes_left=180)
+    assert {r["strike"] for r in rows} >= {100.0}
+
+
+def test_a_0dte_ladder_after_the_close_still_prices_without_crashing():
+    raw = [_row(100, 5000, 1000, bid=1.0, ask=1.1, iv=0.25)]
+    ladder_rows(raw, "call", 100.0, 0, minutes_left=0)
+
+
+def test_delta_in_the_last_hour_is_not_a_step_function():
+    """A 52-minute 'digital' cutoff made every 0DTE delta 0 or 1 for the last
+    hour of the session. 40 minutes left, a hair OTM, 49% IV: about 0.4."""
+    from core.greeks import bs_delta
+    T = 40 / (365 * 1440)
+    d = bs_delta(214.59, 215.0, T, 0.49, "call")
+    assert 0.25 < d < 0.5, d
+    put = bs_delta(214.59, 215.0, T, 0.49, "put")
+    assert -0.75 < put < -0.5, put
