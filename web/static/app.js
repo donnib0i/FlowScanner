@@ -60,8 +60,9 @@ function _promptPin(msg){
       (updating?'':'<a class="gate-go" href="/join">Request access</a>')+
       '<button class="gate-alt" id="gate-pin">Owner sign-in</button>'+
       '<div class="gate-pinrow" id="gate-pinrow" hidden>'+
-        '<input id="gate-pinin" type="password" inputmode="numeric" '+
-          'autocomplete="off" placeholder="PIN" aria-label="Access PIN">'+
+        '<input id="gate-pinin" type="password" autocapitalize="off" '+
+          'autocomplete="current-password" spellcheck="false" '+
+          'placeholder="Password" aria-label="Password">'+
         '<button id="gate-pingo">Enter</button>'+
       '</div>'+
     '</div>';

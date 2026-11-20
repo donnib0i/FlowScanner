@@ -218,7 +218,7 @@
       <div style="display:flex; flex-direction:column; align-items:center; gap:12px; margin-top:8px;">
         <label for="pin" style="font-size:13px; color:var(--mute);">Owner sign-in</label>
         <form class="pin-row" id="pinform" novalidate>
-          <input id="pin" type="password" inputmode="numeric" maxlength="12" autocomplete="off" placeholder="••••••" aria-describedby="pinMsg">
+          <input id="pin" type="password" maxlength="64" autocapitalize="off" spellcheck="false" autocomplete="current-password" placeholder="Password" aria-describedby="pinMsg">
           <button type="submit" class="btn btn-primary" id="enter">Enter</button>
         </form>
         <div class="pin-msg" id="pinMsg" role="status" aria-live="polite"></div>
@@ -303,7 +303,7 @@
   function submit(ev) {
     if (ev) ev.preventDefault();
     var v = pin.value.trim();
-    if (v.length < 4) { say('Enter your PIN', true); return; }
+    if (!v) { say('Enter your password', true); return; }
     btn.disabled = true; say('Checking…');
     fetch('/api/vix', { headers: { 'X-Pin': v } }).then(function (r) {
       if (r.status === 200) {
@@ -311,7 +311,7 @@
         say('Opening…');
         location.href = '/app';
       } else if (r.status === 401) {
-        say('That PIN is not right.', true); btn.disabled = false;
+        say('That password is not right.', true); btn.disabled = false;
       } else if (r.status === 429) {
         say('Too many attempts from this connection. Wait a few minutes.', true); btn.disabled = false;
       } else if (r.status === 503) {
@@ -322,7 +322,7 @@
     }).catch(function () { say('Could not reach the scanner. Try again.', true); btn.disabled = false; });
   }
   form.addEventListener('submit', submit);
-  pin.addEventListener('input', function () { pin.value = pin.value.replace(/\D/g, ''); say(''); });
+  pin.addEventListener('input', function () { say(''); });
 
   /* Owner-only mode: sign-ups are closed and the page says so, instead of
      offering a link that would be refused. */
